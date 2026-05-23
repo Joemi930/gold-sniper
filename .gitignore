@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environnements virtuels
+venv/
+env/
+.env
+
+# Fichiers de log et de données
+logs/
+recovery.json
+simulation_results.csv
+
+# Fichiers IDE
+.vscode/
+.idea/
+
+# Médias lourds
+*.mp4
+*.mkv
+*.avi
+*.mov
