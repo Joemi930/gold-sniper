@@ -1,57 +1,126 @@
-# 🎯 GOLD SNIPER V2.1 — Institutional Intelligence
+# Gold Sniper V2
 
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)
-![MetaTrader 5](https://img.shields.io/badge/MetaTrader-5-black.svg)
-![Status](https://img.shields.io/badge/Status-Private_Repository-red.svg)
+Gold Sniper V2 est un moteur de trading XAUUSD construit autour de 7 agents,
+d'un Blackboard partage, d'un Orchestrateur V2 et de protections operationnelles
+avant toute execution MT5.
 
-**Gold Sniper V2.1** est un algorithme de trading institutionnel 100% automatisé, conçu exclusivement pour la paire **XAUUSD** (Or). Il s'appuie sur la méthodologie SMC (Smart Money Concepts) / ICT et un système asynchrone ultra-performant.
+Le code actif du projet se trouve dans:
 
----
+```text
+gold_sniper/
+```
 
-## 🧠 Architecture à 7 Agents
+## Etat de la version publiee
 
-Le cœur du système repose sur une **unanimité pondérée (Score sur 100)** pilotée par 7 agents autonomes :
+Cette version inclut les scripts valides progressivement:
 
-1. **Météo (Agent 1) 🌦️** : Analyse la structure de marché macro (4H) et intermédiaire (15M) (BOS, ChoCh, Phase).
-2. **Cartographe (Agent 2) 🗺️** : Identifie les Order Blocks (OB) et Fair Value Gaps (FVG).
-3. **Liquidité (Agent 3) 💧** : Traque les zones de liquidité (Equal Highs/Lows, Session Asiatique).
-4. **Fibonacci (Agent 4) 📐** : Validation des retracements (Zone OTE).
-5. **Microscope (Agent 5) 🔬** : Validation de l'entrée au tick près sur UT 1 minute.
-6. **Sentinelle (Agent 6) 📰** : Aspiration du Calendrier Économique (ForexFactory) et protection contre les news.
-7. **Chronos (Agent 7) ⏱️** : Gestion des sessions de liquidité (Killzones) et protection week-end.
+- AgentResult unifie dans `agents/base_agent.py`.
+- Orchestrateur V2 avec score pondere et seuil `EXECUTION_THRESHOLD = 85`.
+- Decision Log JSONL avec rotation.
+- Telegram notifier.
+- Risk Manager avec veto absolu.
+- Agent 5 AMD complet: Accumulation, sweep 1M, CHoCH.
+- Agent 2 OB scoring 5 facteurs.
+- Agent 3 sweep vs break, Asian Range, IDM.
+- Agent 4 premium/discount et OTE.
+- Agent 6 calendrier economique Finnhub avec fallback.
+- Macro Monitor DXY / US10Y via yfinance avec fallback.
+- Regime Detector.
+- Agent 7 Chronos sessions et kill zones.
+- Position sizing dynamique ATR.
+- Spread Monitor.
+- MT5 Watchdog.
+- Backtesting engine avec cache parquet.
+- Auto-calibration des poids agents apres 50 trades clotures minimum.
 
----
+## Demarrage rapide
 
-## 🛡️ Sécurité & OPSEC (Prop-Firm Safe)
+Depuis la racine du repo:
 
-Conçu pour passer et conserver les comptes Prop-Firm, l'algorithme intègre des sécurités impénétrables :
-- **Daily Drawdown Limit** : Blocage total de la journée si perte de -5%.
-- **Maximum Trades/Jour** : Limite stricte à 2 trades par jour (anti-overtrade).
-- **Gestion Dynamique du Risque** : Calcul précis du lot pour ne risquer que 1% du capital réel par trade.
-- **Trade Management Avancé** : Clôture partielle automatique (50%) à 1:1 R:R, suivie d'un *Trailing Stop* basé sur l'ATR.
-- **Recovery Manager** : Reprise sur crash. Scan et récupération des positions orphelines sur MT5.
+```powershell
+cd gold_sniper
+python main.py
+```
 
----
+MetaTrader 5 doit etre ouvert et connecte. `XAUUSD` doit etre visible dans le
+Market Watch.
 
-## 🚀 Lancement Rapide
+## Configuration sensible
 
-1. Assurez-vous que **MetaTrader 5** est installé, connecté à votre compte, avec l'Algo Trading activé.
-2. Vérifiez que la paire `XAUUSD` est visible dans votre observation du marché.
-3. Lancez le fichier de démarrage Windows :
-   ```cmd
-   GoldSniper.bat
-   ```
-*(Le script vérifiera Python, installera les dépendances manquantes, et lancera le Dashboard UI).*
+Les secrets ne sont pas stockes dans le code. Definir les variables
+d'environnement avant lancement si necessaire:
 
----
+```powershell
+$env:MT5_ACCOUNT="ton_login"
+$env:MT5_PASSWORD="ton_mot_de_passe"
+$env:MT5_SERVER="ton_serveur"
+$env:TELEGRAM_TOKEN="ton_token"
+$env:TELEGRAM_CHAT_ID="ton_chat_id"
+```
 
-## 📊 Dashboard UI
+`LIVE_MODE` reste defini dans `gold_sniper/config.py`. Par defaut, le projet
+reste en paper trading.
 
-La V2.1 intègre un tableau de bord `CustomTkinter` avec :
-- Affichage de l'Equity, Marge et PnL en temps réel.
-- Réseau Neuronal animé reflétant l'état du Blackboard.
-- Log feed détaillé.
-- **Bouton KILL SWITCH** rouge pour tout fermer d'urgence.
+## Ordre de lancement moteur
 
----
-*Développé pour la Cellule Bug Bounty / Analyse Offensive — Filtre Anti-Bullshit Activé 🟢*
+`main.py` execute le cold start:
+
+1. Connexion MT5.
+2. Recovery des positions ouvertes.
+3. Chargement historique.
+4. Initialisation du Blackboard.
+5. Message Telegram de demarrage.
+6. Lancement de `core.engine.run_engine()`.
+
+Le moteur lance ensuite:
+
+1. data ingestion;
+2. Risk Manager et agents contextuels;
+3. agents de signal;
+4. orchestrateur;
+5. trade manager;
+6. services: account fetcher, MT5 Watchdog, recovery, Telegram sender.
+
+## Logs
+
+Fichiers principaux:
+
+- `gold_sniper/logs/decision_log.jsonl`
+- `gold_sniper/logs/missed_opportunities.jsonl`
+- `gold_sniper/logs/calibration_log.jsonl`
+- `gold_sniper/logs/backtests/backtest_results.jsonl`
+- `gold_sniper/logs/gold_sniper_YYYY-MM-DD.jsonl`
+
+Les JSONL applicatifs tournent par taille avec `LOG_MAX_BYTES` et
+`LOG_BACKUP_COUNT`.
+
+## Backtest
+
+Premier lancement avec MT5 ouvert:
+
+```powershell
+cd gold_sniper
+python backtesting\backtest_engine.py --limit 100
+```
+
+Le cache M1 est cree ici:
+
+```text
+gold_sniper/logs/backtests/XAUUSD_M1_cache.parquet
+```
+
+## Calibration
+
+La calibration refuse de tourner avec moins de 50 trades clotures:
+
+```powershell
+cd gold_sniper
+python utils\weight_calibrator.py --dry-run
+```
+
+## Documentation
+
+Voir aussi:
+
+- `architecture.md`
+- `gold_sniper/architecture.md`
