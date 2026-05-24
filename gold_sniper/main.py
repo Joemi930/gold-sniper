@@ -15,6 +15,7 @@ from config import (
 from utils.logger import setup_logger, get_logger
 from core.blackboard import BlackBoard
 from core.engine import run_engine
+from core.orchestrator import EXECUTION_THRESHOLD
 from core.mt5_bridge import bridge
 from core.recovery_manager import recover_open_positions, load_daily_stats_from_recovery
 from utils.telegram_notifier import send_telegram_notification, send_eod_report
@@ -123,7 +124,7 @@ async def cold_start(blackboard: BlackBoard) -> bool:
         blackboard,
         f"🚀 *Gold Sniper V2 démarré*\n"
         f"Mode: `{'LIVE 🔴' if LIVE_MODE else 'PAPER 📝'}`\n"
-        f"Symbole: `{SYMBOL}` | Seuil: `90/100`"
+        f"Symbole: `{SYMBOL}` | Seuil: `{EXECUTION_THRESHOLD:.0f}/100`"
     )
     return True
 

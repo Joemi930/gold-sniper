@@ -28,9 +28,11 @@ import MetaTrader5 as mt5
 from agents.base_agent import BaseAgent
 from config import (
     SYMBOL, MAGIC_NUMBER, COOLDOWN_SECONDS,
-    PARTIAL_CLOSE_PERCENT, BREAKEVEN_RR_TRIGGER
+    PARTIAL_CLOSE_PERCENT, BREAKEVEN_RR_TRIGGER,
+    RISK_PCT_PER_TRADE
 )
 from execution.risk_calculator import RiskCalculator
+from utils.spread_monitor import SpreadMonitor
 from utils.telegram_notifier import send_telegram_notification
 
 
@@ -39,7 +41,8 @@ class TradeManager(BaseAgent):
         super().__init__(blackboard, name="trade_manager")
 
         # ── Risk Calculator (FIX BUG#1 : remplace self.FIXED_LOT) ──────────
-        self.risk_calculator = RiskCalculator(risk_percent=1.0)
+        self.risk_calculator = RiskCalculator(risk_percent=RISK_PCT_PER_TRADE)
+        self.spread_monitor = SpreadMonitor(blackboard)
 
         # ── État interne ────────────────────────────────────────────────────
         self._last_trade_time: Optional[datetime] = None  # Pour cooldown
@@ -57,7 +60,12 @@ class TradeManager(BaseAgent):
         try:
             lot = await asyncio.to_thread(
                 self.risk_calculator.calculate_lot_size,
-                SYMBOL, entry_price, stop_loss, risk_modifier
+                SYMBOL,
+                entry_price,
+                stop_loss,
+                risk_modifier,
+                self.blackboard.get_market().get("atr_14_15m") or self.blackboard.read_sync("market_data.atr_14"),
+                self.blackboard.get_market().get("atr_14_4h") or self.blackboard.get_market().get("atr_baseline"),
             )
             return max(0.01, lot)
         except Exception as e:
@@ -115,6 +123,12 @@ class TradeManager(BaseAgent):
         tick = self._get_valid_tick()
         if tick is None:
             self.logger.warning("⚠️ Tick invalide — ordre annulé (prix = 0).")
+            await self.blackboard.write("trade_signals", {})
+            return False
+
+        spread_check = await self.spread_monitor.check_before_entry(signal_data=signal_data)
+        if not spread_check.get("allow_trade", False):
+            self.logger.warning(f"Ordre annulé par SpreadMonitor: {spread_check.get('reason')}")
             await self.blackboard.write("trade_signals", {})
             return False
 

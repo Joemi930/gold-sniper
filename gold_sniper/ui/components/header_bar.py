@@ -216,7 +216,7 @@ class HeaderBar(ctk.CTkFrame):
                 )
 
             # Session
-            agent7 = self.blackboard.read_sync("agents.agent_7_sessions") or {}
+            agent7 = self.blackboard.read_sync("agents.agent_7") or {}
             sess = agent7.get("current_session", "OFF_HOURS")
             in_kz = agent7.get("in_killzone", False)
 

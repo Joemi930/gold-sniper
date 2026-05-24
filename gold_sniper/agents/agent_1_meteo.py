@@ -2,7 +2,7 @@ import asyncio
 import numpy as np
 
 from core.blackboard import BlackBoard
-from core.agent_result import AgentResult
+from agents.base_agent import AgentResult
 from utils.logger import get_logger
 
 def detect_swings(high: np.ndarray, low: np.ndarray, close: np.ndarray,
@@ -89,14 +89,14 @@ def score_agent_1(structure_4h: dict, structure_15m: dict) -> AgentResult:
         return AgentResult(
             agent_id="agent_1", score=0,
             reason="STRUCTURE_NEUTRAL_MTF",
-            direction=None, is_hard_filter=True
+            direction=None, hard_filter_pass=True
         )
     
     if dir_4h != dir_15m:
         return AgentResult(
             agent_id="agent_1", score=0,
             reason=f"MTF_MISALIGNMENT_{dir_4h}_vs_{dir_15m}",
-            direction=None, is_hard_filter=True
+            direction=None, hard_filter_pass=True
         )
     
     direction = "LONG" if dir_4h == "BULLISH" else "SHORT"
@@ -121,8 +121,8 @@ def score_agent_1(structure_4h: dict, structure_15m: dict) -> AgentResult:
         score=final_score,
         reason=f"MTF_ALIGNED_{direction}_BOS_FRESH={freshness_15m}",
         direction=direction,
-        is_hard_filter=True,
-        metadata={
+        hard_filter_pass=True,
+        payload={
             "structure_4h": dir_4h,
             "structure_15m": dir_15m,
             "bos_freshness_15m": freshness_15m,
@@ -135,7 +135,7 @@ class AgentMeteo:
     def __init__(self, blackboard: BlackBoard):
         self.bb = blackboard
         self.logger = get_logger()
-        self.name = "agent_1_meteo"
+        self.name = "agent_1"
     
     async def run(self):
         self.logger.info("▶️  Agent 1 (Météo V2) démarré")

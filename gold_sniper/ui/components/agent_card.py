@@ -23,7 +23,7 @@ class AgentCard(ctk.CTkFrame):
 
     SPARKLINE_LEN = 20  # Nombre de points dans l'historique
 
-    def __init__(self, parent, agent_id: str, is_hard_filter: bool = False, **kwargs):
+    def __init__(self, parent, agent_id: str, hard_filter_pass: bool = False, **kwargs):
         super().__init__(
             parent,
             fg_color=theme.BG_CARD,
@@ -34,7 +34,7 @@ class AgentCard(ctk.CTkFrame):
         )
 
         self.agent_id     = agent_id
-        self.is_hard_filter = is_hard_filter
+        self.hard_filter_pass = hard_filter_pass
         self._color       = theme.AGENT_COLORS.get(agent_id, theme.ELECTRIC_BLUE)
         self._label       = theme.AGENT_LABELS.get(agent_id, agent_id.upper())
         self._icon        = theme.AGENT_ICONS.get(agent_id, "●")
@@ -254,7 +254,7 @@ class AgentCard(ctk.CTkFrame):
                 pass
 
         # Clignotement bordure HARD FILTER si score = 0
-        if self.is_hard_filter and self._score == 0:
+        if self.hard_filter_pass and self._score == 0:
             self._blink_phase += 1
             if self._blink_phase % 8 == 0:
                 self._blink_on = not self._blink_on
@@ -264,7 +264,7 @@ class AgentCard(ctk.CTkFrame):
                 except Exception:
                     pass
         else:
-            bc = self._color if self.is_hard_filter else theme.BG_BORDER
+            bc = self._color if self.hard_filter_pass else theme.BG_BORDER
             try:
                 self.configure(border_color=bc)
             except Exception:

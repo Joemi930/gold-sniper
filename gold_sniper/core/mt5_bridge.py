@@ -92,6 +92,22 @@ class MT5Bridge:
             self.connected = False
             self._logger.info("🔌 Connexion MT5 fermée.")
 
+    async def is_terminal_connected_async(self) -> bool:
+        """Verifie que le terminal MT5 et le compte sont toujours joignables."""
+        try:
+            terminal_info = await asyncio.to_thread(mt5.terminal_info)
+            account_info = await asyncio.to_thread(mt5.account_info)
+            is_connected = bool(
+                terminal_info is not None
+                and getattr(terminal_info, "connected", False)
+                and account_info is not None
+            )
+            self.connected = is_connected
+            return is_connected
+        except Exception:
+            self.connected = False
+            return False
+
     async def get_tick_async(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         Récupère le dernier tick d'un symbole.

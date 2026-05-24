@@ -16,7 +16,8 @@ import asyncio
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Optional, Callable
-from core.agent_result import AgentResult
+# NOTE : AgentResult est importé localement dans write_agent_result()
+# pour éviter l'import circulaire (base_agent importe BlackBoard).
 
 from config import (
     LIVE_MODE,
@@ -28,6 +29,7 @@ from config import (
     PAPER_SIMULATED_EQUITY,
     PAPER_CSV_PATH,
     RECOVERY_FILE_PATH,
+    MAX_SPREAD_POINTS,
 )
 from utils.logger import get_logger
 
@@ -153,130 +155,185 @@ class BlackBoard:
                 },
             },
 
-            # ── AGENTS : Données des 7 agents analytiques ───────────────
+            # ── MARKET V2 (Shared State) ─────────────────────────────────
+            "market": {
+                "symbol": "XAUUSD",
+                "current_price": None,
+                "bid": None,
+                "ask": None,
+                "spread_points": None,
+                "atr_14_1m": None,
+                "atr_14_15m": None,
+                "atr_14_4h": None,
+                "regime": "UNKNOWN",
+                "regime_confidence": 0.0,
+                "regime_description": "",
+                "regime_updated_at": None,
+                "dxy_bias": "NEUTRAL",
+                "gold_macro_bias": "NEUTRAL",
+                "gold_trend": "NEUTRAL",
+                "us10y_direction": None,
+                "real_rate_favorable": False,
+                "macro_score_bonus": 0,
+                "macro_feed_alive": False,
+                "last_macro_update": None,
+                "session": "NONE",
+                "spread_monitor": {
+                    "allow_trade": True,
+                    "spread": 0.0,
+                    "max_allowed": MAX_SPREAD_POINTS,
+                    "reason": "",
+                    "high_since": None,
+                    "last_alert_at": None,
+                    "rollover_detected": False,
+                    "news_detected": False,
+                },
+                "last_tick": None,
+            },
+
+            # ── AGENTS V2 ───────────────────────────────────────────────
             "agents": {
-
-                # Agent 1 — Météo / Structure de Marché
-                "agent_1_meteo": {
+                "agent_1": {
                     "score": 0,
-                    "bias": "NEUTRAL",
-                    "market_phase": "RANGE",
-                    "bos_4h": {"type": None, "level": 0.0, "time": None},
-                    "bos_15m": {"type": None, "level": 0.0, "time": None},
-                    "details": "",
-                    "updated_at": None,
+                    "direction": None,
+                    "bias_4h": None,
+                    "bias_15m": None,
+                    "mtf_aligned": False,
+                    "last_swing_high_4h": None,
+                    "last_swing_low_4h": None,
+                    "last_swing_high_15m": None,
+                    "last_swing_low_15m": None,
+                    "bos_level": None,
+                    "swing_quality": 0.0,
+                    "reason": "",
+                    "last_updated": None,
+                    "hard_filter_pass": False,
                 },
-
-                # Agent 2 — Cartographe (Order Blocks & FVG)
-                "agent_2_cartographe": {
+                "agent_2": {
                     "score": 0,
-                    "order_blocks": [],
-                    "fvg_zones": [],
-                    "active_poi": None,
-                    "updated_at": None,
+                    "direction": None,
+                    "active_ob": None,
+                    "active_fvg": None,
+                    "breaker_blocks": [],
+                    "poi_zone": None,
+                    "ob_score": 0,
+                    "zone_is_fresh": False,
+                    "reason": "",
+                    "last_updated": None,
+                    "hard_filter_pass": False,
                 },
-
-                # Agent 3 — Liquidité
-                "agent_3_liquidite": {
+                "agent_3": {
                     "score": 0,
-                    "equal_highs": [],
-                    "equal_lows": [],
-                    "retail_trendlines": [],
-                    "asian_session": {
-                        "high": 0.0,
-                        "low": 0.0,
-                        "swept": "NONE",
-                        "ny_prev_high": 0.0,
-                        "ny_prev_low": 0.0,
-                    },
-                    "liquidity_target": 0.0,
-                    "updated_at": None,
+                    "direction": None,
+                    "eqh_levels": [],
+                    "eql_levels": [],
+                    "sweep_detected": False,
+                    "sweep_side": None,
+                    "sweep_depth_ratio": 0.0,
+                    "asian_range": None,
+                    "idm_detected": False,
+                    "idm_swept": False,
+                    "reason": "",
+                    "last_updated": None,
                 },
-
-                # Agent 4 — Fibonacci (OTE Zone)
-                "agent_4_fibonacci": {
+                "agent_4": {
                     "score": 0,
-                    "swing_low": 0.0,
-                    "swing_high": 0.0,
-                    "swing_direction": None,
-                    "levels": {
-                        "0.0": 0.0,
-                        "0.236": 0.0,
-                        "0.382": 0.0,
-                        "0.5": 0.0,
-                        "0.618": 0.0,
-                        "0.705": 0.0,
-                        "0.786": 0.0,
-                        "1.0": 0.0,
-                        "-0.272": 0.0,
-                        "-0.618": 0.0,
-                        "-1.0": 0.0,
-                    },
-                    "price_in_ote": False,
-                    "ote_zone": {"high": 0.0, "low": 0.0},
-                    "updated_at": None,
+                    "direction": None,
+                    "swing_used": None,
+                    "ote_low": None,
+                    "ote_high": None,
+                    "ote_sweet": None,
+                    "equilibrium": None,
+                    "in_ote": False,
+                    "in_discount": False,
+                    "in_premium": False,
+                    "precision_pct": 0.0,
+                    "reason": "",
+                    "last_updated": None,
                 },
-
-                # Agent 5 — Microscope 1M (Entry Trigger)
-                "agent_5_microscope": {
+                "agent_5": {
                     "score": 0,
-                    "state": "SLEEPING",
-                    "cpu_usage": 0.0,
-                    "trigger_zone": None,
-                    "choch_detected": {"type": None, "level": 0.0, "time": None},
-                    "bos_1m_confirmed": {"type": None, "level": 0.0, "time": None},
-                    "entry_signal": {
-                        "direction": None,
-                        "entry_price": 0.0,
-                        "sl_price": 0.0,
-                        "tp_price": 0.0,
-                        "risk_reward": 0.0,
-                        "confidence": 0.0,
-                    },
-                    "updated_at": None,
+                    "direction": None,
+                    "choch_detected": False,
+                    "choch_price": None,
+                    "price_in_poi": False,
+                    "sweep_1m_confirmed": False,
+                    "amd_phase": 0,
+                    "entry_price": None,
+                    "sl_price": None,
+                    "tp1_price": None,
+                    "tp2_price": None,
+                    "reason": "",
+                    "last_updated": None,
                 },
-
-                # Agent 6 — Sentinelle Économique
-                "agent_6_sentinelle": {
-                    "is_clear": True,                   # Par défaut, on considère le marché safe au boot
-                    "next_red_event": {
-                        "name": None,
-                        "currency": None,
-                        "time_utc": None,
-                        "impact": None,
-                        "minutes_until": None,
-                    },
-                    "blackout_active": False,
-                    "blackout_end": None,
-                    "assume_hostile": False,              # [R7]
-                    "last_scrape_time": None,
-                    "scrape_consecutive_failures": 0,     # [R7]
-                    "calendar_events_today": [],
-                    "updated_at": None,
+                "agent_6": {
+                    "score": 100,
+                    "blocked": False,
+                    "veto": False,
+                    "impact_level": "NONE",
+                    "next_event": None,
+                    "resume_at": None,
+                    "feed_alive": True,
+                    "stealth_mode": False,
+                    "reason": "",
+                    "last_updated": None,
                 },
-
-                # Agent 7 — Temps & Sessions
-                "agent_7_sessions": {
-                    "is_clear": False,                   # Par défaut hors Kill Zone au boot
-                    "current_session": "OFF_HOURS",
-                    "in_killzone": False,
-                    "killzone_name": None,
-                    "rollover_lockout": False,
-                    "dst_offset": 0,
-                    "updated_at": None,
+                "agent_7": {
+                    "score": 0,
+                    "in_kill_zone": False,
+                    "kill_zone_name": None,
+                    "risk_modifier": 1.0,
+                    "trading_allowed": False,
+                    "vp_poc": None,
+                    "vp_vah": None,
+                    "vp_val": None,
+                    "price_in_value_area": False,
+                    "session_name": None,
+                    "reason": "",
+                    "last_updated": None,
+                },
+                "risk_manager": {
+                    "score": 100,
+                    "veto": False,
+                    "equity_protection_active": False,
+                    "paper_mode_forced": False,
+                    "consecutive_losses": 0,
+                    "daily_loss_pct": 0.0,
+                    "pause_until": None,
+                    "trades_today": 0,
+                    "reason": "",
+                    "last_updated": None,
                 },
             },
 
-            # ── ORCHESTRATEUR ────────────────────────────────────────────
+            # ── ORCHESTRATEUR V2 ───────────────────────────────────────────
             "orchestrator": {
-                "star_rating": 0,
-                "all_filters_passed": False,
-                "pending_signal": None,
-                "last_execution_result": {},
-                "last_decision": None,
-                "pipeline_active": False,
+                "final_score": 0,
+                "stars": 0,
+                "decision": "WAIT",
+                "direction": None,
+                "last_signal_time": None,
+                "signal_age_seconds": 0,
+                "regime_weight_modifier": 1.0,
+                "last_updated": None,
             },
 
+            # ── PERFORMANCE V2 ─────────────────────────────────────────────
+            "performance": {
+                "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "winrate": 0.0,
+                "total_pnl": 0.0,
+                "daily_pnl": 0.0,
+                "agent_accuracy": {
+                    "agent_1": {"correct": 0, "total": 0, "accuracy": 0.0},
+                    "agent_2": {"correct": 0, "total": 0, "accuracy": 0.0},
+                    "agent_3": {"correct": 0, "total": 0, "accuracy": 0.0},
+                    "agent_4": {"correct": 0, "total": 0, "accuracy": 0.0},
+                    "agent_5": {"correct": 0, "total": 0, "accuracy": 0.0},
+                },
+            },
             # ── AGENT RESULTS (V2) ───────────────────────────────────────
             "agent_results": {
                 "agent_1": None,
@@ -350,7 +407,7 @@ class BlackBoard:
         Lit une valeur du Tableau Noir de manière thread-safe.
 
         Args:
-            path: Chemin en notation pointée (ex: "meta.state", "agents.agent_1_meteo.score")
+            path: Chemin en notation pointée (ex: "meta.state", "agents.agent_1.score")
 
         Returns:
             La valeur stockée à ce chemin.
@@ -360,7 +417,7 @@ class BlackBoard:
 
         Exemple :
             state = await bb.read("meta.state")
-            score = await bb.read("agents.agent_1_meteo.score")
+            score = await bb.read("agents.agent_1.score")
         """
         async with self._lock:
             return self._navigate(path)
@@ -392,7 +449,7 @@ class BlackBoard:
 
         Exemple :
             await bb.write("meta.state", "READY")
-            await bb.write("agents.agent_1_meteo.score", 1)
+            await bb.write("agents.agent_1.score", 1)
         """
         async with self._lock:
             keys = path.split(".")
@@ -418,11 +475,11 @@ class BlackBoard:
         du verrou. Plus efficace que plusieurs appels à write() séparés.
 
         Args:
-            path:    Chemin vers le dictionnaire cible (ex: "agents.agent_1_meteo")
+            path:    Chemin vers le dictionnaire cible (ex: "agents.agent_1")
             updates: Dictionnaire des clés/valeurs à mettre à jour.
 
         Exemple :
-            await bb.update_dict("agents.agent_1_meteo", {
+            await bb.update_dict("agents.agent_1", {
                 "score": 1,
                 "bias": "BULLISH",
                 "market_phase": "EXPANSION",
@@ -496,6 +553,34 @@ class BlackBoard:
                 raise KeyError(f"Chemin invalide: '{path}' — tentative de naviguer dans un non-dict")
         return target
 
+    # ─────────────────────────────────────────────────────────────────────
+    # V2 METHODS (Direct access & Market context)
+    # ─────────────────────────────────────────────────────────────────────
+
+    async def update_agent(self, agent_key: str, data: dict) -> None:
+        """Mise à jour atomique et thread-safe d'un agent."""
+        async with self._lock:
+            if agent_key in self._data["agents"]:
+                self._data["agents"][agent_key].update(data)
+                self._data["agents"][agent_key]["last_updated"] = datetime.utcnow()
+    
+    async def update_market(self, data: dict) -> None:
+        """Mise à jour des données marché globales."""
+        async with self._lock:
+            if "market" in self._data:
+                self._data["market"].update(data)
+                self._data["market"]["last_tick"] = datetime.utcnow()
+    
+    def get_agent(self, key: str) -> dict:
+        """Lecture non-bloquante d'un agent (quelques ms de délai acceptables)."""
+        return self._data.get("agents", {}).get(key, {})
+    
+    def get_market(self) -> dict:
+        return self._data.get("market", {})
+    
+    def get_all(self) -> dict:
+        return self._data
+
     def __repr__(self) -> str:
         state = self._data.get("meta", {}).get("state", "UNKNOWN")
         mode = "LIVE" if self._data.get("meta", {}).get("live_mode") else "PAPER"
@@ -507,7 +592,7 @@ class BlackBoard:
     # V2 EVENT BUS METHODS
     # ─────────────────────────────────────────────────────────────────────
 
-    async def write_agent_result(self, agent_id: str, result: AgentResult):
+    async def write_agent_result(self, agent_id: str, result):
         """
         Appelé par chaque agent quand il a fini son calcul.
         Publie le résultat ET notifie tous les abonnés instantanément.
@@ -527,7 +612,7 @@ class BlackBoard:
         for callback in self._subscribers.get(event_name, []):
             asyncio.create_task(callback(result))
     
-    async def wait_for_agent(self, agent_id: str, timeout: float = 5.0) -> Optional[AgentResult]:
+    async def wait_for_agent(self, agent_id: str, timeout: float = 5.0) -> Optional["AgentResult"]:
         """
         Attend le résultat d'un agent spécifique avec timeout de sécurité.
         Usage : résultat = await blackboard.wait_for_agent("agent_1")
@@ -556,3 +641,10 @@ class BlackBoard:
             event.clear()
         for agent_id in self._data["agent_results"]:
             self._data["agent_results"][agent_id] = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SINGLETON GLOBAL — Importé par tous les agents et l'orchestrateur
+# Usage : from core.blackboard import BLACKBOARD
+# ─────────────────────────────────────────────────────────────────────────────
+BLACKBOARD = BlackBoard()

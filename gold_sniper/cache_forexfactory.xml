@@ -1,439 +1,349 @@
 <?xml version="1.0" encoding="windows-1252"?>
 <weeklyevents>
 	<event>
-		<title>BusinessNZ Services Index</title>
-		<country>NZD</country>
-		<date><![CDATA[05-17-2026]]></date>
-		<time><![CDATA[10:30pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous><![CDATA[46.0]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/852-nz-businessnz-services-index]]></url>
-	</event>
-	<event>
-		<title>Rightmove HPI m/m</title>
-		<country>GBP</country>
-		<date><![CDATA[05-17-2026]]></date>
-		<time><![CDATA[11:01pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous><![CDATA[0.8%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/243-uk-rightmove-hpi-mm]]></url>
-	</event>
-	<event>
-		<title>New Home Prices m/m</title>
-		<country>CNY</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[1:30am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous><![CDATA[-0.21%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/902-ch-new-home-prices-mm]]></url>
-	</event>
-	<event>
-		<title>Fixed Asset Investment ytd/y</title>
-		<country>CNY</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[2:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[1.7%]]></forecast>
-		<previous><![CDATA[1.7%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/458-ch-fixed-asset-investment-ytdy]]></url>
-	</event>
-	<event>
-		<title>Industrial Production y/y</title>
-		<country>CNY</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[2:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[6.0%]]></forecast>
-		<previous><![CDATA[5.7%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/453-ch-industrial-production-yy]]></url>
-	</event>
-	<event>
-		<title>NBS Press Conference</title>
-		<country>CNY</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[2:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
+		<title>Bank Holiday</title>
+		<country>CHF</country>
+		<date><![CDATA[05-25-2026]]></date>
+		<time><![CDATA[5:00am]]></time>
+		<impact><![CDATA[Holiday]]></impact>
 		<forecast />
 		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/469-ch-nbs-press-conference]]></url>
+		<url><![CDATA[https://www.forexfactory.com/calendar/392-sz-bank-holiday]]></url>
 	</event>
 	<event>
-		<title>Retail Sales y/y</title>
-		<country>CNY</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[2:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[2.0%]]></forecast>
-		<previous><![CDATA[1.7%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/470-ch-retail-sales-yy]]></url>
-	</event>
-	<event>
-		<title>Unemployment Rate</title>
-		<country>CNY</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[2:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[5.3%]]></forecast>
-		<previous><![CDATA[5.4%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/771-ch-unemployment-rate]]></url>
-	</event>
-	<event>
-		<title>MPC Member Greene Speaks</title>
-		<country>GBP</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[7:35am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/894-uk-mpc-member-greene-speaks]]></url>
-	</event>
-	<event>
-		<title>Italian Trade Balance</title>
+		<title>French Bank Holiday</title>
 		<country>EUR</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[8:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[5.25B]]></forecast>
-		<previous><![CDATA[4.94B]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/127-it-trade-balance]]></url>
-	</event>
-	<event>
-		<title>MPC Member Mann Speaks</title>
-		<country>GBP</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[8:30am]]></time>
-		<impact><![CDATA[Low]]></impact>
+		<date><![CDATA[05-25-2026]]></date>
+		<time><![CDATA[6:01am]]></time>
+		<impact><![CDATA[Holiday]]></impact>
 		<forecast />
 		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/848-uk-mpc-member-mann-speaks]]></url>
+		<url><![CDATA[https://www.forexfactory.com/calendar/396-fr-bank-holiday]]></url>
 	</event>
 	<event>
-		<title>G7 Meetings</title>
-		<country>All</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[8:45am]]></time>
-		<impact><![CDATA[Low]]></impact>
+		<title>German Bank Holiday</title>
+		<country>EUR</country>
+		<date><![CDATA[05-25-2026]]></date>
+		<time><![CDATA[6:02am]]></time>
+		<impact><![CDATA[Holiday]]></impact>
 		<forecast />
 		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/423-g7-meetings]]></url>
+		<url><![CDATA[https://www.forexfactory.com/calendar/391-ge-bank-holiday]]></url>
 	</event>
 	<event>
 		<title>Bank Holiday</title>
-		<country>CAD</country>
-		<date><![CDATA[05-18-2026]]></date>
+		<country>GBP</country>
+		<date><![CDATA[05-25-2026]]></date>
+		<time><![CDATA[7:00am]]></time>
+		<impact><![CDATA[Holiday]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/390-uk-bank-holiday]]></url>
+	</event>
+	<event>
+		<title>Bank Holiday</title>
+		<country>USD</country>
+		<date><![CDATA[05-25-2026]]></date>
 		<time><![CDATA[12:00pm]]></time>
 		<impact><![CDATA[Holiday]]></impact>
 		<forecast />
 		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/389-ca-bank-holiday]]></url>
+		<url><![CDATA[https://www.forexfactory.com/calendar/370-us-bank-holiday]]></url>
 	</event>
 	<event>
-		<title>NAHB Housing Market Index</title>
+		<title>Corporate Profits q/q</title>
+		<country>CAD</country>
+		<date><![CDATA[05-25-2026]]></date>
+		<time><![CDATA[12:30pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous><![CDATA[-1.6%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/379-ca-corporate-profits-qq]]></url>
+	</event>
+	<event>
+		<title>BRC Shop Price Index y/y</title>
+		<country>GBP</country>
+		<date><![CDATA[05-25-2026]]></date>
+		<time><![CDATA[11:01pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[1.1%]]></forecast>
+		<previous><![CDATA[1.0%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/116-uk-brc-shop-price-index-yy]]></url>
+	</event>
+	<event>
+		<title>BOJ Core CPI y/y</title>
+		<country>JPY</country>
+		<date><![CDATA[05-26-2026]]></date>
+		<time><![CDATA[5:00am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[1.7%]]></forecast>
+		<previous><![CDATA[1.7%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/631-jn-boj-core-cpi-yy]]></url>
+	</event>
+	<event>
+		<title>Foreign Direct Investment ytd/y</title>
+		<country>CNY</country>
+		<date><![CDATA[05-26-2026]]></date>
+		<time><![CDATA[6:02am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous><![CDATA[-7.3%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/457-ch-foreign-direct-investment-ytdy]]></url>
+	</event>
+	<event>
+		<title>CBI Realized Sales</title>
+		<country>GBP</country>
+		<date><![CDATA[05-26-2026]]></date>
+		<time><![CDATA[10:00am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[-52]]></forecast>
+		<previous><![CDATA[-68]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/329-uk-cbi-realized-sales]]></url>
+	</event>
+	<event>
+		<title>Gov Council Member Vincent Speaks</title>
+		<country>CAD</country>
+		<date><![CDATA[05-26-2026]]></date>
+		<time><![CDATA[12:30pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/896-ca-gov-council-member-vincent-speaks]]></url>
+	</event>
+	<event>
+		<title>HPI m/m</title>
 		<country>USD</country>
-		<date><![CDATA[05-18-2026]]></date>
+		<date><![CDATA[05-26-2026]]></date>
+		<time><![CDATA[1:00pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[0.1%]]></forecast>
+		<previous><![CDATA[0.0%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/239-us-hpi-mm]]></url>
+	</event>
+	<event>
+		<title><![CDATA[S&P/CS Composite-20 HPI y/y]]></title>
+		<country>USD</country>
+		<date><![CDATA[05-26-2026]]></date>
+		<time><![CDATA[1:00pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[1.0%]]></forecast>
+		<previous><![CDATA[0.9%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/240-us-spcs-composite-20-hpi-yy]]></url>
+	</event>
+	<event>
+		<title>CB Consumer Confidence</title>
+		<country>USD</country>
+		<date><![CDATA[05-26-2026]]></date>
 		<time><![CDATA[2:00pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[34]]></forecast>
-		<previous><![CDATA[34]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/162-us-nahb-housing-market-index]]></url>
+		<impact><![CDATA[Medium]]></impact>
+		<forecast><![CDATA[91.9]]></forecast>
+		<previous><![CDATA[92.8]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/208-us-cb-consumer-confidence]]></url>
 	</event>
 	<event>
-		<title>FOMC Member Goolsbee Speaks</title>
-		<country>USD</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[7:35pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/889-us-fomc-member-goolsbee-speaks]]></url>
-	</event>
-	<event>
-		<title>TIC Long-Term Purchases</title>
-		<country>USD</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[8:00pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[87.2B]]></forecast>
-		<previous><![CDATA[58.6B]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/372-us-tic-long-term-purchases]]></url>
-	</event>
-	<event>
-		<title>PPI Input q/q</title>
-		<country>NZD</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[10:45pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[0.8%]]></forecast>
-		<previous><![CDATA[-0.5%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/94-nz-ppi-input-qq]]></url>
-	</event>
-	<event>
-		<title>PPI Output q/q</title>
-		<country>NZD</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[10:45pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[0.5%]]></forecast>
-		<previous><![CDATA[0.1%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/95-nz-ppi-output-qq]]></url>
-	</event>
-	<event>
-		<title>RBA Assist Gov Hunter Speaks</title>
-		<country>AUD</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[11:25pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/907-au-rba-assist-gov-hunter-speaks]]></url>
-	</event>
-	<event>
-		<title>Prelim GDP Price Index y/y</title>
+		<title>SPPI y/y</title>
 		<country>JPY</country>
-		<date><![CDATA[05-18-2026]]></date>
+		<date><![CDATA[05-26-2026]]></date>
 		<time><![CDATA[11:50pm]]></time>
 		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[3.1%]]></forecast>
-		<previous><![CDATA[3.4%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/43-jn-prelim-gdp-price-index-yy]]></url>
+		<forecast><![CDATA[3.0%]]></forecast>
+		<previous><![CDATA[3.1%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/176-jn-sppi-yy]]></url>
 	</event>
 	<event>
-		<title>Prelim GDP q/q</title>
+		<title>BOJ Gov Ueda Speaks</title>
 		<country>JPY</country>
-		<date><![CDATA[05-18-2026]]></date>
-		<time><![CDATA[11:50pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[0.4%]]></forecast>
-		<previous><![CDATA[0.1%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/36-jn-prelim-gdp-qq]]></url>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[12:00am]]></time>
+		<impact><![CDATA[Medium]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/892-jn-boj-gov-ueda-speaks]]></url>
 	</event>
 	<event>
-		<title>Westpac Consumer Sentiment</title>
+		<title>MI Leading Index m/m</title>
 		<country>AUD</country>
-		<date><![CDATA[05-19-2026]]></date>
+		<date><![CDATA[05-27-2026]]></date>
 		<time><![CDATA[12:30am]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
-		<previous><![CDATA[-12.5%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/338-au-westpac-consumer-sentiment]]></url>
+		<previous><![CDATA[-0.1%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/303-au-mi-leading-index-mm]]></url>
 	</event>
 	<event>
-		<title>RBA Assist Gov Hunter Speaks</title>
+		<title>CPI m/m</title>
 		<country>AUD</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[12:40am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/907-au-rba-assist-gov-hunter-speaks]]></url>
-	</event>
-	<event>
-		<title>Monetary Policy Meeting Minutes</title>
-		<country>AUD</country>
-		<date><![CDATA[05-19-2026]]></date>
+		<date><![CDATA[05-27-2026]]></date>
 		<time><![CDATA[1:30am]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/307-au-monetary-policy-meeting-minutes]]></url>
-	</event>
-	<event>
-		<title>Revised Industrial Production m/m</title>
-		<country>JPY</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[4:30am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[-0.5%]]></forecast>
-		<previous><![CDATA[-0.5%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/226-jn-revised-industrial-production-mm]]></url>
-	</event>
-	<event>
-		<title>Tertiary Industry Activity m/m</title>
-		<country>JPY</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[4:30am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[-0.4%]]></forecast>
-		<previous><![CDATA[-0.4%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/382-jn-tertiary-industry-activity-mm]]></url>
-	</event>
-	<event>
-		<title>Claimant Count Change</title>
-		<country>GBP</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
 		<impact><![CDATA[High]]></impact>
-		<forecast><![CDATA[23.1K]]></forecast>
-		<previous><![CDATA[26.8K]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/68-uk-claimant-count-change]]></url>
+		<forecast><![CDATA[0.6%]]></forecast>
+		<previous><![CDATA[1.1%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/98-au-cpi-mm]]></url>
 	</event>
 	<event>
-		<title>Average Earnings Index 3m/y</title>
-		<country>GBP</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[3.8%]]></forecast>
-		<previous><![CDATA[3.8%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/180-uk-average-earnings-index-3my]]></url>
+		<title>CPI y/y</title>
+		<country>AUD</country>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[1:30am]]></time>
+		<impact><![CDATA[High]]></impact>
+		<forecast><![CDATA[4.4%]]></forecast>
+		<previous><![CDATA[4.6%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/888-au-cpi-yy]]></url>
 	</event>
 	<event>
-		<title>Unemployment Rate</title>
-		<country>GBP</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
+		<title>Trimmed Mean CPI m/m</title>
+		<country>AUD</country>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[1:30am]]></time>
+		<impact><![CDATA[High]]></impact>
+		<forecast><![CDATA[0.3%]]></forecast>
+		<previous><![CDATA[0.3%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/99-au-trimmed-mean-cpi-mm]]></url>
+	</event>
+	<event>
+		<title>Construction Work Done q/q</title>
+		<country>AUD</country>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[1:30am]]></time>
 		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[4.9%]]></forecast>
-		<previous><![CDATA[4.9%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/58-uk-unemployment-rate]]></url>
+		<forecast><![CDATA[0.8%]]></forecast>
+		<previous><![CDATA[-0.1%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/213-au-construction-work-done-qq]]></url>
 	</event>
 	<event>
-		<title>MPC Member Breeden Speaks</title>
-		<country>GBP</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[8:10am]]></time>
+		<title>Official Cash Rate</title>
+		<country>NZD</country>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[2:00am]]></time>
+		<impact><![CDATA[High]]></impact>
+		<forecast><![CDATA[2.25%]]></forecast>
+		<previous><![CDATA[2.25%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/23-nz-official-cash-rate]]></url>
+	</event>
+	<event>
+		<title>RBNZ Monetary Policy Statement</title>
+		<country>NZD</country>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[2:00am]]></time>
+		<impact><![CDATA[High]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/416-nz-rbnz-monetary-policy-statement]]></url>
+	</event>
+	<event>
+		<title>RBNZ Rate Statement</title>
+		<country>NZD</country>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[2:00am]]></time>
+		<impact><![CDATA[High]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/24-nz-rbnz-rate-statement]]></url>
+	</event>
+	<event>
+		<title>RBNZ Press Conference</title>
+		<country>NZD</country>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[3:00am]]></time>
+		<impact><![CDATA[High]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/406-nz-rbnz-press-conference]]></url>
+	</event>
+	<event>
+		<title>RBA Deputy Gov Hauser Speaks</title>
+		<country>AUD</country>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[8:00am]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
 		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/899-uk-mpc-member-breeden-speaks]]></url>
+		<url><![CDATA[https://www.forexfactory.com/calendar/904-au-rba-deputy-gov-hauser-speaks]]></url>
 	</event>
 	<event>
-		<title>G7 Meetings</title>
-		<country>All</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[8:45am]]></time>
+		<title>UBS Economic Expectations</title>
+		<country>CHF</country>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[8:00am]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/423-g7-meetings]]></url>
+		<previous><![CDATA[-30.3]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/315-sz-ubs-economic-expectations]]></url>
 	</event>
 	<event>
-		<title>Trade Balance</title>
+		<title>ECB Financial Stability Review</title>
 		<country>EUR</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[9:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[5.4B]]></forecast>
-		<previous><![CDATA[7.0B]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/120-ez-trade-balance]]></url>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[8:00am]]></time>
+		<impact><![CDATA[Medium]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/616-ez-ecb-financial-stability-review]]></url>
 	</event>
 	<event>
-		<title>FOMC Member Waller Speaks</title>
+		<title>FOMC Member Logan Speaks</title>
 		<country>USD</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[12:00pm]]></time>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[8:00am]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
 		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/839-us-fomc-member-waller-speaks]]></url>
+		<url><![CDATA[https://www.forexfactory.com/calendar/890-us-fomc-member-logan-speaks]]></url>
+	</event>
+	<event>
+		<title>German 30-y Bond Auction</title>
+		<country>EUR</country>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[9:34am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous><![CDATA[3.62|1.3]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/541-ge-30-y-bond-auction]]></url>
 	</event>
 	<event>
 		<title>ADP Weekly Employment Change</title>
 		<country>USD</country>
-		<date><![CDATA[05-19-2026]]></date>
+		<date><![CDATA[05-27-2026]]></date>
 		<time><![CDATA[12:15pm]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
-		<previous><![CDATA[33.0K]]></previous>
+		<previous><![CDATA[42.3K]]></previous>
 		<url><![CDATA[https://www.forexfactory.com/calendar/929-us-adp-weekly-employment-change]]></url>
 	</event>
 	<event>
-		<title>CPI m/m</title>
-		<country>CAD</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[12:30pm]]></time>
-		<impact><![CDATA[High]]></impact>
-		<forecast><![CDATA[0.7%]]></forecast>
-		<previous><![CDATA[0.9%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/80-ca-cpi-mm]]></url>
-	</event>
-	<event>
-		<title>Common CPI y/y</title>
-		<country>CAD</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[12:30pm]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[2.6%]]></forecast>
-		<previous><![CDATA[2.6%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/664-ca-common-cpi-yy]]></url>
-	</event>
-	<event>
-		<title>Median CPI y/y</title>
-		<country>CAD</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[12:30pm]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[2.3%]]></forecast>
-		<previous><![CDATA[2.3%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/659-ca-median-cpi-yy]]></url>
-	</event>
-	<event>
-		<title>Trimmed CPI y/y</title>
-		<country>CAD</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[12:30pm]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[2.2%]]></forecast>
-		<previous><![CDATA[2.2%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/657-ca-trimmed-cpi-yy]]></url>
-	</event>
-	<event>
-		<title>Building Permits m/m</title>
-		<country>CAD</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[12:30pm]]></time>
+		<title>CB Leading Index m/m</title>
+		<country>CNY</country>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[1:00pm]]></time>
 		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[2.1%]]></forecast>
-		<previous><![CDATA[-8.4%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/200-ca-building-permits-mm]]></url>
-	</event>
-	<event>
-		<title>NHPI m/m</title>
-		<country>CAD</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[12:30pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[0.0%]]></forecast>
+		<forecast />
 		<previous><![CDATA[-0.2%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/259-ca-nhpi-mm]]></url>
+		<url><![CDATA[https://www.forexfactory.com/calendar/495-ch-cb-leading-index-mm]]></url>
 	</event>
 	<event>
-		<title>Core CPI m/m</title>
-		<country>CAD</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[12:32pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous><![CDATA[0.2%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/81-ca-core-cpi-mm]]></url>
-	</event>
-	<event>
-		<title>Pending Home Sales m/m</title>
+		<title>Richmond Manufacturing Index</title>
 		<country>USD</country>
-		<date><![CDATA[05-19-2026]]></date>
+		<date><![CDATA[05-27-2026]]></date>
 		<time><![CDATA[2:00pm]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[1.0%]]></forecast>
-		<previous><![CDATA[1.5%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/233-us-pending-home-sales-mm]]></url>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[5]]></forecast>
+		<previous><![CDATA[3]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/186-us-richmond-manufacturing-index]]></url>
 	</event>
 	<event>
-		<title>GDT Price Index</title>
-		<country>NZD</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[2:53pm]]></time>
+		<title>FOMC Member Cook Speaks</title>
+		<country>USD</country>
+		<date><![CDATA[05-27-2026]]></date>
+		<time><![CDATA[7:55pm]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
-		<previous><![CDATA[1.5%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/602-nz-gdt-price-index]]></url>
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/886-us-fomc-member-cook-speaks]]></url>
 	</event>
 	<event>
 		<title>API Weekly Statistical Bulletin</title>
 		<country>USD</country>
-		<date><![CDATA[05-19-2026]]></date>
+		<date><![CDATA[05-27-2026]]></date>
 		<time><![CDATA[8:30pm]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
@@ -441,723 +351,573 @@
 		<url><![CDATA[https://www.forexfactory.com/calendar/754-us-api-weekly-statistical-bulletin]]></url>
 	</event>
 	<event>
-		<title>FOMC Member Paulson Speaks</title>
+		<title>FOMC Member Jefferson Speaks</title>
 		<country>USD</country>
-		<date><![CDATA[05-19-2026]]></date>
-		<time><![CDATA[11:00pm]]></time>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[12:00am]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
 		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/920-us-fomc-member-paulson-speaks]]></url>
+		<url><![CDATA[https://www.forexfactory.com/calendar/881-us-fomc-member-jefferson-speaks]]></url>
 	</event>
 	<event>
-		<title>1-y Loan Prime Rate</title>
-		<country>CNY</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[1:00am]]></time>
+		<title>Household Spending m/m</title>
+		<country>AUD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[1:30am]]></time>
 		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[3.00%]]></forecast>
-		<previous><![CDATA[3.00%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/777-ch-1-y-loan-prime-rate]]></url>
+		<forecast><![CDATA[-0.3%]]></forecast>
+		<previous><![CDATA[1.6%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/923-au-household-spending-mm]]></url>
 	</event>
 	<event>
-		<title>5-y Loan Prime Rate</title>
-		<country>CNY</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[1:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[3.50%]]></forecast>
-		<previous><![CDATA[3.50%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/898-ch-5-y-loan-prime-rate]]></url>
-	</event>
-	<event>
-		<title>German PPI m/m</title>
-		<country>EUR</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[2.0%]]></forecast>
-		<previous><![CDATA[2.5%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/88-ge-ppi-mm]]></url>
-	</event>
-	<event>
-		<title>CPI y/y</title>
-		<country>GBP</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
-		<impact><![CDATA[High]]></impact>
-		<forecast><![CDATA[3.0%]]></forecast>
-		<previous><![CDATA[3.3%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/82-uk-cpi-yy]]></url>
-	</event>
-	<event>
-		<title>Core CPI y/y</title>
-		<country>GBP</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[2.6%]]></forecast>
-		<previous><![CDATA[3.1%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/83-uk-core-cpi-yy]]></url>
-	</event>
-	<event>
-		<title>PPI Input m/m</title>
-		<country>GBP</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
+		<title>Private Capital Expenditure q/q</title>
+		<country>AUD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[1:30am]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast><![CDATA[1.2%]]></forecast>
-		<previous><![CDATA[4.4%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/92-uk-ppi-input-mm]]></url>
+		<previous><![CDATA[0.4%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/381-au-private-capital-expenditure-qq]]></url>
 	</event>
 	<event>
-		<title>PPI Output m/m</title>
-		<country>GBP</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[1.0%]]></forecast>
-		<previous><![CDATA[0.9%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/93-uk-ppi-output-mm]]></url>
-	</event>
-	<event>
-		<title>RPI y/y</title>
-		<country>GBP</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[3.6%]]></forecast>
-		<previous><![CDATA[4.1%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/84-uk-rpi-yy]]></url>
-	</event>
-	<event>
-		<title>HPI y/y</title>
-		<country>GBP</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[8:30am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[-0.1%]]></forecast>
-		<previous><![CDATA[1.2%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/639-uk-hpi-yy]]></url>
-	</event>
-	<event>
-		<title>Final Core CPI y/y</title>
-		<country>EUR</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[9:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[2.2%]]></forecast>
-		<previous><![CDATA[2.2%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/167-ez-final-core-cpi-yy]]></url>
-	</event>
-	<event>
-		<title>Final CPI y/y</title>
-		<country>EUR</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[9:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[3.0%]]></forecast>
-		<previous><![CDATA[3.0%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/166-ez-final-cpi-yy]]></url>
-	</event>
-	<event>
-		<title>German 10-y Bond Auction</title>
-		<country>EUR</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[9:32am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous><![CDATA[3.08|1.5]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/522-ge-10-y-bond-auction]]></url>
-	</event>
-	<event>
-		<title>Monetary Policy Report Hearings</title>
-		<country>GBP</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[1:15pm]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/439-uk-monetary-policy-report-hearings]]></url>
-	</event>
-	<event>
-		<title>FOMC Member Barr Speaks</title>
-		<country>USD</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[1:15pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/880-us-fomc-member-barr-speaks]]></url>
-	</event>
-	<event>
-		<title>Crude Oil Inventories</title>
-		<country>USD</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[2:30pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[-2.5M]]></forecast>
-		<previous><![CDATA[-4.3M]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/10-us-crude-oil-inventories]]></url>
-	</event>
-	<event>
-		<title>FOMC Meeting Minutes</title>
-		<country>USD</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[6:00pm]]></time>
-		<impact><![CDATA[High]]></impact>
-		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/304-us-fomc-meeting-minutes]]></url>
-	</event>
-	<event>
-		<title>Trade Balance</title>
-		<country>NZD</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[10:45pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[980M]]></forecast>
-		<previous><![CDATA[698M]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/121-nz-trade-balance]]></url>
-	</event>
-	<event>
-		<title>Flash Manufacturing PMI</title>
+		<title>RBA Bulletin</title>
 		<country>AUD</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[11:00pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous><![CDATA[51.0]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/817-au-flash-manufacturing-pmi]]></url>
-	</event>
-	<event>
-		<title>Flash Services PMI</title>
-		<country>AUD</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[11:00pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous><![CDATA[50.3]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/818-au-flash-services-pmi]]></url>
-	</event>
-	<event>
-		<title>Core Machinery Orders m/m</title>
-		<country>JPY</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[11:50pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[-7.7%]]></forecast>
-		<previous><![CDATA[13.6%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/354-jn-core-machinery-orders-mm]]></url>
-	</event>
-	<event>
-		<title>Trade Balance</title>
-		<country>JPY</country>
-		<date><![CDATA[05-20-2026]]></date>
-		<time><![CDATA[11:50pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[-0.23T]]></forecast>
-		<previous><![CDATA[0.09T]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/123-jn-trade-balance]]></url>
-	</event>
-	<event>
-		<title>Flash Manufacturing PMI</title>
-		<country>JPY</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[12:30am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[54.5]]></forecast>
-		<previous><![CDATA[54.9]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/595-jn-flash-manufacturing-pmi]]></url>
-	</event>
-	<event>
-		<title>MI Inflation Expectations</title>
-		<country>AUD</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[1:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous><![CDATA[5.9%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/293-au-mi-inflation-expectations]]></url>
-	</event>
-	<event>
-		<title>Employment Change</title>
-		<country>AUD</country>
-		<date><![CDATA[05-21-2026]]></date>
+		<date><![CDATA[05-28-2026]]></date>
 		<time><![CDATA[1:30am]]></time>
-		<impact><![CDATA[High]]></impact>
-		<forecast><![CDATA[16.7K]]></forecast>
-		<previous><![CDATA[17.9K]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/73-au-employment-change]]></url>
-	</event>
-	<event>
-		<title>Unemployment Rate</title>
-		<country>AUD</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[1:30am]]></time>
-		<impact><![CDATA[High]]></impact>
-		<forecast><![CDATA[4.3%]]></forecast>
-		<previous><![CDATA[4.3%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/64-au-unemployment-rate]]></url>
-	</event>
-	<event>
-		<title>Credit Card Spending y/y</title>
-		<country>NZD</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[3:00am]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
-		<previous><![CDATA[2.1%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/184-nz-credit-card-spending-yy]]></url>
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/333-au-rba-bulletin]]></url>
 	</event>
 	<event>
-		<title>French Flash Manufacturing PMI</title>
-		<country>EUR</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[7:15am]]></time>
+		<title>Annual Budget Release</title>
+		<country>NZD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[2:00am]]></time>
 		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[52.1]]></forecast>
-		<previous><![CDATA[52.8]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/268-fr-flash-manufacturing-pmi]]></url>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/429-nz-annual-budget-release]]></url>
 	</event>
 	<event>
-		<title>French Flash Services PMI</title>
-		<country>EUR</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[7:15am]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[46.6]]></forecast>
-		<previous><![CDATA[46.5]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/269-fr-flash-services-pmi]]></url>
+		<title>MPC Member Lombardelli Speaks</title>
+		<country>GBP</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[2:25am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/908-uk-mpc-member-lombardelli-speaks]]></url>
 	</event>
 	<event>
-		<title>German Flash Manufacturing PMI</title>
-		<country>EUR</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[7:30am]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[51.0]]></forecast>
-		<previous><![CDATA[51.2]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/266-ge-flash-manufacturing-pmi]]></url>
+		<title>FOMC Member Goolsbee Speaks</title>
+		<country>USD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[2:25am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/889-us-fomc-member-goolsbee-speaks]]></url>
 	</event>
 	<event>
-		<title>German Flash Services PMI</title>
+		<title>MPC Member Breeden Speaks</title>
+		<country>GBP</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[8:05am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/899-uk-mpc-member-breeden-speaks]]></url>
+	</event>
+	<event>
+		<title>Italian 10-y Bond Auction</title>
 		<country>EUR</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[7:30am]]></time>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[9:33am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/524-it-10-y-bond-auction]]></url>
+	</event>
+	<event>
+		<title>SNB Chairman Schlegel Speaks</title>
+		<country>CHF</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[11:00am]]></time>
 		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[47.1]]></forecast>
-		<previous><![CDATA[46.9]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/267-ge-flash-services-pmi]]></url>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/915-sz-snb-chairman-schlegel-speaks]]></url>
+	</event>
+	<event>
+		<title>ECB Monetary Policy Meeting Accounts</title>
+		<country>EUR</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[11:30am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/613-ez-ecb-monetary-policy-meeting-accounts]]></url>
 	</event>
 	<event>
 		<title>Current Account</title>
-		<country>EUR</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[8:00am]]></time>
+		<country>CAD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[12:30pm]]></time>
 		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[26.3B]]></forecast>
-		<previous><![CDATA[24.9B]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/218-ez-current-account]]></url>
+		<forecast><![CDATA[-1.9B]]></forecast>
+		<previous><![CDATA[-0.7B]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/196-ca-current-account]]></url>
 	</event>
 	<event>
-		<title>Flash Manufacturing PMI</title>
-		<country>EUR</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[8:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[51.7]]></forecast>
-		<previous><![CDATA[52.2]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/263-ez-flash-manufacturing-pmi]]></url>
-	</event>
-	<event>
-		<title>Flash Services PMI</title>
-		<country>EUR</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[8:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[47.8]]></forecast>
-		<previous><![CDATA[47.4]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/244-ez-flash-services-pmi]]></url>
-	</event>
-	<event>
-		<title>Flash Manufacturing PMI</title>
-		<country>GBP</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[8:30am]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[52.9]]></forecast>
-		<previous><![CDATA[53.6]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/837-uk-flash-manufacturing-pmi]]></url>
-	</event>
-	<event>
-		<title>Flash Services PMI</title>
-		<country>GBP</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[8:30am]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[51.7]]></forecast>
-		<previous><![CDATA[52.0]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/836-uk-flash-services-pmi]]></url>
-	</event>
-	<event>
-		<title>10-y Bond Auction</title>
-		<country>GBP</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[9:03am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous><![CDATA[4.91|3.5]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/526-uk-10-y-bond-auction]]></url>
-	</event>
-	<event>
-		<title>EU Economic Forecasts</title>
-		<country>EUR</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[9:30am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/413-ez-eu-economic-forecasts]]></url>
-	</event>
-	<event>
-		<title>German Buba Monthly Report</title>
-		<country>EUR</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[10:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/581-ge-buba-monthly-report]]></url>
-	</event>
-	<event>
-		<title>CBI Industrial Order Expectations</title>
-		<country>GBP</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[10:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[-40]]></forecast>
-		<previous><![CDATA[-38]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/331-uk-cbi-industrial-order-expectations]]></url>
-	</event>
-	<event>
-		<title>MPC Member Taylor Speaks</title>
-		<country>GBP</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[12:00pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/916-uk-mpc-member-taylor-speaks]]></url>
-	</event>
-	<event>
-		<title>Philly Fed Manufacturing Index</title>
+		<title>Core PCE Price Index m/m</title>
 		<country>USD</country>
-		<date><![CDATA[05-21-2026]]></date>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[12:30pm]]></time>
+		<impact><![CDATA[High]]></impact>
+		<forecast><![CDATA[0.3%]]></forecast>
+		<previous><![CDATA[0.3%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/85-us-core-pce-price-index-mm]]></url>
+	</event>
+	<event>
+		<title>Prelim GDP q/q</title>
+		<country>USD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[12:30pm]]></time>
+		<impact><![CDATA[High]]></impact>
+		<forecast><![CDATA[2.1%]]></forecast>
+		<previous><![CDATA[0.7%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/27-us-prelim-gdp-qq]]></url>
+	</event>
+	<event>
+		<title>Prelim GDP Price Index q/q</title>
+		<country>USD</country>
+		<date><![CDATA[05-28-2026]]></date>
 		<time><![CDATA[12:30pm]]></time>
 		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[17.6]]></forecast>
-		<previous><![CDATA[26.7]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/325-us-philly-fed-manufacturing-index]]></url>
+		<forecast><![CDATA[3.6%]]></forecast>
+		<previous><![CDATA[3.8%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/45-us-prelim-gdp-price-index-qq]]></url>
 	</event>
 	<event>
 		<title>Unemployment Claims</title>
 		<country>USD</country>
-		<date><![CDATA[05-21-2026]]></date>
+		<date><![CDATA[05-28-2026]]></date>
 		<time><![CDATA[12:30pm]]></time>
 		<impact><![CDATA[Medium]]></impact>
 		<forecast><![CDATA[210K]]></forecast>
-		<previous><![CDATA[211K]]></previous>
+		<previous><![CDATA[209K]]></previous>
 		<url><![CDATA[https://www.forexfactory.com/calendar/11-us-unemployment-claims]]></url>
 	</event>
 	<event>
-		<title>Building Permits</title>
+		<title>Core Durable Goods Orders m/m</title>
 		<country>USD</country>
-		<date><![CDATA[05-21-2026]]></date>
+		<date><![CDATA[05-28-2026]]></date>
 		<time><![CDATA[12:30pm]]></time>
 		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[1.38M]]></forecast>
-		<previous><![CDATA[1.37M]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/198-us-building-permits]]></url>
+		<forecast><![CDATA[0.5%]]></forecast>
+		<previous><![CDATA[0.9%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/350-us-core-durable-goods-orders-mm]]></url>
 	</event>
 	<event>
-		<title>Housing Starts</title>
+		<title>Durable Goods Orders m/m</title>
 		<country>USD</country>
-		<date><![CDATA[05-21-2026]]></date>
+		<date><![CDATA[05-28-2026]]></date>
 		<time><![CDATA[12:30pm]]></time>
 		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[1.42M]]></forecast>
-		<previous><![CDATA[1.50M]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/199-us-housing-starts]]></url>
+		<forecast><![CDATA[3.3%]]></forecast>
+		<previous><![CDATA[0.8%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/349-us-durable-goods-orders-mm]]></url>
 	</event>
 	<event>
-		<title>Flash Manufacturing PMI</title>
+		<title>Personal Income m/m</title>
 		<country>USD</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[1:45pm]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[53.8]]></forecast>
-		<previous><![CDATA[54.0]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/552-us-flash-manufacturing-pmi]]></url>
-	</event>
-	<event>
-		<title>Flash Services PMI</title>
-		<country>USD</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[1:45pm]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[51.1]]></forecast>
-		<previous><![CDATA[51.3]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/583-us-flash-services-pmi]]></url>
-	</event>
-	<event>
-		<title>Consumer Confidence</title>
-		<country>EUR</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[2:02pm]]></time>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[12:30pm]]></time>
 		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[-21]]></forecast>
-		<previous><![CDATA[-21]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/336-ez-consumer-confidence]]></url>
+		<forecast><![CDATA[0.4%]]></forecast>
+		<previous><![CDATA[0.6%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/360-us-personal-income-mm]]></url>
+	</event>
+	<event>
+		<title>Personal Spending m/m</title>
+		<country>USD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[12:30pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[0.5%]]></forecast>
+		<previous><![CDATA[0.9%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/356-us-personal-spending-mm]]></url>
+	</event>
+	<event>
+		<title>FOMC Member Williams Speaks</title>
+		<country>USD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[12:55pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/518-us-fomc-member-williams-speaks]]></url>
+	</event>
+	<event>
+		<title>BOC Financial System Review</title>
+		<country>CAD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[2:00pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/614-ca-boc-financial-system-review]]></url>
+	</event>
+	<event>
+		<title>New Home Sales</title>
+		<country>USD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[2:00pm]]></time>
+		<impact><![CDATA[Medium]]></impact>
+		<forecast><![CDATA[661K]]></forecast>
+		<previous><![CDATA[682K]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/231-us-new-home-sales]]></url>
+	</event>
+	<event>
+		<title>FOMC Member Musalem Speaks</title>
+		<country>USD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[2:15pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/911-us-fomc-member-musalem-speaks]]></url>
 	</event>
 	<event>
 		<title>Natural Gas Storage</title>
 		<country>USD</country>
-		<date><![CDATA[05-21-2026]]></date>
+		<date><![CDATA[05-28-2026]]></date>
 		<time><![CDATA[2:30pm]]></time>
 		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[96B]]></forecast>
-		<previous><![CDATA[85B]]></previous>
+		<forecast />
+		<previous />
 		<url><![CDATA[https://www.forexfactory.com/calendar/26-us-natural-gas-storage]]></url>
+	</event>
+	<event>
+		<title>BOC Press Conference</title>
+		<country>CAD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[3:00pm]]></time>
+		<impact><![CDATA[Medium]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/471-ca-boc-press-conference]]></url>
+	</event>
+	<event>
+		<title>Crude Oil Inventories</title>
+		<country>USD</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[4:00pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous><![CDATA[-7.9M]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/10-us-crude-oil-inventories]]></url>
+	</event>
+	<event>
+		<title>Tokyo Core CPI y/y</title>
+		<country>JPY</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[11:30pm]]></time>
+		<impact><![CDATA[Medium]]></impact>
+		<forecast><![CDATA[1.5%]]></forecast>
+		<previous><![CDATA[1.5%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/175-jn-tokyo-core-cpi-yy]]></url>
+	</event>
+	<event>
+		<title>Unemployment Rate</title>
+		<country>JPY</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[11:30pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[2.7%]]></forecast>
+		<previous><![CDATA[2.7%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/63-jn-unemployment-rate]]></url>
+	</event>
+	<event>
+		<title>Prelim Industrial Production m/m</title>
+		<country>JPY</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[11:50pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[-0.3%]]></forecast>
+		<previous><![CDATA[-0.5%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/225-jn-prelim-industrial-production-mm]]></url>
+	</event>
+	<event>
+		<title>Retail Sales y/y</title>
+		<country>JPY</country>
+		<date><![CDATA[05-28-2026]]></date>
+		<time><![CDATA[11:50pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[1.4%]]></forecast>
+		<previous><![CDATA[1.7%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/115-jn-retail-sales-yy]]></url>
+	</event>
+	<event>
+		<title>ANZ Business Confidence</title>
+		<country>NZD</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[1:00am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous><![CDATA[-10.6]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/319-nz-anz-business-confidence]]></url>
+	</event>
+	<event>
+		<title>Private Sector Credit m/m</title>
+		<country>AUD</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[1:30am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[0.6%]]></forecast>
+		<previous><![CDATA[0.7%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/344-au-private-sector-credit-mm]]></url>
+	</event>
+	<event>
+		<title>Consumer Confidence</title>
+		<country>JPY</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[5:00am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[32.5]]></forecast>
+		<previous><![CDATA[32.2]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/212-jn-consumer-confidence]]></url>
+	</event>
+	<event>
+		<title>Housing Starts y/y</title>
+		<country>JPY</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[5:00am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[14.7%]]></forecast>
+		<previous><![CDATA[-29.3%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/228-jn-housing-starts-yy]]></url>
+	</event>
+	<event>
+		<title>German Import Prices m/m</title>
+		<country>EUR</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[6:00am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous><![CDATA[3.6%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/257-ge-import-prices-mm]]></url>
+	</event>
+	<event>
+		<title>German Prelim CPI m/m</title>
+		<country>EUR</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[6:29am]]></time>
+		<impact><![CDATA[Medium]]></impact>
+		<forecast><![CDATA[0.2%]]></forecast>
+		<previous><![CDATA[0.6%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/169-ge-prelim-cpi-mm]]></url>
+	</event>
+	<event>
+		<title>French Consumer Spending m/m</title>
+		<country>EUR</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[6:45am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[0.0%]]></forecast>
+		<previous><![CDATA[0.7%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/357-fr-consumer-spending-mm]]></url>
+	</event>
+	<event>
+		<title>French Final Private Payrolls q/q</title>
+		<country>EUR</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[6:45am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[-0.1%]]></forecast>
+		<previous><![CDATA[-0.1%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/71-fr-final-private-payrolls-qq]]></url>
+	</event>
+	<event>
+		<title>French Prelim CPI m/m</title>
+		<country>EUR</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[6:45am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[0.2%]]></forecast>
+		<previous><![CDATA[1.0%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/556-fr-prelim-cpi-mm]]></url>
+	</event>
+	<event>
+		<title>French Prelim GDP q/q</title>
+		<country>EUR</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[6:45am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[0.0%]]></forecast>
+		<previous><![CDATA[0.0%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/39-fr-prelim-gdp-qq]]></url>
+	</event>
+	<event>
+		<title>KOF Economic Barometer</title>
+		<country>CHF</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[7:00am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[98.0]]></forecast>
+		<previous><![CDATA[97.9]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/301-sz-kof-economic-barometer]]></url>
+	</event>
+	<event>
+		<title>Spanish Flash CPI y/y</title>
+		<country>EUR</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[7:00am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[3.4%]]></forecast>
+		<previous><![CDATA[3.2%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/592-sp-flash-cpi-yy]]></url>
+	</event>
+	<event>
+		<title>German Unemployment Change</title>
+		<country>EUR</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[7:55am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[11K]]></forecast>
+		<previous><![CDATA[20K]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/60-ge-unemployment-change]]></url>
+	</event>
+	<event>
+		<title>Italian Monthly Unemployment Rate</title>
+		<country>EUR</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[8:00am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[5.3%]]></forecast>
+		<previous><![CDATA[5.2%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/486-it-monthly-unemployment-rate]]></url>
 	</event>
 	<event>
 		<title>BOE Gov Bailey Speaks</title>
 		<country>GBP</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[3:00pm]]></time>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[8:20am]]></time>
 		<impact><![CDATA[High]]></impact>
 		<forecast />
 		<previous />
 		<url><![CDATA[https://www.forexfactory.com/calendar/838-uk-boe-gov-bailey-speaks]]></url>
 	</event>
 	<event>
-		<title>FOMC Member Barkin Speaks</title>
+		<title>Italian Prelim CPI m/m</title>
+		<country>EUR</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[9:00am]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[0.2%]]></forecast>
+		<previous><![CDATA[1.2%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/172-it-prelim-cpi-mm]]></url>
+	</event>
+	<event>
+		<title>FOMC Member Schmid Speaks</title>
 		<country>USD</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[4:20pm]]></time>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[10:50am]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
 		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/728-us-fomc-member-barkin-speaks]]></url>
+		<url><![CDATA[https://www.forexfactory.com/calendar/912-us-fomc-member-schmid-speaks]]></url>
 	</event>
 	<event>
-		<title>Core Retail Sales q/q</title>
-		<country>NZD</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[10:45pm]]></time>
+		<title>GDP m/m</title>
+		<country>CAD</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[12:30pm]]></time>
+		<impact><![CDATA[High]]></impact>
+		<forecast><![CDATA[0.1%]]></forecast>
+		<previous><![CDATA[0.2%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/29-ca-gdp-mm]]></url>
+	</event>
+	<event>
+		<title>Goods Trade Balance</title>
+		<country>USD</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[12:30pm]]></time>
 		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[0.8%]]></forecast>
-		<previous><![CDATA[1.5%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/511-nz-core-retail-sales-qq]]></url>
+		<forecast><![CDATA[-88.6B]]></forecast>
+		<previous><![CDATA[-87.9B]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/625-us-goods-trade-balance]]></url>
 	</event>
 	<event>
-		<title>Retail Sales q/q</title>
-		<country>NZD</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[10:45pm]]></time>
+		<title>Prelim Wholesale Inventories m/m</title>
+		<country>USD</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[12:30pm]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast><![CDATA[0.5%]]></forecast>
-		<previous><![CDATA[0.9%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/510-nz-retail-sales-qq]]></url>
+		<previous><![CDATA[1.4%]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/642-us-prelim-wholesale-inventories-mm]]></url>
 	</event>
 	<event>
-		<title>GfK Consumer Confidence</title>
+		<title>FOMC Member Bowman Speaks</title>
+		<country>USD</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[1:10pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/812-us-fomc-member-bowman-speaks]]></url>
+	</event>
+	<event>
+		<title>FOMC Member Paulson Speaks</title>
+		<country>USD</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[1:15pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast />
+		<previous />
+		<url><![CDATA[https://www.forexfactory.com/calendar/920-us-fomc-member-paulson-speaks]]></url>
+	</event>
+	<event>
+		<title>Chicago PMI</title>
+		<country>USD</country>
+		<date><![CDATA[05-29-2026]]></date>
+		<time><![CDATA[1:45pm]]></time>
+		<impact><![CDATA[Low]]></impact>
+		<forecast><![CDATA[51.3]]></forecast>
+		<previous><![CDATA[49.2]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/189-us-chicago-pmi]]></url>
+	</event>
+	<event>
+		<title>MPC Member Mann Speaks</title>
 		<country>GBP</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[11:01pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[-28]]></forecast>
-		<previous><![CDATA[-25]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/188-uk-gfk-consumer-confidence]]></url>
-	</event>
-	<event>
-		<title>National Core CPI y/y</title>
-		<country>JPY</country>
-		<date><![CDATA[05-21-2026]]></date>
-		<time><![CDATA[11:30pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[1.7%]]></forecast>
-		<previous><![CDATA[1.8%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/174-jn-national-core-cpi-yy]]></url>
-	</event>
-	<event>
-		<title>German Final GDP q/q</title>
-		<country>EUR</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[0.3%]]></forecast>
-		<previous><![CDATA[0.3%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/77-ge-final-gdp-qq]]></url>
-	</event>
-	<event>
-		<title>German GfK Consumer Climate</title>
-		<country>EUR</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[-33.7]]></forecast>
-		<previous><![CDATA[-33.3]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/335-ge-gfk-consumer-climate]]></url>
-	</event>
-	<event>
-		<title>Retail Sales m/m</title>
-		<country>GBP</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[-0.6%]]></forecast>
-		<previous><![CDATA[0.7%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/105-uk-retail-sales-mm]]></url>
-	</event>
-	<event>
-		<title>Public Sector Net Borrowing</title>
-		<country>GBP</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[6:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[20.7B]]></forecast>
-		<previous><![CDATA[12.6B]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/342-uk-public-sector-net-borrowing]]></url>
-	</event>
-	<event>
-		<title>German ifo Business Climate</title>
-		<country>EUR</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[8:00am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[84.2]]></forecast>
-		<previous><![CDATA[84.4]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/316-ge-ifo-business-climate]]></url>
-	</event>
-	<event>
-		<title>ECOFIN Meetings</title>
-		<country>EUR</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[9:15am]]></time>
+		<date><![CDATA[05-30-2026]]></date>
+		<time><![CDATA[9:40am]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
 		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/504-ez-ecofin-meetings]]></url>
+		<url><![CDATA[https://www.forexfactory.com/calendar/848-uk-mpc-member-mann-speaks]]></url>
 	</event>
 	<event>
-		<title>Eurogroup Meetings</title>
-		<country>EUR</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[9:15am]]></time>
+		<title>Manufacturing PMI</title>
+		<country>CNY</country>
+		<date><![CDATA[05-31-2026]]></date>
+		<time><![CDATA[1:30am]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/562-ez-eurogroup-meetings]]></url>
+		<previous><![CDATA[50.3]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/449-ch-manufacturing-pmi]]></url>
 	</event>
 	<event>
-		<title>Core Retail Sales m/m</title>
-		<country>CAD</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[12:30pm]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[0.9%]]></forecast>
-		<previous><![CDATA[0.5%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/103-ca-core-retail-sales-mm]]></url>
-	</event>
-	<event>
-		<title>Retail Sales m/m</title>
-		<country>CAD</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[12:30pm]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[0.6%]]></forecast>
-		<previous><![CDATA[0.7%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/104-ca-retail-sales-mm]]></url>
-	</event>
-	<event>
-		<title>IPPI m/m</title>
-		<country>CAD</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[12:30pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[1.2%]]></forecast>
-		<previous><![CDATA[2.4%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/90-ca-ippi-mm]]></url>
-	</event>
-	<event>
-		<title>RMPI m/m</title>
-		<country>CAD</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[12:30pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[2.7%]]></forecast>
-		<previous><![CDATA[12.0%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/91-ca-rmpi-mm]]></url>
-	</event>
-	<event>
-		<title>Belgian NBB Business Climate</title>
-		<country>EUR</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[12:40pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[-13.5]]></forecast>
-		<previous><![CDATA[-14.2]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/317-be-nbb-business-climate]]></url>
-	</event>
-	<event>
-		<title>Revised UoM Consumer Sentiment</title>
-		<country>USD</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[2:00pm]]></time>
-		<impact><![CDATA[Medium]]></impact>
-		<forecast><![CDATA[48.2]]></forecast>
-		<previous><![CDATA[48.2]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/54-us-revised-uom-consumer-sentiment]]></url>
-	</event>
-	<event>
-		<title>CB Leading Index m/m</title>
-		<country>USD</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[2:00pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast><![CDATA[-0.1%]]></forecast>
-		<previous><![CDATA[-0.6%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/297-us-cb-leading-index-mm]]></url>
-	</event>
-	<event>
-		<title>FOMC Member Waller Speaks</title>
-		<country>USD</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[2:00pm]]></time>
+		<title>Non-Manufacturing PMI</title>
+		<country>CNY</country>
+		<date><![CDATA[05-31-2026]]></date>
+		<time><![CDATA[1:30am]]></time>
 		<impact><![CDATA[Low]]></impact>
 		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/839-us-fomc-member-waller-speaks]]></url>
-	</event>
-	<event>
-		<title>Revised UoM Inflation Expectations</title>
-		<country>USD</country>
-		<date><![CDATA[05-22-2026]]></date>
-		<time><![CDATA[2:00pm]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous><![CDATA[4.5%]]></previous>
-		<url><![CDATA[https://www.forexfactory.com/calendar/238-us-revised-uom-inflation-expectations]]></url>
-	</event>
-	<event>
-		<title>ECOFIN Meetings</title>
-		<country>EUR</country>
-		<date><![CDATA[05-23-2026]]></date>
-		<time><![CDATA[9:15am]]></time>
-		<impact><![CDATA[Low]]></impact>
-		<forecast />
-		<previous />
-		<url><![CDATA[https://www.forexfactory.com/calendar/504-ez-ecofin-meetings]]></url>
+		<previous><![CDATA[49.4]]></previous>
+		<url><![CDATA[https://www.forexfactory.com/calendar/520-ch-non-manufacturing-pmi]]></url>
 	</event>
 </weeklyevents>

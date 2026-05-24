@@ -8,6 +8,7 @@
 #
 # ═══════════════════════════════════════════════════════════════════════════════
 
+import os
 from datetime import timezone, timedelta
 from zoneinfo import ZoneInfo
 
@@ -22,10 +23,10 @@ LIVE_MODE = False
 # 2. IDENTIFIANTS MT5
 # ─────────────────────────────────────────────────────────────────────────────
 
-MT5_ACCOUNT   = 5050805409   # Numéro de compte (à remplir)
-MT5_PASSWORD  = "G-ZvNd6a" # Mot de passe (à remplir)
-MT5_SERVER    = "MetaQuotes-Demo" # Serveur du broker (ex: "ICMarketsSC-Demo")
-MT5_PATH      = None       # Chemin vers le terminal MT5 (None = auto-détection)
+MT5_ACCOUNT   = int(os.getenv("MT5_ACCOUNT", "0") or 0)
+MT5_PASSWORD  = os.getenv("MT5_PASSWORD", "")
+MT5_SERVER    = os.getenv("MT5_SERVER", "")
+MT5_PATH      = os.getenv("MT5_PATH") or None
 
 # Symbole unique — un seul front à la fois (R13 rejeté)
 SYMBOL = "XAUUSD"
@@ -49,18 +50,27 @@ TZ_NY      = ZoneInfo("America/New_York")    # Référence pour les sessions US
 # ─────────────────────────────────────────────────────────────────────────────
 
 RISK_PERCENT        = 1.0      # Pourcentage de l'equity risqué par trade
+RISK_PCT_PER_TRADE  = RISK_PERCENT  # Script 12: 1% du capital par trade
 RISK_PERCENT_FRIDAY = 0.5      # [R16] Risque réduit le vendredi après 18h UTC+1
 MAX_TRADES_PER_DAY  = 2        # Limite journalière (sauf setup Diamant 5★)
 MIN_RISK_REWARD     = 2.0      # R:R minimum requis pour valider un signal
 COOLDOWN_SECONDS    = 180      # 3 minutes de cooldown post-trade
 MAX_SLIPPAGE_POINTS = 30       # 3 pips sur XAUUSD (30 points)
 MAX_DAILY_DRAWDOWN_PERCENT = 5.0  # Arrêt si perte > 5% de l'equity début de journée
+DAILY_LOSS_LIMIT    = 3.0      # -3% -> bascule en paper trading forcé
+DRAWDOWN_LIMIT      = 5.0      # -5% -> veto absolu / arrêt total
+CONSECUTIVE_LOSS_LIMIT = 3     # 3 pertes consécutives -> pause 2h
+CONSECUTIVE_LOSS_PAUSE_HOURS = 2
+PAPER_MODE_RECOVERY_PCT = 1.5  # Récupération avant retour live
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. FILTRES DE SPREAD
 # ─────────────────────────────────────────────────────────────────────────────
 
 MAX_SPREAD_POINTS         = 30     # Spread max autorisé pour ouvrir un trade
+MAX_SPREAD_KILL_ZONE      = 40     # Tolérance élargie en Kill Zone liquide
+MAX_SPREAD_RATIO_PCT      = 5.0    # Spread > 5% ATR = exécution trop chère
+SPREAD_ALERT_AFTER_SECONDS = 300   # Alerte Telegram si spread élevé > 5 min
 SPREAD_MULTIPLIER_TM      = 2.0    # [R5] Le Trade Manager reporte les modifs si spread > 2× moyenne
 SPREAD_AVERAGE_WINDOW     = 100    # Nombre de ticks pour calculer la moyenne mobile du spread
 
@@ -145,9 +155,10 @@ SL_BUFFER_POINTS      = 2     # Marge de sécurité (en points) sous/au-dessus d
 # 13. NOTIFICATIONS TELEGRAM [R9]
 # ─────────────────────────────────────────────────────────────────────────────
 
-TELEGRAM_ENABLED   = False     # Activer/désactiver les notifications
-TELEGRAM_BOT_TOKEN = ""        # Token du bot Telegram (à remplir)
-TELEGRAM_CHAT_ID   = ""        # ID du chat de destination (à remplir)
+TELEGRAM_TOKEN     = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_ENABLED   = bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
+TELEGRAM_BOT_TOKEN = TELEGRAM_TOKEN  # Alias rétrocompatible
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 14. PAPER TRADING [R10]
@@ -189,3 +200,8 @@ WATCHDOG_TIMEOUT_CRITICAL   = 30     # Secondes avant kill + restart
 DIAMOND_MIN_RR         = 3.0     # R:R minimum pour un setup Diamant
 DIAMOND_SWEET_SPOT_LOW = 0.68    # Fibonacci sweet spot bas
 DIAMOND_SWEET_SPOT_HIGH = 0.73   # Fibonacci sweet spot haut
+
+# Script 08 — calendrier economique Finnhub
+FINNHUB_TOKEN = ""
+NEWS_HIGH_IMPACT_BLACKOUT_MINUTES = 15
+NEWS_STEALTH_AFTER_MINUTES = 60

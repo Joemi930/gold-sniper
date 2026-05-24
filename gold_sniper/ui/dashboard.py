@@ -28,7 +28,7 @@ from utils.logger import setup_ui_queue
 
 # Agents avec leur identifiant Blackboard
 AGENTS = [
-    ("agent_1", True),   # (id, is_hard_filter)
+    ("agent_1", True),   # (id, hard_filter_pass)
     ("agent_2", True),
     ("agent_3", False),
     ("agent_4", False),
@@ -110,7 +110,7 @@ class Dashboard(ctk.CTk):
             card = AgentCard(
                 self._agents_scroll,
                 agent_id=agent_id,
-                is_hard_filter=is_hf
+                hard_filter_pass=is_hf
             )
             card.pack(fill="x", padx=8, pady=4)
             self._agent_cards[agent_id] = card

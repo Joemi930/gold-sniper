@@ -25,9 +25,13 @@ from agents.agent_4_fibonacci import AgentFibonacci
 from agents.agent_5_microscope import AgentMicroscope
 from agents.agent_6_sentinelle import AgentSentinelle
 from agents.agent_7_chronos import AgentSessions
-from execution.orchestrator import orchestrator_loop
+from agents.macro_monitor import MacroMonitor
+from agents.regime_detector import RegimeDetector
+from agents.risk_manager import RiskManager
+from core.orchestrator import orchestrator_loop
 from execution.trade_manager import TradeManager
 from core.recovery_manager import recovery_persistence_loop
+from utils.mt5_watchdog import MT5Watchdog
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. WRAPPER DE SUPERVISION DES COROUTINES
@@ -73,17 +77,8 @@ async def supervised_task(
             restart_delay = min(restart_delay * 2, 30.0)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. STUBS DES TÂCHES NON-VITALES RESTANTES (Watchdog, Recovery, etc.)
+# 2. TÂCHES SERVICES
 # ─────────────────────────────────────────────────────────────────────────────
-
-async def watchdog_heartbeat(blackboard: BlackBoard) -> None:
-    logger = get_logger()
-    cycle = 0
-    while not blackboard.kill_event.is_set():
-        cycle += 1
-        if cycle % 15 == 1:
-            logger.debug("🐕 Watchdog heartbeat — stub actif")
-        await asyncio.sleep(2.0)
 
 async def telegram_sender_loop(blackboard: BlackBoard) -> None:
     """
@@ -134,7 +129,11 @@ async def run_engine(blackboard: BlackBoard) -> None:
     a5 = AgentMicroscope(blackboard)
     a6 = AgentSentinelle(blackboard)
     a7 = AgentSessions(blackboard)
+    macro_monitor = MacroMonitor(blackboard)
+    regime_detector = RegimeDetector(blackboard)
+    risk_manager = RiskManager(blackboard)
     trade_manager = TradeManager(blackboard)
+    mt5_watchdog = MT5Watchdog(blackboard)
 
     # ─────────────────────────────────────────────────────────────────────────
     # DÉMARRAGE DES COROUTINES (Pipeline V2 Event-Driven)
@@ -147,8 +146,11 @@ async def run_engine(blackboard: BlackBoard) -> None:
         supervised_task("candle_builder", candle_builder_loop, blackboard),
         
         # --- PHASE 0 : GATES (Toujours actifs) ---
+        supervised_task("risk_manager", lambda blackboard: risk_manager.run(), blackboard),
         supervised_task("agent_6_senti", lambda blackboard: a6.run(), blackboard),
         supervised_task("agent_7_sess", lambda blackboard: a7.run(), blackboard),
+        supervised_task("macro_monitor", lambda blackboard: macro_monitor.run(), blackboard),
+        supervised_task("regime_detector", lambda blackboard: regime_detector.run(), blackboard),
 
         # --- PHASE 1 : ANALYSE STRUCTURELLE (Séquentiel via Events) ---
         supervised_task("agent_1_meteo", lambda blackboard: a1.run(), blackboard),
@@ -167,7 +169,7 @@ async def run_engine(blackboard: BlackBoard) -> None:
         
         # --- SERVICES ANNEXES ---
         supervised_task("account_info_fetcher", account_info_fetcher, blackboard),
-        supervised_task("watchdog_heartbeat", watchdog_heartbeat, blackboard),
+        supervised_task("mt5_watchdog", lambda blackboard: mt5_watchdog.run(), blackboard),
         supervised_task("recovery_persistence", recovery_persistence_loop, blackboard),
         supervised_task("telegram_sender", telegram_sender_loop, blackboard),
     ]

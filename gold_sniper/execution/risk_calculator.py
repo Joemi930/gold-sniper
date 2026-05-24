@@ -1,53 +1,41 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# GOLD SNIPER v1.0 — RISK CALCULATOR
-# ═══════════════════════════════════════════════════════════════════════════════
-#
-# Module chargé de calculer la taille de position dynamique en fonction du
-# capital disponible et du risque autorisé (ex: 1%).
-#
-# ═══════════════════════════════════════════════════════════════════════════════
+try:
+    import MetaTrader5 as mt5
+except ImportError:  # pragma: no cover
+    mt5 = None
 
-import MetaTrader5 as mt5
+from config import PAPER_SIMULATED_EQUITY, RISK_PCT_PER_TRADE
+from utils.risk_calculator import calculate_dynamic_lot
+
 
 class RiskCalculator:
-    def __init__(self, risk_percent: float = 1.0):
-        self.risk_percent = risk_percent / 100.0
-        # Lot fixe par défaut si le calcul dynamique échoue ou pour le PoC
+    def __init__(self, risk_percent: float = RISK_PCT_PER_TRADE):
+        self.risk_percent = risk_percent
         self.default_lot = 0.01
 
-    def calculate_lot_size(self, symbol: str, entry_price: float, stop_loss: float, risk_modifier: float = 1.0) -> float:
-        """
-        Calcule la taille du lot en fonction de la distance du Stop Loss
-        et du solde (Equity) du compte MT5. Le risque est multiplié par risk_modifier.
-        """
-        account_info = mt5.account_info()
-        if account_info is None:
-            return self.default_lot
+    def _account_equity(self) -> float:
+        if mt5 is not None:
+            account_info = mt5.account_info()
+            if account_info is not None:
+                return float(getattr(account_info, "equity", PAPER_SIMULATED_EQUITY))
+        return float(PAPER_SIMULATED_EQUITY)
 
-        equity = account_info.equity
-        risk_amount = equity * self.risk_percent * risk_modifier
-        
-        # Distance en pips/points
-        distance = abs(entry_price - stop_loss)
-        if distance == 0:
-            return self.default_lot
-            
-        # Valeur d'un point pour le symbole (ex: XAUUSD)
-        symbol_info = mt5.symbol_info(symbol)
-        if symbol_info is None:
-            return self.default_lot
-            
-        point_value = symbol_info.trade_tick_value / symbol_info.trade_tick_size if symbol_info.trade_tick_size != 0 else 1.0
-        
-        # Calcul : (Risque en $) / (Distance * Valeur du point)
-        try:
-            lot_size = risk_amount / (distance * point_value)
-            # Arrondi à la décimale autorisée par le broker (souvent 0.01 pour le forex/gold)
-            step = symbol_info.volume_step if symbol_info.volume_step != 0 else 0.01
-            lot_size = round(lot_size / step) * step
-            
-            # Limites max/min
-            lot_size = max(symbol_info.volume_min, min(lot_size, symbol_info.volume_max))
-            return float(lot_size)
-        except Exception:
-            return self.default_lot
+    def calculate_lot_size(
+        self,
+        symbol: str,
+        entry_price: float,
+        stop_loss: float,
+        risk_modifier: float = 1.0,
+        atr_14: float | None = None,
+        atr_baseline: float | None = None,
+    ) -> float:
+        result = calculate_dynamic_lot(
+            account_equity=self._account_equity(),
+            entry_price=entry_price,
+            sl_price=stop_loss,
+            risk_pct=self.risk_percent,
+            atr_14=atr_14,
+            atr_baseline=atr_baseline,
+            risk_modifier=risk_modifier,
+            symbol=symbol,
+        )
+        return float(result.get("lot", self.default_lot))

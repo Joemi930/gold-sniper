@@ -1,22 +1,24 @@
 import asyncio
-from datetime import datetime
-import pytz
+from datetime import datetime, timezone
 
+from agents.base_agent import AgentResult
 from core.blackboard import BlackBoard
-from core.agent_result import AgentResult
 from utils.logger import get_logger
 
-UTC = pytz.UTC
 
-KILL_ZONES = {
-    "LONDON_OPEN":   {"start": 7.0, "end": 10.0, "score": 100, "risk": 1.0},
-    "NY_OPEN":       {"start": 12.0, "end": 15.0, "score": 100, "risk": 1.0},
+SESSIONS = {
+    "TOKYO": {"start": 22.0, "end": 7.0, "confidence": 0.50},
+    "LONDON": {"start": 7.0, "end": 12.0, "confidence": 1.00},
+    "OVERLAP": {"start": 12.0, "end": 16.0, "confidence": 1.20},
+    "NEW_YORK": {"start": 16.0, "end": 21.0, "confidence": 1.00},
+    "DEAD": {"start": 21.0, "end": 22.0, "confidence": 0.00},
+    "ROLLOVER": {"start": 23.75, "end": 0.25, "confidence": 0.00},
 }
 
-FORBIDDEN_PERIODS = {
-    "ASIAN_SESSION": {"start": 22.0, "end": 6.0},
-    "ROLLOVER":      {"start": 23.75, "end": 0.25},
-    "DEAD_ZONE":     {"start": 21.0, "end": 22.0},
+KILL_ZONES = {
+    "LONDON_OPEN": {"start": 7.0, "end": 10.0, "score": 100},
+    "OVERLAP_KZ": {"start": 12.0, "end": 16.0, "score": 95},
+    "NY_OPEN": {"start": 12.0, "end": 15.0, "score": 100},
 }
 
 FRIDAY_RULES = {
@@ -24,88 +26,129 @@ FRIDAY_RULES = {
     "halt_after": 19.0,
 }
 
+TOKYO_OVERRIDE_SCORE = 92.0
+
+
 def get_utc_decimal_hour(dt: datetime) -> float:
     return dt.hour + dt.minute / 60.0
 
-def check_kill_zone(utc_time: datetime) -> dict:
-    hour_decimal = get_utc_decimal_hour(utc_time)
-    day_of_week = utc_time.weekday()
-    
-    if day_of_week == 4:
-        if hour_decimal >= FRIDAY_RULES["halt_after"]:
-            return {"in_kz": False, "kz_name": "FRIDAY_HALT", "score": 0, "risk_modifier": 0.0}
-        if hour_decimal >= FRIDAY_RULES["risk_reduced_after"]:
-            return {"in_kz": True, "kz_name": "FRIDAY_REDUCED", "score": 70, "risk_modifier": 0.5}
-    
-    if day_of_week in (5, 6):
-        return {"in_kz": False, "kz_name": "WEEKEND", "score": 0, "risk_modifier": 0.0}
-    
-    rollover = FORBIDDEN_PERIODS["ROLLOVER"]
-    if hour_decimal >= rollover["start"] or hour_decimal <= rollover["end"]:
-        return {"in_kz": False, "kz_name": "ROLLOVER", "score": 0, "risk_modifier": 0.0}
-    
-    asian = FORBIDDEN_PERIODS["ASIAN_SESSION"]
-    if hour_decimal >= asian["start"] or hour_decimal <= asian["end"]:
-        return {"in_kz": False, "kz_name": "ASIAN_BLOCKED", "score": 0, "risk_modifier": 0.0}
-    
-    dead = FORBIDDEN_PERIODS["DEAD_ZONE"]
-    if dead["start"] <= hour_decimal <= dead["end"]:
-        return {"in_kz": False, "kz_name": "DEAD_ZONE", "score": 0, "risk_modifier": 0.0}
-    
-    for kz_name, kz in KILL_ZONES.items():
-        if kz["start"] <= hour_decimal <= kz["end"]:
-            return {
-                "in_kz": True,
-                "kz_name": kz_name,
-                "score": kz["score"],
-                "risk_modifier": kz["risk"],
-            }
-    
-    return {"in_kz": False, "kz_name": "OFF_PEAK", "score": 30, "risk_modifier": 0.7}
+
+def _in_time_range(hour: float, start: float, end: float) -> bool:
+    if start <= end:
+        return start <= hour < end
+    return hour >= start or hour < end
+
+
+def identify_session(utc_time: datetime) -> str:
+    hour = get_utc_decimal_hour(utc_time)
+    if _in_time_range(hour, SESSIONS["ROLLOVER"]["start"], SESSIONS["ROLLOVER"]["end"]):
+        return "ROLLOVER"
+    if _in_time_range(hour, SESSIONS["OVERLAP"]["start"], SESSIONS["OVERLAP"]["end"]):
+        return "OVERLAP"
+    if _in_time_range(hour, SESSIONS["LONDON"]["start"], SESSIONS["LONDON"]["end"]):
+        return "LONDON"
+    if _in_time_range(hour, SESSIONS["NEW_YORK"]["start"], SESSIONS["NEW_YORK"]["end"]):
+        return "NEW_YORK"
+    if _in_time_range(hour, SESSIONS["TOKYO"]["start"], SESSIONS["TOKYO"]["end"]):
+        return "TOKYO"
+    return "DEAD"
+
+
+def detect_kill_zone(utc_time: datetime) -> dict:
+    hour = get_utc_decimal_hour(utc_time)
+    for name, config in KILL_ZONES.items():
+        if _in_time_range(hour, config["start"], config["end"]):
+            return {"in_kill_zone": True, "kill_zone_name": name, "kill_zone_score": config["score"]}
+    return {"in_kill_zone": False, "kill_zone_name": None, "kill_zone_score": 50}
+
+
+def check_session_context(utc_time: datetime) -> dict:
+    hour = get_utc_decimal_hour(utc_time)
+    day = utc_time.weekday()
+
+    if day in (5, 6):
+        return {
+            "session": "WEEKEND",
+            "trading_allowed": False,
+            "confidence": 0.0,
+            "reason": "WEEKEND",
+            **detect_kill_zone(utc_time),
+        }
+
+    if day == 4 and hour >= FRIDAY_RULES["halt_after"]:
+        return {
+            "session": "FRIDAY_HALT",
+            "trading_allowed": False,
+            "confidence": 0.0,
+            "reason": "FRIDAY_HALT",
+            **detect_kill_zone(utc_time),
+        }
+
+    session = identify_session(utc_time)
+    confidence = SESSIONS.get(session, SESSIONS["DEAD"])["confidence"]
+    trading_allowed = session not in {"DEAD", "ROLLOVER", "TOKYO"}
+    reason = session
+
+    if day == 4 and hour >= FRIDAY_RULES["risk_reduced_after"]:
+        confidence = min(confidence, 0.5)
+        reason = "FRIDAY_REDUCED_RISK"
+
+    if session == "TOKYO":
+        reason = f"TOKYO_ONLY_MIN_SCORE_{TOKYO_OVERRIDE_SCORE:.0f}"
+    elif session in {"DEAD", "ROLLOVER"}:
+        reason = f"SESSION_{session}_BLOCKED"
+
+    return {
+        "session": session,
+        "trading_allowed": trading_allowed,
+        "confidence": confidence,
+        "reason": reason,
+        **detect_kill_zone(utc_time),
+    }
+
 
 def calculate_volume_profile(candles_session: list, n_buckets: int = 50) -> dict:
     if not candles_session:
         return {"poc": None, "vah": None, "val": None}
-    
+
     session_high = max(c["high"] for c in candles_session)
     session_low = min(c["low"] for c in candles_session)
     session_range = session_high - session_low
-    
+
     if session_range == 0:
         return {"poc": None, "vah": None, "val": None}
-    
+
     bucket_size = session_range / n_buckets
     volume_by_bucket = [0.0] * n_buckets
-    
+
     for candle in candles_session:
         candle_vol = candle.get("tick_volume", candle.get("volume", 1))
-        
-        for b in range(n_buckets):
-            bucket_bottom = session_low + b * bucket_size
+        candle_range = candle["high"] - candle["low"]
+        if candle_range <= 0:
+            continue
+
+        for bucket in range(n_buckets):
+            bucket_bottom = session_low + bucket * bucket_size
             bucket_top = bucket_bottom + bucket_size
-            
             if candle["low"] <= bucket_top and candle["high"] >= bucket_bottom:
                 overlap = min(candle["high"], bucket_top) - max(candle["low"], bucket_bottom)
-                candle_range = candle["high"] - candle["low"]
-                if candle_range > 0:
-                    volume_by_bucket[b] += candle_vol * (overlap / candle_range)
-    
+                if overlap > 0:
+                    volume_by_bucket[bucket] += candle_vol * (overlap / candle_range)
+
     poc_bucket = volume_by_bucket.index(max(volume_by_bucket))
     poc_price = session_low + (poc_bucket + 0.5) * bucket_size
-    
+
     total_volume = sum(volume_by_bucket)
     target_volume = 0.70 * total_volume
-    
-    included = set([poc_bucket])
+    included = {poc_bucket}
     cumulative = volume_by_bucket[poc_bucket]
-    
     low_ptr = poc_bucket - 1
     high_ptr = poc_bucket + 1
-    
+
     while cumulative < target_volume:
         vol_above = volume_by_bucket[high_ptr] if high_ptr < n_buckets else 0
         vol_below = volume_by_bucket[low_ptr] if low_ptr >= 0 else 0
-        
+
         if vol_above >= vol_below and high_ptr < n_buckets:
             included.add(high_ptr)
             cumulative += vol_above
@@ -116,92 +159,108 @@ def calculate_volume_profile(candles_session: list, n_buckets: int = 50) -> dict
             low_ptr -= 1
         else:
             break
-    
-    vah_bucket = max(included)
-    val_bucket = min(included)
-    
+
     return {
         "poc": poc_price,
-        "vah": session_low + (vah_bucket + 1) * bucket_size,
-        "val": session_low + val_bucket * bucket_size,
+        "vah": session_low + (max(included) + 1) * bucket_size,
+        "val": session_low + min(included) * bucket_size,
         "total_volume": total_volume,
     }
 
+
 def score_agent_7(utc_time: datetime, volume_profile: dict, current_price: float) -> AgentResult:
-    kz_result = check_kill_zone(utc_time)
-    
-    if kz_result["score"] == 0:
-        return AgentResult(
-            agent_id="agent_7", score=0,
-            reason=f"SESSION_BLOCKED_{kz_result['kz_name']}",
-            direction=None, is_hard_filter=False,
-            risk_modifier=0.0
-        )
-    
-    base_score = kz_result["score"]
-    
+    context = check_session_context(utc_time)
     vp_bonus = 0
+
     if volume_profile.get("val") and volume_profile.get("vah") and volume_profile.get("poc"):
         if volume_profile["val"] <= current_price <= volume_profile["vah"]:
+            vp_bonus = 15
+        elif abs(current_price - volume_profile["poc"]) < 0.5:
             vp_bonus = 20
-        elif abs(current_price - volume_profile["poc"]) < 0.5:  # Tolérance légère
-            vp_bonus = 25
-    
-    final_score = min(base_score + vp_bonus, 100)
-    
+
+    session_score = context["kill_zone_score"] if context["in_kill_zone"] else 50
+    if not context["trading_allowed"] and context["session"] != "TOKYO":
+        session_score = 0
+
+    final_score = min(session_score * context["confidence"] + vp_bonus, 100)
+
     return AgentResult(
         agent_id="agent_7",
         score=final_score,
-        reason=f"KZ_{kz_result['kz_name']}_VP_BONUS={vp_bonus}",
+        hard_filter_pass=context["trading_allowed"] or context["session"] == "TOKYO",
         direction=None,
-        is_hard_filter=False,
-        risk_modifier=kz_result["risk_modifier"],
-        metadata={
-            "kill_zone": kz_result["kz_name"],
+        reason=f"{context['reason']} | KZ={context['kill_zone_name'] or 'NONE'} | VP_bonus={vp_bonus}",
+        risk_modifier=context["confidence"],
+        payload={
+            "session_name": context["session"],
+            "trading_allowed": context["trading_allowed"],
+            "session_confidence": context["confidence"],
+            "tokyo_override_score": TOKYO_OVERRIDE_SCORE,
+            "in_kill_zone": context["in_kill_zone"],
+            "kill_zone_name": context["kill_zone_name"],
             "volume_profile": volume_profile,
             "vp_bonus": vp_bonus,
-        }
+        },
     )
+
 
 class AgentSessions:
     def __init__(self, blackboard: BlackBoard):
         self.bb = blackboard
         self.logger = get_logger()
-        self.name = "agent_7_sessions"
-    
+        self.name = "agent_7"
+
     async def run(self):
-        self.logger.info("▶️  Agent 7 (Chronos V2) démarré")
+        self.logger.info("Agent 7 (Chronos V2) demarre")
         while not self.bb.kill_event.is_set():
             try:
-                utc_time = datetime.now(UTC)
-                
-                # Fetch recent candles for volume profile (let's say we look at last day 15m candles)
+                utc_time = datetime.now(timezone.utc)
                 candles_15m = list(self.bb.read_sync("market_data.candles.15m") or [])
-                # Only keep today's candles
                 today = utc_time.date()
                 session_candles = []
-                for c in candles_15m:
-                    if "time" in c:
-                        cdt = c["time"] if isinstance(c["time"], datetime) else datetime.fromtimestamp(c["time"], UTC)
-                        if cdt.date() == today:
-                            session_candles.append(c)
-                
+
+                for candle in candles_15m:
+                    if "time" not in candle:
+                        continue
+                    candle_time = candle["time"]
+                    if not isinstance(candle_time, datetime):
+                        candle_time = datetime.fromtimestamp(candle_time, timezone.utc)
+                    if candle_time.date() == today:
+                        session_candles.append(candle)
+
                 volume_profile = calculate_volume_profile(session_candles)
-                
                 tick = self.bb.read_sync("market_data.current_tick")
                 bid = tick.get("bid", 0.0) if tick else 0.0
                 ask = tick.get("ask", 0.0) if tick else 0.0
-                current_price = (bid + ask) / 2 if bid > 0 else (session_candles[-1]["close"] if session_candles else 0.0)
-                
+                current_price = (bid + ask) / 2 if bid > 0 and ask > 0 else 0.0
+                if current_price <= 0 and session_candles:
+                    current_price = session_candles[-1]["close"]
+
                 result = score_agent_7(utc_time, volume_profile, current_price)
                 await self.bb.write_agent_result("agent_7", result)
-                
-                await self.bb.update_dict(f"agents.{self.name}", {
-                    "in_killzone": result.metadata.get("kill_zone") not in ["ASIAN_BLOCKED", "ROLLOVER", "DEAD_ZONE", "WEEKEND", "FRIDAY_HALT"],
-                    "killzone_name": result.metadata.get("kill_zone", "OFF_HOURS"),
-                })
-                
+
+                payload = result.payload
+                await self.bb.update_agent(
+                    self.name,
+                    {
+                        "score": result.score,
+                        "in_kill_zone": payload["in_kill_zone"],
+                        "kill_zone_name": payload["kill_zone_name"],
+                        "risk_modifier": result.risk_modifier,
+                        "trading_allowed": payload["trading_allowed"],
+                        "vp_poc": volume_profile.get("poc"),
+                        "vp_vah": volume_profile.get("vah"),
+                        "vp_val": volume_profile.get("val"),
+                        "price_in_value_area": (
+                            bool(volume_profile.get("val") and volume_profile.get("vah"))
+                            and volume_profile["val"] <= current_price <= volume_profile["vah"]
+                        ),
+                        "session_name": payload["session_name"],
+                        "reason": result.reason,
+                    },
+                )
+                await self.bb.update_market({"session": payload["session_name"]})
                 await asyncio.sleep(10)
-            except Exception as e:
-                self.logger.error(f"❌ Erreur dans Agent 7 (Chronos V2) : {e}")
+            except Exception as exc:
+                self.logger.error(f"Erreur Agent 7 (Chronos V2): {exc}")
                 await asyncio.sleep(5)
