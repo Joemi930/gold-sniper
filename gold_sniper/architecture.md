@@ -5,6 +5,85 @@ MetaTrader 5 et une architecture multi-agents. Le systeme est concu pour
 avancer par filtres successifs: collecte de donnees, analyse par agents,
 veto risque/news, scoring orchestre, puis execution controlee.
 
+## FONCTIONNALITES
+
+Inventaire audite le 2026-05-25. Statuts:
+
+- ACTIF: code branche dans le demarrage ou valide par test local.
+- PARTIEL: code present mais dependant d'un token, d'un compte, d'une action OAuth,
+  ou non applique de bout en bout.
+- INACTIF: code present mais non branche, ancien chemin remplace, ou artefact mort.
+
+| Nom | Fichier | Description (1 phrase) | Statut |
+|---|---|---|---|
+| Connexion MT5 | `core/mt5_bridge.py` | Initialise MT5, lit ticks, symboles, positions et donnees historiques. | ACTIF |
+| Tick ingestion | `core/tick_ingestion.py` | Publie les ticks XAUUSD dans le Blackboard avec cadence limitee. | ACTIF |
+| Candle builder | `core/candle_builder.py` | Construit et met a jour les bougies multi-timeframes depuis les ticks. | ACTIF |
+| Blackboard central | `core/blackboard.py` | Stocke l'etat partage, les agents, les signaux, le controle et les evenements. | ACTIF |
+| Event bus agents | `core/blackboard.py` | Reveil event-driven de l'orchestrateur via `wait_for_agent_update`. | ACTIF |
+| Orchestrateur V3 | `core/orchestrator.py` | Agrege les agents, applique veto, strategie active, scores et decision. | ACTIF |
+| Dictionnaire de strategies | `core/strategy_dictionary.py` | Selectionne les strategies actives par session, regime, news et diamond setup. | ACTIF |
+| Agent 1 Meteo | `agents/agent_1_meteo.py` | Analyse le biais structurel HTF et sert de hard filter directionnel. | ACTIF |
+| Agent 2 Cartographe | `agents/agent_2_cartographe.py` | Detecte et score OB/FVG/POI avec bougies institutionnelles. | ACTIF |
+| Bougies institutionnelles | `agents/agent_2_cartographe.py` | Detecte engulfing, rejection candle et institutional candle pour booster l'OB. | ACTIF |
+| Agent 3 Liquidite | `agents/agent_3_liquidite.py` | Detecte sweep, break, Asian Range et signaux de liquidite. | ACTIF |
+| Agent 4 Fibonacci | `agents/agent_4_fibonacci.py` | Calcule premium/discount, OTE et sweet spot 70.5%. | ACTIF |
+| Agent 5 Microscope | `agents/agent_5_microscope.py` | Valide la sequence AMD avec sweep puis CHoCH. | ACTIF |
+| Agent 6 Sentinelle | `agents/agent_6_sentinelle.py` | Gere news high impact, blackout, alertes et fallback Finnhub -> FMP -> ForexFactory. | ACTIF |
+| Agent 7 Chronos | `agents/agent_7_chronos.py` | Determine sessions, kill zones, DST dynamique et Friday mode. | ACTIF |
+| Regime detector | `agents/regime_detector.py` | Publie le regime de marche courant dans le Blackboard. | ACTIF |
+| Macro monitor Pearson | `agents/macro_monitor.py` | Calcule correlation DXY/Gold et force macro via yfinance. | ACTIF |
+| Risk Manager | `agents/risk_manager.py` | Applique drawdown, pertes consecutives, veto et diagnostic. | ACTIF |
+| Diagnostic Risk Telegram | `agents/risk_manager.py`, `core/engine.py` | Envoie un rapport apres 3 pertes consecutives si Telegram est configure. | PARTIEL |
+| Trade Manager | `execution/trade_manager.py` | Execute les signaux, pose SL/TP broker, gere TP1, BE et trailing. | ACTIF |
+| Order_send atomique SL/TP | `execution/trade_manager.py` | Envoie entree, SL et TP broker dans la meme requete MT5. | ACTIF |
+| Fermeture partielle TP1 | `execution/trade_manager.py` | Ferme 50% au vrai TP1 stocke a l'ouverture, puis breakeven et trailing. | ACTIF |
+| Emergency shutdown | `utils/emergency_shutdown.py` | Ferme ou bloque les positions en cas de commande kill ou risque critique. | ACTIF |
+| Recovery positions MT5 | `core/recovery_manager.py` | Reimporte les positions MT5 ouvertes dans le Blackboard au redemarrage. | ACTIF |
+| Gap detection cold start | `core/recovery_manager.py` | Ferme en urgence une position recuperee si le prix courant a depasse le SL. | ACTIF |
+| Decision log | `utils/decision_logger.py` | Ecrit decisions et opportunites manquees en JSONL avec rotation. | ACTIF |
+| Missed opportunities | `utils/decision_logger.py`, `core/diamond_detector.py` | Journalise les signaux non executes et setups diamond. | ACTIF |
+| Memoire SQLite | `data/memory_db.py` | Cree `data/memory.db` et tables patterns/performance/erreurs/strategies. | ACTIF |
+| Pause apres 5 pertes cumulees | `data/memory_db.py` | Suspend les nouveaux trades, analyse les patterns et notifie Telegram. | PARTIEL |
+| Performance agents | `data/memory_db.py` | Enregistre la precision individuelle apres chaque trade cloture. | ACTIF |
+| Adaptive weights | `execution/adaptive_weights.py`, `core/engine.py`, `core/orchestrator.py` | Recalcule les poids apres trade cloture, les publie et l'orchestrateur les applique en live. | ACTIF |
+| Rapports automatiques | `utils/report_scheduler.py` | Planifie rapports journalier, hebdomadaire et mensuel. | ACTIF |
+| Google Drive sync | `utils/drive_sync.py` | Synchronise DB, logs, backtests et rapports vers Drive a 23h UTC+1. | PARTIEL |
+| Telegram notifier | `utils/telegram_notifier.py` | Envoie boot, signaux, trades, news, risk alerts et rapports. | PARTIEL |
+| Telegram telecommande | `utils/telegram_commander.py` | Gere `/status`, `/pause`, `/resume`, `/restart`, `/risk`, etc. | PARTIEL |
+| Dashboard aiohttp | `web/dashboard_server.py` | Expose `/api/state`, `/api/trades`, `/api/agents` et `/ws`. | ACTIF |
+| Dashboard HTML | `web/dashboard.html` | Interface sombre avec agents animes, score, positions et logs. | ACTIF |
+| Cloudflare tunnel | `web/dashboard_server.py` | Lance cloudflared et capture une URL `trycloudflare.com`. | PARTIEL |
+| Backtesting | `backtesting/backtest_engine.py` | Rejoue XAUUSD M1, alimente agents/orchestrateur et logge les resultats. | ACTIF |
+| Calibration poids | `utils/weight_calibrator.py` | Calcule des poids depuis le decision log si assez de trades clotures. | PARTIEL |
+| Historique 6 mois | `data/historical_loader.py` | Precharge M1/M5/M15/H1/H4 en parquet avec cache incremental. | ACTIF |
+| Warmup agents | `main.py`, `data/historical_loader.py` | Injecte les donnees historiques de demarrage dans le Blackboard. | ACTIF |
+| Diamond setup | `core/diamond_detector.py` | Detecte le setup 5 etoiles et alerte sans trader automatiquement. | ACTIF |
+| Spread monitor | `utils/spread_monitor.py` | Bloque les entrees sur spread anormal et alerte apres 5 minutes. | ACTIF |
+| MT5 watchdog interne | `utils/mt5_watchdog.py` | Surveille la connexion MT5 et tente la reconnexion. | ACTIF |
+| Watchdog externe | `watchdog.py` | Surveille le heartbeat du moteur et redemarre `main.py` si bloque. | ACTIF |
+| Heartbeat moteur | `main.py` | Ecrit un fichier heartbeat pour le watchdog externe. | ACTIF |
+| Autostart Windows | `scripts/setup_autostart.ps1` | Cree une tache planifiee Windows pour lancer `GoldSniper.bat`. | PARTIEL |
+| MT5 minimise/cache | `GoldSniper.bat`, `scripts/start_mt5_minimized.ps1` | Lance MT5 minimise ou cache via PowerShell et Win32 ShowWindow. | ACTIF |
+| Calendrier ForexFactory | `scrapers/economic_calendar.py` | Fallback XML ForexFactory avec cache local. | ACTIF |
+| Calendrier Finnhub | `agents/agent_6_sentinelle.py` | Source prioritaire si `FINNHUB_TOKEN` est configure. | PARTIEL |
+| FMP token | `config.py` | Token FMP configure avec limite 200 req/jour pour macro/fondamental uniquement. | ACTIF |
+| FMP integration | `agents/agent_6_sentinelle.py` | Source intermediaire dans la chaine Finnhub -> FMP -> ForexFactory. | ACTIF |
+| Rate limiter MT5 global | `config.py`, `core/blackboard.py`, `core/tick_ingestion.py` | Limite appliquee au tick ingestion, pas a tous les appels MT5. | PARTIEL |
+| DST sessions | `config.py`, `agents/agent_7_chronos.py` | Sessions calculees depuis `TZ_LOCAL=Europe/Paris` avec bascule ete/hiver automatique. | ACTIF |
+| Friday mode notifications | `agents/agent_7_chronos.py` | Envoie une notification Telegram lors du passage risque reduit puis trading coupe. | ACTIF |
+| UI CustomTkinter | `ui/` | Ancienne UI locale encore presente mais non lancee par `main.py`. | INACTIF |
+| Ancien `core/agent_result.py` | `core/__pycache__/agent_result*.pyc` | Source supprimee, reste seulement un artefact pyc. | INACTIF |
+
+Fonctionnalites partielles ou inactives a traiter avant lancement reel:
+
+- Telegram et Drive dependent encore de variables d'environnement ou de l'OAuth
+  Drive: sans elles, les notifications/sync restent en mode code/fallback.
+- Le compte MT5 connecte pendant l'audit n'est pas le JustMarkets-Demo3 attendu.
+- Le rate limiter MT5 n'est pas un wrapper central autour de tous les appels MT5.
+- L'ancienne UI reste dans le repo et doit etre supprimee ou archivee si le
+  dashboard web devient l'unique interface.
+
 ## Vue d'ensemble
 
 ```text

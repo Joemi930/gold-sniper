@@ -1,4 +1,6 @@
+# Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -6,18 +8,51 @@ __pycache__/
 # Environnements virtuels
 venv/
 env/
-.env
+.venv/
 
-# Fichiers de log et de données
+# Secrets locaux
+.env
+*.env
+credentials.json
+data/drive_token.json
+data/drive_token.json.*
+gold_sniper/data/drive_token.json
+gold_sniper/data/drive_token.json.*
+
+# Donnees runtime
 logs/
+gold_sniper/logs/
+data/*.db
+data/*.db-*
+data/historical/*.parquet
+gold_sniper/data/*.db
+gold_sniper/data/*.db-*
+gold_sniper/data/historical/*.parquet
 recovery.json
+gold_sniper/recovery.json
+watchdog_heartbeat.tmp
+gold_sniper/watchdog_heartbeat.tmp
+crash_log.txt
+gold_sniper/crash_log.txt
 simulation_results.csv
 
-# Fichiers IDE
+# Rapports/audits locaux
+reponse.md
+gold_sniper/reponse.md
+AUDIT_FINAL_MACON.md
+gold_sniper/AUDIT_FINAL_MACON.md
+GOLD_SNIPER_V3_MASTERCLASS.md
+gold_sniper/GOLD_SNIPER_V3_MASTERCLASS.md
+
+# IDE
 .vscode/
 .idea/
 
-# Médias lourds
+# Build local
+build/GoldSniper/localpycs/
+gold_sniper/build/GoldSniper/localpycs/
+
+# Medias lourds
 *.mp4
 *.mkv
 *.avi

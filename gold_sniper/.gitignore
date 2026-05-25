@@ -1,0 +1,17 @@
+.env
+*.env
+credentials.json
+data/drive_token.json
+data/drive_token.json.*
+data/*.db
+data/*.db-*
+data/historical/*.parquet
+logs/
+__pycache__/
+**/__pycache__/
+*.pyc
+recovery.json
+watchdog_heartbeat.tmp
+crash_log.txt
+build/GoldSniper/localpycs/
+logs/drive_sync_errors.log

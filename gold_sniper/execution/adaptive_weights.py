@@ -11,13 +11,13 @@ class AdaptiveWeightEngine:
     
     BASE_WEIGHTS = {"agent_1": 30, "agent_2": 25, "agent_3": 20, "agent_4": 15, "agent_5": 10}
     MAX_ADJUSTMENT = 5      # ±5 points max d'ajustement par session
-    MIN_TRADES_REQUIRED = 3  # Minimum de trades avant d'adapter
+    MIN_TRADES_REQUIRED = 1  # A5: recalcul automatique apres chaque trade cloture
     
     def __init__(self):
         self.session_trades = []      # Historique de la session
         self.current_weights = dict(self.BASE_WEIGHTS)
     
-    def record_trade_result(self, agent_breakdown: dict, outcome: str):
+    def record_trade_result(self, agent_breakdown: dict, outcome: str) -> dict:
         """
         outcome = "WIN" | "LOSS" | "BREAKEVEN"
         Appelé par le Trade Manager quand un trade se ferme.
@@ -28,6 +28,7 @@ class AdaptiveWeightEngine:
         })
         if len(self.session_trades) >= self.MIN_TRADES_REQUIRED:
             self._recompute_weights()
+        return dict(self.current_weights)
     
     def _recompute_weights(self):
         """Recalcule les poids en fonction des performances de session."""
@@ -41,7 +42,7 @@ class AdaptiveWeightEngine:
                 if t["breakdown"].get(agent, {}).get("score", 0) >= 80 and t["outcome"] == "LOSS"
             ]
             
-            if len(wins_with_high_agent) + len(losses_with_high_agent) >= 2:
+            if len(wins_with_high_agent) + len(losses_with_high_agent) >= 1:
                 win_rate = len(wins_with_high_agent) / (len(wins_with_high_agent) + len(losses_with_high_agent))
                 # Ajustement proportionnel : win_rate > 70% → +poids, < 30% → -poids
                 adjustment = (win_rate - 0.5) * self.MAX_ADJUSTMENT * 2

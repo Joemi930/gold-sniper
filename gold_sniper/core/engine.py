@@ -13,7 +13,10 @@ from typing import Callable, Coroutine
 
 from core.blackboard import BlackBoard
 from utils.logger import get_logger
-from utils.telegram_notifier import send_telegram_notification
+from utils.telegram_notifier import _notifier_from_config, send_telegram_notification
+from utils.report_scheduler import report_scheduler_loop
+from utils.drive_sync import drive_sync_loop
+from web.dashboard_server import dashboard_loop
 
 # Importation des modules concrets (remplacement des stubs)
 from core.tick_ingestion import tick_ingestion_loop
@@ -29,6 +32,9 @@ from agents.macro_monitor import MacroMonitor
 from agents.regime_detector import RegimeDetector
 from agents.risk_manager import RiskManager
 from core.orchestrator import orchestrator_loop
+from core.orchestrator import BASE_WEIGHTS as ORCHESTRATOR_BASE_WEIGHTS
+from data.memory_db import memory_learning_loop
+from execution.adaptive_weights import AdaptiveWeightEngine
 from execution.trade_manager import TradeManager
 from core.recovery_manager import recovery_persistence_loop
 from utils.mt5_watchdog import MT5Watchdog
@@ -111,6 +117,50 @@ async def account_info_fetcher(blackboard: BlackBoard) -> None:
         await asyncio.sleep(2.0)
 
 
+async def adaptive_weights_loop(blackboard: BlackBoard) -> None:
+    """Observe les trades clotures et applique les poids adaptatifs a l'orchestrateur."""
+    logger = get_logger()
+    engine = AdaptiveWeightEngine()
+    processed_tickets: set[int] = set()
+    logger.info("Adaptive weights loop demarree")
+
+    while not blackboard.kill_event.is_set():
+        try:
+            closed_today = blackboard.read_sync("positions.closed_today") or []
+            for trade in closed_today:
+                ticket = int(trade.get("ticket", 0) or 0)
+                if ticket in processed_tickets:
+                    continue
+
+                breakdown = trade.get("agent_breakdown") or {}
+                if not breakdown:
+                    continue
+
+                outcome = trade.get("outcome")
+                if outcome not in {"WIN", "LOSS", "BREAKEVEN"}:
+                    pnl = float(trade.get("pnl", 0.0) or 0.0)
+                    outcome = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
+
+                new_weights = engine.record_trade_result(breakdown, outcome)
+                ORCHESTRATOR_BASE_WEIGHTS.clear()
+                ORCHESTRATOR_BASE_WEIGHTS.update(new_weights)
+                processed_tickets.add(ticket)
+
+                await blackboard.update_dict("orchestrator", {
+                    "adaptive_weights": new_weights,
+                    "adaptive_weights_last_ticket": ticket,
+                    "adaptive_weights_last_outcome": outcome,
+                    "adaptive_weights_trades_seen": len(engine.session_trades),
+                })
+                logger.info(
+                    f"Adaptive weights recalcules apres trade {ticket} ({outcome}): {new_weights}"
+                )
+        except Exception as exc:
+            logger.warning(f"Adaptive weights loop erreur: {exc}")
+
+        await asyncio.sleep(0.5)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. ASSEMBLAGE DU MOTEUR
 # ─────────────────────────────────────────────────────────────────────────────
@@ -127,11 +177,11 @@ async def run_engine(blackboard: BlackBoard) -> None:
     a3 = AgentLiquidite(blackboard)
     a4 = AgentFibonacci(blackboard)
     a5 = AgentMicroscope(blackboard)
-    a6 = AgentSentinelle(blackboard)
+    a6 = AgentSentinelle(blackboard, telegram=_notifier_from_config())
     a7 = AgentSessions(blackboard)
     macro_monitor = MacroMonitor(blackboard)
     regime_detector = RegimeDetector(blackboard)
-    risk_manager = RiskManager(blackboard)
+    risk_manager = RiskManager(blackboard, telegram=_notifier_from_config())
     trade_manager = TradeManager(blackboard)
     mt5_watchdog = MT5Watchdog(blackboard)
 
@@ -166,10 +216,15 @@ async def run_engine(blackboard: BlackBoard) -> None:
         
         # --- EXECUTION ---
         supervised_task("trade_manager", lambda blackboard: trade_manager.run(), blackboard),
+        supervised_task("adaptive_weights", adaptive_weights_loop, blackboard),
+        supervised_task("memory_learning", memory_learning_loop, blackboard),
         
         # --- SERVICES ANNEXES ---
         supervised_task("account_info_fetcher", account_info_fetcher, blackboard),
         supervised_task("mt5_watchdog", lambda blackboard: mt5_watchdog.run(), blackboard),
+        supervised_task("report_scheduler", report_scheduler_loop, blackboard),
+        supervised_task("drive_sync", drive_sync_loop, blackboard),
+        supervised_task("dashboard_web", dashboard_loop, blackboard),
         supervised_task("recovery_persistence", recovery_persistence_loop, blackboard),
         supervised_task("telegram_sender", telegram_sender_loop, blackboard),
     ]

@@ -1,41 +1,28 @@
 @echo off
-title GOLD SNIPER V2.1 - Institutional Intelligence
+setlocal
 
-cls
-echo.
-echo  ============================================================
-echo   * GOLD SNIPER V2.1 - INSTITUTIONAL INTELLIGENCE
-echo  ============================================================
-echo.
-echo  Verification de l'environnement...
-echo.
-
-:: Detect Python
-set PYTHON_CMD=python
-%PYTHON_CMD% --version > nul 2>&1
-if %errorlevel% neq 0 (
-    set PYTHON_CMD=py
-    py --version > nul 2>&1
-    if errorlevel 1 (
-        echo  [ERREUR] Python n'est pas installe ou pas dans le PATH.
-        echo  Telechargez Python 3.11+ sur https://python.org
-        pause
-        exit /b 1
-    )
-)
-
-:: Aller dans le bon dossier
 cd /d "%~dp0"
 
-echo  Lancement de Gold Sniper...
-echo.
+powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0scripts\start_mt5_minimized.ps1" -WindowMode Hidden -WaitSeconds 60
 
-:: Lancer le bot
-%PYTHON_CMD% main.py
-
-if %errorlevel% neq 0 (
-    echo.
-    echo  [ERREUR] Le programme s'est termine avec une erreur.
-    echo  Consultez les logs dans le dossier 'logs/'
-    pause
+where pythonw.exe > nul 2>&1
+if %errorlevel% equ 0 (
+    start "Gold Sniper V2.1" /min pythonw.exe "%~dp0main.py"
+    exit /b 0
 )
+
+where pyw.exe > nul 2>&1
+if %errorlevel% equ 0 (
+    start "Gold Sniper V2.1" /min pyw.exe "%~dp0main.py"
+    exit /b 0
+)
+
+where python.exe > nul 2>&1
+if %errorlevel% equ 0 (
+    start "Gold Sniper V2.1" /min python.exe "%~dp0main.py"
+    exit /b 0
+)
+
+echo [ERREUR] Python n'est pas installe ou pas dans le PATH.
+pause
+exit /b 1

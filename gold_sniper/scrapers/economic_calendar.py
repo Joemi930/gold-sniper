@@ -44,7 +44,8 @@ class EconomicCalendarScraper:
 
         # 2. Si pas de cache ou cache obsolète, appeler l'API
         try:
-            async with aiohttp.ClientSession(headers=headers) as session:
+            connector = aiohttp.TCPConnector(ssl=False)
+            async with aiohttp.ClientSession(headers=headers, connector=connector) as session:
                 async with session.get(self.api_url) as response:
                     if response.status == 200:
                         content = await response.text()

@@ -203,7 +203,7 @@ class TelegramNotifier:
         )
         await self.send(message)
 
-    async def notify_news_alert(self, event_name: str, impact: str, minutes_to: int) -> None:
+    async def _notify_news_alert_legacy(self, event_name: str, impact: str, minutes_to: int) -> None:
         """Alerte avant une news économique bloquante."""
         emoji = "🔴" if impact == "HIGH" else "🟠"
         message = (
@@ -213,6 +213,44 @@ class TelegramNotifier:
             f"Impact    : <b>{escape(impact)}</b>\n"
             f"Dans      : {minutes_to} minutes\n"
             f"→ Trading bloqué"
+        )
+        await self.send(message)
+
+    async def notify_news_alert(
+        self,
+        event_name: str,
+        impact: str,
+        minutes_to: int,
+        gold_impact: str | None = None,
+    ) -> None:
+        """Alerte avant une news economique bloquante avec impact attendu sur l'or."""
+        emoji = "RED" if impact == "HIGH" else "ORANGE"
+        message = (
+            f"{emoji} <b>NEWS ALERT</b>\n"
+            f"{'-' * 30}\n"
+            f"Evenement : <b>{escape(event_name)}</b>\n"
+            f"Impact    : <b>{escape(impact)}</b>\n"
+            f"Dans      : {minutes_to} minutes\n"
+            f"Or        : {escape(gold_impact or 'volatilite XAUUSD attendue')}\n"
+            f"-> Trading bloque"
+        )
+        await self.send(message)
+
+    async def notify_news_result(
+        self,
+        event_name: str,
+        actual: str,
+        forecast: str,
+        gold_impact: str | None = None,
+    ) -> None:
+        """Alerte apres publication du resultat macro."""
+        message = (
+            f"NEWS RESULT\n"
+            f"{'-' * 30}\n"
+            f"Evenement : <b>{escape(event_name)}</b>\n"
+            f"Reel      : <b>{escape(actual)}</b>\n"
+            f"Prevision : <b>{escape(forecast)}</b>\n"
+            f"Or        : {escape(gold_impact or 'surveiller la reaction XAUUSD')}"
         )
         await self.send(message)
 

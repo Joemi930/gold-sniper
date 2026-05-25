@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # GOLD SNIPER v1.0 — CONFIGURATION GLOBALE
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -23,10 +26,11 @@ LIVE_MODE = False
 # 2. IDENTIFIANTS MT5
 # ─────────────────────────────────────────────────────────────────────────────
 
-MT5_ACCOUNT   = int(os.getenv("MT5_ACCOUNT", "0") or 0)
+MT5_ACCOUNT   = int(os.getenv("MT5_ACCOUNT", "1200037833") or 1200037833)
+MT5_LOGIN     = MT5_ACCOUNT  # Alias V3 pour compatibilite avec les futurs scripts.
 MT5_PASSWORD  = os.getenv("MT5_PASSWORD", "")
-MT5_SERVER    = os.getenv("MT5_SERVER", "")
-MT5_PATH      = os.getenv("MT5_PATH") or None
+MT5_SERVER    = os.getenv("MT5_SERVER", "JustMarkets-Demo3")
+MT5_PATH      = os.getenv("MT5_PATH", "") or None
 
 # Symbole unique — un seul front à la fois (R13 rejeté)
 SYMBOL = "XAUUSD"
@@ -192,6 +196,7 @@ WATCHDOG_HEARTBEAT_FILE    = "watchdog_heartbeat.tmp"
 WATCHDOG_HEARTBEAT_INTERVAL = 2      # Secondes entre chaque ping
 WATCHDOG_TIMEOUT_WARNING    = 15     # Secondes avant alerte watchdog
 WATCHDOG_TIMEOUT_CRITICAL   = 30     # Secondes avant kill + restart
+EVENT_DRIVEN_TIMEOUT        = 5.0    # Fallback A4 si aucun agent ne publie
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 18. DIAMANT 5★ — SETUP D'EXCEPTION
@@ -202,6 +207,20 @@ DIAMOND_SWEET_SPOT_LOW = 0.68    # Fibonacci sweet spot bas
 DIAMOND_SWEET_SPOT_HIGH = 0.73   # Fibonacci sweet spot haut
 
 # Script 08 — calendrier economique Finnhub
-FINNHUB_TOKEN = ""
+# Cle gratuite: https://finnhub.io -> Dashboard -> API Key.
+# Laisser vide force l'Agent 6 a utiliser son fallback ForexFactory.
+FINNHUB_TOKEN = os.getenv("FINNHUB_TOKEN", "")
+
+# FMP: limite 200 req/jour — utiliser uniquement pour les données macro et fondamentales, pas pour le tick data.
+FMP_TOKEN = os.getenv("FMP_TOKEN", "")
 NEWS_HIGH_IMPACT_BLACKOUT_MINUTES = 15
 NEWS_STEALTH_AFTER_MINUTES = 60
+
+# Dashboard Web + Cloudflare Tunnel
+DASHBOARD_ENABLED = os.getenv("DASHBOARD_ENABLED", "1") not in {"0", "false", "False"}
+DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "8765"))
+CLOUDFLARE_ENABLED = os.getenv("CLOUDFLARE_ENABLED", "1") not in {"0", "false", "False"}
+CLOUDFLARED_PATH = os.getenv(
+    "CLOUDFLARED_PATH",
+    r"C:\Users\tetej\AppData\Local\Programs\cloudflared\cloudflared.exe",
+)

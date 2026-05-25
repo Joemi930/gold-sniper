@@ -13,6 +13,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 import asyncio
+import time
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Optional, Callable
@@ -54,6 +55,14 @@ class BlackBoard:
 
         # [R1] Event global pour le Kill Switch — vérifié avant chaque order_send
         self._kill_event = asyncio.Event()
+        self._agent_update_event = asyncio.Event()
+        self._agent_update_sequence = 0
+        self._latest_agent_update: dict[str, Any] = {
+            "sequence": 0,
+            "agent_id": None,
+            "published_at": None,
+            "published_at_perf": None,
+        }
 
         # Timestamp de création
         now = datetime.now(tz=timezone.utc)
@@ -97,6 +106,26 @@ class BlackBoard:
             },
 
             # ── MARKET DATA : Prix, bougies, infos symbole ──────────────
+            "control": {
+                "paused": False,
+                "pause_reason": None,
+                "paused_at": None,
+                "resumed_at": None,
+                "risk_pct_per_trade": None,
+                "risk_updated_at": None,
+                "memory_pause": False,
+                "memory_pause_at": None,
+                "memory_resumed_at": None,
+                "memory_loss_count_alerted": 0,
+            },
+
+            "memory": {
+                "last_recorded_trade": None,
+                "loss_count": 0,
+                "last_loss_analysis": None,
+                "updated_at": None,
+            },
+
             "market_data": {
                 "current_tick": {
                     "bid": 0.0,
@@ -174,8 +203,12 @@ class BlackBoard:
                 "gold_trend": "NEUTRAL",
                 "us10y_direction": None,
                 "real_rate_favorable": False,
+                "pearson_dxy_gold": 0.0,
+                "macro_signal_strength": "FAIBLE",
                 "macro_score_bonus": 0,
                 "macro_feed_alive": False,
+                "macro_correlation_interval": "15m",
+                "macro_correlation_window": 20,
                 "last_macro_update": None,
                 "session": "NONE",
                 "spread_monitor": {
@@ -597,20 +630,49 @@ class BlackBoard:
         Appelé par chaque agent quand il a fini son calcul.
         Publie le résultat ET notifie tous les abonnés instantanément.
         """
+        published_at = datetime.now(tz=timezone.utc)
+        published_at_perf = time.perf_counter()
         async with self._lock:
             self._data["agent_results"][agent_id] = result
             # Propager la direction de l'Agent 1 à tout le système
             if agent_id == "agent_1" and result.direction:
                 self._data["meta"]["current_direction"] = result.direction
+            self._agent_update_sequence += 1
+            self._latest_agent_update = {
+                "sequence": self._agent_update_sequence,
+                "agent_id": agent_id,
+                "published_at": published_at,
+                "published_at_perf": published_at_perf,
+            }
         
         # Déclencher l'événement SANS le lock (évite les deadlocks)
         event_name = f"{agent_id}_ready"
         if event_name in self._events:
             self._events[event_name].set()
+        self._agent_update_event.set()
         
         # Notifier les callbacks abonnés
         for callback in self._subscribers.get(event_name, []):
             asyncio.create_task(callback(result))
+
+    async def wait_for_agent_update(self, last_sequence: int = 0,
+                                    timeout: float = 5.0) -> Optional[dict[str, Any]]:
+        """
+        Attend la prochaine publication d'agent sans polling.
+        Retourne les metadonnees de publication ou None au timeout de secours.
+        """
+        while not self.kill_event.is_set():
+            async with self._lock:
+                latest = dict(self._latest_agent_update)
+                if latest["sequence"] > last_sequence:
+                    return latest
+                self._agent_update_event.clear()
+
+            try:
+                await asyncio.wait_for(self._agent_update_event.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                return None
+        return None
     
     async def wait_for_agent(self, agent_id: str, timeout: float = 5.0) -> Optional["AgentResult"]:
         """

@@ -16,11 +16,20 @@ OB_FACTOR_WEIGHTS = {
     "fvg_in_zone": 20.0,
     "liquidity_confluence": 20.0,
 }
+OB_INSTITUTIONAL_CANDLE_BONUS = 10.0
 
 
-def _arrays_to_ohlcv(open_: np.ndarray, high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
+def _arrays_to_ohlcv(
+    open_: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    volume: np.ndarray | None = None,
+) -> np.ndarray:
     """Assemble les arrays OHLC en matrice numpy."""
-    return np.column_stack([open_, high, low, close])
+    if volume is None:
+        return np.column_stack([open_, high, low, close])
+    return np.column_stack([open_, high, low, close, volume])
 
 
 def _grade(score: float) -> str:
@@ -110,6 +119,78 @@ def _liquidity_confluence(
     return float(ohlcv[ob_idx][1]) >= float(np.max(lookback[:, 1])) - tolerance
 
 
+def _average_volume_before(ohlcv: np.ndarray, candle_idx: int, window: int = 20) -> float:
+    """Retourne le volume moyen disponible avant une bougie."""
+    if ohlcv.shape[1] < 5 or candle_idx <= 0:
+        return 0.0
+    volumes = ohlcv[max(0, candle_idx - window) : candle_idx, 4]
+    volumes = volumes[volumes > 0]
+    if len(volumes) == 0:
+        return 0.0
+    return float(np.mean(volumes))
+
+
+def detect_institutional_candles(ohlcv: np.ndarray, atr_14: float, candle_idx: int | None = None) -> dict:
+    """
+    Detecte engulfing, rejection candle et institutional candle.
+
+    La matrice peut contenir OHLC ou OHLCV. Le pattern institutional candle
+    exige un volume disponible pour verifier le seuil 2x la moyenne 20 bougies.
+    """
+    if len(ohlcv) < 2:
+        return {"detected": False, "patterns": [], "bonus_pts": 0.0, "has_institutional_candle": False}
+
+    idx = len(ohlcv) - 1 if candle_idx is None else candle_idx
+    if idx <= 0 or idx >= len(ohlcv):
+        return {"detected": False, "patterns": [], "bonus_pts": 0.0, "has_institutional_candle": False}
+
+    o, h, l, c = 0, 1, 2, 3
+    curr = ohlcv[idx]
+    prev = ohlcv[idx - 1]
+    curr_open = float(curr[o])
+    curr_high = float(curr[h])
+    curr_low = float(curr[l])
+    curr_close = float(curr[c])
+    prev_open = float(prev[o])
+    prev_close = float(prev[c])
+    patterns: list[str] = []
+
+    curr_body_low = min(curr_open, curr_close)
+    curr_body_high = max(curr_open, curr_close)
+    prev_body_low = min(prev_open, prev_close)
+    prev_body_high = max(prev_open, prev_close)
+    body_engulfs_previous = curr_body_low <= prev_body_low and curr_body_high >= prev_body_high
+    if body_engulfs_previous and curr_close > curr_open and prev_close < prev_open:
+        patterns.append("BULLISH_ENGULFING")
+    elif body_engulfs_previous and curr_close < curr_open and prev_close > prev_open:
+        patterns.append("BEARISH_ENGULFING")
+
+    total_range = curr_high - curr_low
+    if total_range > 0:
+        lower_wick = curr_body_low - curr_low
+        upper_wick = curr_high - curr_body_high
+        if lower_wick / total_range > 0.70:
+            patterns.append("BULLISH_REJECTION_CANDLE")
+        if upper_wick / total_range > 0.70:
+            patterns.append("BEARISH_REJECTION_CANDLE")
+
+    body_size = abs(curr_close - curr_open)
+    avg_volume = _average_volume_before(ohlcv, idx)
+    volume_ratio = float(curr[4]) / avg_volume if ohlcv.shape[1] >= 5 and avg_volume > 0 else 0.0
+    has_institutional_candle = body_size > 1.5 * max(float(atr_14 or 0.0), 0.0001) and volume_ratio > 2.0
+    if has_institutional_candle:
+        candle_direction = "BULLISH" if curr_close > curr_open else "BEARISH"
+        patterns.append(f"INSTITUTIONAL_CANDLE_{candle_direction}")
+
+    return {
+        "detected": bool(patterns),
+        "patterns": patterns,
+        "bonus_pts": OB_INSTITUTIONAL_CANDLE_BONUS if has_institutional_candle else 0.0,
+        "has_institutional_candle": has_institutional_candle,
+        "volume_ratio": round(volume_ratio, 2),
+    }
+
+
 def score_order_block(
     ohlcv: np.ndarray,
     ob_idx: int,
@@ -152,6 +233,12 @@ def score_order_block(
         if _liquidity_confluence(ohlcv, i, bottom, top, atr, direction, liquidity_pools)
         else 0.0
     )
+    candle_patterns = detect_institutional_candles(ohlcv, atr, candle_idx=i + 1)
+    factors["institutional_candle"] = (
+        OB_INSTITUTIONAL_CANDLE_BONUS
+        if candle_patterns["has_institutional_candle"]
+        else 0.0
+    )
 
     score = round(min(sum(factors.values()), 100.0), 1)
     return {
@@ -161,6 +248,8 @@ def score_order_block(
         "grade": _grade(score),
         "fresh": is_fresh,
         "impulse_ratio": round(impulse_ratio, 2),
+        "institutional_patterns": candle_patterns["patterns"],
+        "institutional_volume_ratio": candle_patterns["volume_ratio"],
     }
 
 
@@ -175,11 +264,12 @@ def detect_order_blocks(
     direction: str,
     htf_bias: str | None = None,
     liquidity_pools: dict | None = None,
+    volume: np.ndarray | None = None,
 ) -> list:
     """Detecte et garde uniquement les OB dont le score institutionnel passe."""
     obs = []
     length = len(close)
-    ohlcv = _arrays_to_ohlcv(open_, high, low, close)
+    ohlcv = _arrays_to_ohlcv(open_, high, low, close, volume)
     liquidity_context = dict(liquidity_pools or {})
     liquidity_context.setdefault("swing_highs", swing_highs)
     liquidity_context.setdefault("swing_lows", swing_lows)
@@ -243,6 +333,8 @@ def detect_order_blocks(
                 "ob_score": score_details["score"],
                 "score": score_details["score"],
                 "score_factors": score_details["factors"],
+                "institutional_patterns": score_details.get("institutional_patterns", []),
+                "institutional_volume_ratio": score_details.get("institutional_volume_ratio", 0.0),
                 "grade": score_details["grade"],
                 "fresh": score_details.get("fresh", False),
                 "valid": score_details["valid"],
@@ -413,6 +505,8 @@ def score_agent_2(
             "active_fvg": best_fvg,
             "ob_score": ob_score,
             "score_factors": best_ob.get("score_factors", {}),
+            "institutional_patterns": best_ob.get("institutional_patterns", []),
+            "institutional_volume_ratio": best_ob.get("institutional_volume_ratio", 0.0),
             "grade": best_ob.get("grade"),
             "fvg_confluence": fvg_confluence,
             "price_in_zone": price_in_zone,
@@ -466,6 +560,11 @@ class AgentCartographe:
                 low = np.array([c["low"] for c in candles_15m], dtype=float)
                 open_ = np.array([c["open"] for c in candles_15m], dtype=float)
                 close = np.array([c["close"] for c in candles_15m], dtype=float)
+                volume_values = [
+                    float(c.get("volume") or c.get("tick_volume") or c.get("real_volume") or 0.0)
+                    for c in candles_15m
+                ]
+                volume = np.array(volume_values, dtype=float) if any(volume_values) else None
 
                 from agents.agent_1_meteo import detect_swings
 
@@ -486,9 +585,10 @@ class AgentCartographe:
                     direction,
                     htf_bias=htf_bias,
                     liquidity_pools=liquidity_pools,
+                    volume=volume,
                 )
 
-                ohlcv = _arrays_to_ohlcv(open_, high, low, close)
+                ohlcv = _arrays_to_ohlcv(open_, high, low, close, volume)
                 breakers = detect_breaker_blocks(self._known_zones, ohlcv)
                 self._known_zones = [*obs, *[z for z in self._known_zones if z not in obs]][:20]
 

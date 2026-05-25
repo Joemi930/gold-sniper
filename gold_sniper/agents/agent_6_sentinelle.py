@@ -5,6 +5,7 @@ from typing import Any
 from agents.base_agent import AgentResult
 from core.blackboard import BlackBoard
 from utils.logger import get_logger
+from utils.telegram_notifier import send_telegram_notification
 
 try:
     import aiohttp
@@ -13,12 +14,14 @@ except ImportError:  # pragma: no cover - fallback runtime
 
 try:
     from config import (
+        FMP_TOKEN,
         FINNHUB_TOKEN,
         NEWS_HIGH_IMPACT_BLACKOUT_MINUTES,
         NEWS_SCRAPE_INTERVAL_SECONDS,
         NEWS_STEALTH_AFTER_MINUTES,
     )
 except ImportError:
+    FMP_TOKEN = ""
     FINNHUB_TOKEN = ""
     NEWS_HIGH_IMPACT_BLACKOUT_MINUTES = 15
     NEWS_SCRAPE_INTERVAL_SECONDS = 60
@@ -31,6 +34,7 @@ except ImportError:
 
 
 FINNHUB_API_URL = "https://finnhub.io/api/v1/calendar/economic"
+FMP_API_URL = "https://financialmodelingprep.com/stable/economic-calendar"
 HIGH_IMPACT_KEYWORDS = [
     "NFP",
     "Non-Farm",
@@ -53,6 +57,8 @@ BLACKOUT_WINDOWS = {
     "MEDIUM": {"before": 15, "after": 10},
     "LOW": {"before": 0, "after": 0},
 }
+CALENDAR_CACHE_TTL = timedelta(hours=24)
+HIGH_IMPACT_FORCE_REFRESH_WINDOW = timedelta(minutes=90)
 
 
 def _ensure_utc(value: datetime) -> datetime:
@@ -97,12 +103,23 @@ def normalize_calendar_event(raw: dict, now: datetime | None = None) -> dict:
     """Normalise un evenement economique en format interne Agent 6."""
     now = now or datetime.now(timezone.utc)
     name = raw.get("name") or raw.get("event") or raw.get("title") or "Unknown"
-    event_time = _parse_event_time(raw.get("time") or raw.get("time_utc") or raw.get("datetime"), now)
+    event_time = _parse_event_time(
+        raw.get("time") or raw.get("time_utc") or raw.get("datetime") or raw.get("date"),
+        now,
+    )
     impact = str(raw.get("impact") or _classify_impact_finnhub(raw.get("impactLevel"), name)).upper()
     if impact not in {"HIGH", "MEDIUM", "LOW"}:
         impact = _classify_impact_finnhub(raw.get("impact"), name)
     currency = raw.get("currency") or raw.get("country") or ""
-    return {"name": name, "time": event_time, "impact": impact, "currency": currency}
+    return {
+        "name": name,
+        "time": event_time,
+        "impact": impact,
+        "currency": currency,
+        "actual": raw.get("actual"),
+        "forecast": raw.get("forecast") or raw.get("estimate") or raw.get("consensus"),
+        "previous": raw.get("previous"),
+    }
 
 
 def is_gold_relevant_event(event: dict) -> bool:
@@ -183,19 +200,41 @@ def evaluate_calendar_state(events: list, now: datetime | None = None, feed_aliv
     }
 
 
+def has_high_impact_event_within(events: list, now: datetime | None = None, window: timedelta = HIGH_IMPACT_FORCE_REFRESH_WINDOW) -> bool:
+    """True si le cache contient une news HIGH dans la fenetre donnee."""
+    now = _ensure_utc(now or datetime.now(timezone.utc))
+    horizon = now + window
+    for raw_event in events or []:
+        event = normalize_calendar_event(raw_event, now)
+        event_time = _ensure_utc(event["time"])
+        if event["impact"] == "HIGH" and now <= event_time <= horizon:
+            return True
+    return False
+
+
 class AgentSentinelle:
     """Agent calendrier economique Finnhub avec fallback non bloquant."""
 
-    def __init__(self, blackboard: BlackBoard, telegram=None, finnhub_token: str | None = None):
+    def __init__(
+        self,
+        blackboard: BlackBoard,
+        telegram=None,
+        finnhub_token: str | None = None,
+        fmp_token: str | None = None,
+    ):
         self.bb = blackboard
         self.telegram = telegram
         self.logger = get_logger()
         self.name = "agent_6"
         self.finnhub_token = finnhub_token if finnhub_token is not None else FINNHUB_TOKEN
+        self.fmp_token = fmp_token if fmp_token is not None else FMP_TOKEN
+        self.calendar_source = "NONE"
         self.events_cache: list[dict] = []
         self.cache_updated_at: datetime | None = None
         self.feed_alive = True
         self.last_error: str | None = None
+        self._sent_pre_event_alerts: set[tuple[str, int]] = set()
+        self._sent_result_alerts: set[str] = set()
 
     async def run(self):
         """Demarre les boucles fetch calendrier et surveillance blackout."""
@@ -218,25 +257,42 @@ class AgentSentinelle:
     async def refresh_events(self, force: bool = False, now: datetime | None = None) -> list:
         """Recupere Finnhub puis fallback local/scraper en cas d'indisponibilite."""
         now = _ensure_utc(now or datetime.now(timezone.utc))
-        if not force and self.cache_updated_at and (now - self.cache_updated_at).total_seconds() < 600:
+        cache_is_fresh = self.cache_updated_at and (now - self.cache_updated_at) < CALENDAR_CACHE_TTL
+        high_soon = has_high_impact_event_within(self.events_cache, now)
+        if not force and cache_is_fresh and not high_soon:
             return self.events_cache
+        if high_soon:
+            self.logger.warning("Agent 6: HIGH impact <90 min detecte dans le cache, refresh Finnhub force")
 
-        try:
-            events = await self._fetch_finnhub(now)
-            self.events_cache = events
+        errors = []
+        for source_name, fetcher in (
+            ("FINNHUB", self._fetch_finnhub),
+            ("FMP", self._fetch_fmp),
+        ):
+            try:
+                events = await fetcher(now)
+                self.events_cache = events
+                self.cache_updated_at = now
+                self.feed_alive = True
+                self.calendar_source = source_name
+                self.last_error = None
+                return events
+            except Exception as exc:
+                errors.append(f"{source_name}: {exc}")
+
+        self.feed_alive = False
+        self.last_error = "; ".join(errors)
+        fallback_events = await self._fallback_calendar(now)
+        if fallback_events:
+            self.events_cache = fallback_events
             self.cache_updated_at = now
             self.feed_alive = True
-            self.last_error = None
-            return events
-        except Exception as exc:
-            self.feed_alive = False
-            self.last_error = str(exc)
-            fallback_events = await self._fallback_calendar(now)
-            if fallback_events:
-                self.events_cache = fallback_events
-                self.cache_updated_at = now
-            await self._notify_feed_down_once()
+            self.calendar_source = "FOREXFACTORY"
             return self.events_cache
+
+        self.calendar_source = "CACHE"
+        await self._notify_feed_down_once()
+        return self.events_cache
 
     async def _fetch_finnhub(self, now: datetime) -> list:
         """Fetch depuis Finnhub calendar/economic gratuit."""
@@ -259,6 +315,32 @@ class AgentSentinelle:
         events = [normalize_calendar_event(event, now) for event in raw_events]
         return [event for event in events if is_gold_relevant_event(event)]
 
+    async def _fetch_fmp(self, now: datetime) -> list:
+        """Fetch calendrier economique FMP avant fallback ForexFactory."""
+        if aiohttp is None:
+            raise RuntimeError("aiohttp indisponible")
+        if not self.fmp_token:
+            raise RuntimeError("FMP_TOKEN manquant")
+
+        today = now.strftime("%Y-%m-%d")
+        tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+        params = {"from": today, "to": tomorrow, "apikey": self.fmp_token}
+
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.get(
+                FMP_API_URL,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as response:
+                if response.status != 200:
+                    raise RuntimeError(f"FMP HTTP {response.status}")
+                data = await response.json()
+
+        raw_events = data if isinstance(data, list) else data.get("economicCalendar", data.get("economic", []))
+        events = [normalize_calendar_event(event, now) for event in raw_events or []]
+        return [event for event in events if is_gold_relevant_event(event)]
+
     async def _fallback_calendar(self, now: datetime) -> list:
         """Fallback scraper existant si disponible; sinon conserve le cache."""
         if EconomicCalendarScraper is None:
@@ -274,9 +356,98 @@ class AgentSentinelle:
 
     async def check_and_update_blackboard(self, now: datetime | None = None) -> dict:
         """Evalue le calendrier et alerte les autres agents via le Blackboard."""
+        await self._process_news_alerts(now)
         state = evaluate_calendar_state(self.events_cache, now, feed_alive=self.feed_alive)
         await self._publish_state(state)
         return state
+
+    async def _process_news_alerts(self, now: datetime | None = None) -> None:
+        """Envoie les alertes HIGH impact a 90, 30, 15 min, puis le resultat reel."""
+        now = _ensure_utc(now or datetime.now(timezone.utc))
+        for raw_event in self.events_cache or []:
+            event = normalize_calendar_event(raw_event, now)
+            if event["impact"] != "HIGH" or not is_gold_relevant_event(event):
+                continue
+
+            event_time = _ensure_utc(event["time"])
+            minutes_to = int((event_time - now).total_seconds() // 60)
+            event_key = self._event_key(event)
+            gold_impact = self._expected_gold_impact(event)
+
+            for threshold in (90, 30, 15):
+                alert_key = (event_key, threshold)
+                if alert_key not in self._sent_pre_event_alerts and 0 <= minutes_to <= threshold:
+                    await self._notify_news_alert(event, threshold, gold_impact)
+                    self._sent_pre_event_alerts.add(alert_key)
+
+            actual = event.get("actual")
+            forecast = event.get("forecast")
+            if event_time <= now and actual not in {None, ""} and event_key not in self._sent_result_alerts:
+                await self._notify_news_result(event, str(actual), str(forecast or "N/A"))
+                self._sent_result_alerts.add(event_key)
+
+    async def _notify_news_alert(self, event: dict, minutes_to: int, gold_impact: str) -> None:
+        if self.telegram and hasattr(self.telegram, "notify_news_alert"):
+            await self.telegram.notify_news_alert(event["name"], event["impact"], minutes_to, gold_impact)
+            return
+        await send_telegram_notification(
+            self.bb,
+            (
+                f"*NEWS ALERT* - {event['name']}\n"
+                f"Impact: {event['impact']} | Dans: {minutes_to} min\n"
+                f"Or: {gold_impact}"
+            ),
+        )
+
+    async def _notify_news_result(self, event: dict, actual: str, forecast: str) -> None:
+        gold_impact = self._actual_vs_forecast_gold_impact(event, actual, forecast)
+        if self.telegram and hasattr(self.telegram, "notify_news_result"):
+            await self.telegram.notify_news_result(event["name"], actual, forecast, gold_impact)
+            return
+        await send_telegram_notification(
+            self.bb,
+            (
+                f"*NEWS RESULT* - {event['name']}\n"
+                f"Reel: {actual} | Prevision: {forecast}\n"
+                f"Or: {gold_impact}"
+            ),
+        )
+
+    def _event_key(self, event: dict) -> str:
+        return f"{event.get('name')}|{_ensure_utc(event['time']).isoformat()}|{event.get('currency')}"
+
+    def _expected_gold_impact(self, event: dict) -> str:
+        name = str(event.get("name", "")).lower()
+        if any(key in name for key in ["cpi", "ppi", "pce", "inflation", "interest rate", "fomc", "powell"]):
+            return "USD/rates sensibles: surprise hawkish = pression baissiere sur XAUUSD, dovish = soutien."
+        if any(key in name for key in ["nfp", "non-farm", "unemployment", "jobless", "adp"]):
+            return "Emploi USD sensible: donnees fortes = USD/rendements haussiers, pression sur l'or."
+        if any(key in name for key in ["gdp", "retail sales", "ism"]):
+            return "Croissance USD: surprise forte peut peser sur l'or; faiblesse peut soutenir XAUUSD."
+        return "Volatilite XAUUSD attendue; attendre la reaction post-news."
+
+    def _actual_vs_forecast_gold_impact(self, event: dict, actual: str, forecast: str) -> str:
+        actual_num = self._to_float(actual)
+        forecast_num = self._to_float(forecast)
+        if actual_num is None or forecast_num is None:
+            return "Comparer manuellement la surprise macro et la reaction XAUUSD."
+        surprise = actual_num - forecast_num
+        name = str(event.get("name", "")).lower()
+        if abs(surprise) < 1e-9:
+            return "Conforme au consensus: reaction XAUUSD probablement guidee par le contexte."
+        stronger_is_bearish_gold = not any(key in name for key in ["unemployment", "jobless"])
+        if surprise > 0:
+            return "Surprise au-dessus du consensus: biais initial baissier or." if stronger_is_bearish_gold else "Surprise au-dessus du consensus: biais initial haussier or."
+        return "Surprise sous consensus: biais initial haussier or." if stronger_is_bearish_gold else "Surprise sous consensus: biais initial baissier or."
+
+    def _to_float(self, value: Any) -> float | None:
+        if value in {None, ""}:
+            return None
+        cleaned = str(value).replace("%", "").replace("K", "").replace("k", "").replace(",", "").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
 
     async def _publish_state(self, state: dict) -> None:
         """Publie le veto, stealth mode et volatility gate."""
@@ -292,6 +463,8 @@ class AgentSentinelle:
                 "feed_alive": state["feed_alive"],
                 "stealth_mode": state["stealth_mode"],
                 "reason": state["reason"],
+                "calendar_source": self.calendar_source,
+                "last_error": self.last_error,
             },
         )
         await self.bb.update_dict(

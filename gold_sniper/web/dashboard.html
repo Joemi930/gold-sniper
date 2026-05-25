@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gold Sniper V3 Dashboard</title>
+  <style>
+    :root {
+      --bg: #050606;
+      --panel: #0b1010;
+      --panel-2: #111817;
+      --line: #20302e;
+      --text: #d8efe7;
+      --muted: #78918a;
+      --gold: #d6a84f;
+      --green: #20d47c;
+      --orange: #f4a83b;
+      --red: #f24d4d;
+      --cyan: #58c7d8;
+      --shadow: rgba(0, 0, 0, 0.55);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background:
+        linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px),
+        var(--bg);
+      background-size: 26px 26px;
+      color: var(--text);
+      font-family: Consolas, "Courier New", monospace;
+      letter-spacing: 0;
+    }
+
+    body {
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: 54px minmax(0, 1fr) 168px;
+      gap: 10px;
+      padding: 10px;
+    }
+
+    .topbar,
+    .panel,
+    .logs {
+      background: rgba(8, 13, 13, 0.92);
+      border: 1px solid var(--line);
+      box-shadow: 0 18px 50px var(--shadow);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-width: 0;
+      padding: 0 14px;
+      border-left: 3px solid var(--gold);
+    }
+
+    .brand {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 26px;
+      height: 26px;
+      border: 1px solid var(--gold);
+      display: grid;
+      place-items: center;
+      color: var(--gold);
+      font-weight: 800;
+      font-size: 16px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1;
+      color: var(--gold);
+      white-space: nowrap;
+    }
+
+    .top-meta {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      display: inline-block;
+      border-radius: 50%;
+      background: var(--red);
+      box-shadow: 0 0 10px var(--red);
+      margin-right: 6px;
+    }
+
+    .status-dot.online {
+      background: var(--green);
+      box-shadow: 0 0 10px var(--green);
+    }
+
+    .main-grid {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(270px, 0.8fr) minmax(340px, 1.2fr) minmax(260px, 0.8fr);
+      gap: 10px;
+    }
+
+    .panel {
+      min-width: 0;
+      min-height: 0;
+      padding: 12px;
+      overflow: hidden;
+    }
+
+    .panel-title {
+      height: 22px;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+    }
+
+    .network {
+      position: relative;
+      height: calc(100% - 32px);
+      min-height: 360px;
+      overflow: hidden;
+      border: 1px solid rgba(88, 199, 216, 0.12);
+      background: radial-gradient(circle at 50% 50%, rgba(32, 212, 124, 0.08), transparent 54%);
+    }
+
+    #network-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .agent-node {
+      position: absolute;
+      width: 74px;
+      height: 74px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      transform: translate(-50%, -50%);
+      border: 2px solid currentColor;
+      color: var(--red);
+      background: rgba(5, 8, 8, 0.9);
+      box-shadow: 0 0 18px currentColor, inset 0 0 18px rgba(255,255,255,0.04);
+      transition: color 260ms ease, left 260ms ease, top 260ms ease;
+      animation: nodePulse 2.6s ease-in-out infinite;
+    }
+
+    .agent-node.orange { color: var(--orange); }
+    .agent-node.green { color: var(--green); }
+
+    .agent-node strong {
+      display: block;
+      font-size: 17px;
+      line-height: 1;
+      text-align: center;
+    }
+
+    .agent-node span {
+      display: block;
+      margin-top: 5px;
+      color: var(--text);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    @keyframes nodePulse {
+      0%, 100% { filter: brightness(0.95); }
+      50% { filter: brightness(1.35); }
+    }
+
+    .center-stack {
+      height: calc(100% - 32px);
+      display: grid;
+      grid-template-rows: 1fr auto;
+      gap: 10px;
+      min-height: 0;
+    }
+
+    .decision-core {
+      min-height: 0;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(214, 168, 79, 0.22);
+      background:
+        radial-gradient(circle at center, rgba(214, 168, 79, 0.16), transparent 52%),
+        rgba(10, 14, 13, 0.82);
+      text-align: center;
+      padding: 16px;
+    }
+
+    .score {
+      font-size: clamp(54px, 10vw, 112px);
+      font-weight: 800;
+      color: var(--gold);
+      line-height: 0.9;
+      text-shadow: 0 0 30px rgba(214, 168, 79, 0.4);
+    }
+
+    .decision {
+      margin-top: 12px;
+      font-size: clamp(20px, 3vw, 34px);
+      color: var(--text);
+      text-transform: uppercase;
+    }
+
+    .market-strip {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      width: min(620px, 100%);
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      background: rgba(10, 16, 15, 0.86);
+      padding: 10px;
+      min-width: 0;
+      text-align: left;
+    }
+
+    .metric small,
+    .trade-row small {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .metric strong {
+      display: block;
+      color: var(--text);
+      font-size: 14px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .agent-table {
+      display: grid;
+      gap: 7px;
+      min-height: 160px;
+    }
+
+    .agent-line {
+      display: grid;
+      grid-template-columns: 74px 1fr 44px;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      min-width: 0;
+    }
+
+    .agent-label {
+      color: var(--muted);
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .bar {
+      height: 7px;
+      background: #111;
+      border: 1px solid #1c2d2b;
+      overflow: hidden;
+    }
+
+    .bar span {
+      display: block;
+      width: 0;
+      height: 100%;
+      background: var(--red);
+      transition: width 260ms ease, background 260ms ease;
+    }
+
+    .bar span.orange { background: var(--orange); }
+    .bar span.green { background: var(--green); }
+
+    .trades {
+      height: calc(100% - 32px);
+      overflow: auto;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      padding-right: 2px;
+    }
+
+    .pnl-total {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      padding: 12px;
+      color: var(--text);
+      font-size: 28px;
+      font-weight: 800;
+    }
+
+    .pnl-total.positive { color: var(--green); }
+    .pnl-total.negative { color: var(--red); }
+
+    .trade-row {
+      border: 1px solid var(--line);
+      background: rgba(10, 16, 15, 0.86);
+      padding: 10px;
+      min-width: 0;
+    }
+
+    .trade-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+      color: var(--gold);
+    }
+
+    .trade-grid {
+      margin-top: 8px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .logs {
+      min-height: 0;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 24px 1fr;
+      padding: 10px 12px;
+    }
+
+    .log-feed {
+      min-height: 0;
+      overflow: auto;
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+
+    .log-item {
+      display: grid;
+      grid-template-columns: 76px 72px 1fr;
+      gap: 8px;
+      padding: 2px 0;
+      border-bottom: 1px solid rgba(32, 48, 46, 0.42);
+    }
+
+    .log-level { color: var(--gold); }
+    .log-msg {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 900px) {
+      .shell {
+        min-height: 100vh;
+        grid-template-rows: auto auto 190px;
+      }
+
+      .topbar {
+        min-height: 58px;
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 8px;
+        padding: 10px 12px;
+      }
+
+      .top-meta {
+        width: 100%;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 11px;
+      }
+
+      .main-grid {
+        grid-template-columns: 1fr;
+        grid-auto-rows: auto;
+      }
+
+      .network {
+        min-height: 360px;
+      }
+
+      .center-stack {
+        height: auto;
+      }
+
+      .market-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .trades {
+        max-height: 320px;
+      }
+
+      .agent-node {
+        width: 62px;
+        height: 62px;
+      }
+
+      .agent-node strong { font-size: 14px; }
+      .agent-node span { font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">G</div>
+        <h1>GOLD SNIPER V3</h1>
+      </div>
+      <div class="top-meta">
+        <span><i id="status-dot" class="status-dot"></i><span id="connection">OFFLINE</span></span>
+        <span id="clock">--:--:--</span>
+        <span id="latency">-- ms</span>
+      </div>
+    </header>
+
+    <section class="main-grid">
+      <section class="panel">
+        <div class="panel-title"><span>AGENT MESH</span><span id="agent-health">0/7</span></div>
+        <div class="network" data-testid="agent-network">
+          <canvas id="network-canvas"></canvas>
+          <div id="agent-nodes"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title"><span>ORCHESTRATOR</span><span id="last-update">--</span></div>
+        <div class="center-stack">
+          <div class="decision-core">
+            <div>
+              <div id="score" class="score">0</div>
+              <div id="decision" class="decision">WAIT</div>
+              <div class="market-strip">
+                <div class="metric"><small>Regime</small><strong id="regime">UNKNOWN</strong></div>
+                <div class="metric"><small>Session</small><strong id="session">UNKNOWN</strong></div>
+                <div class="metric"><small>Strategy</small><strong id="strategy">N/A</strong></div>
+              </div>
+            </div>
+          </div>
+          <div id="agent-table" class="agent-table"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title"><span>POSITIONS</span><span id="trade-count">0 OPEN</span></div>
+        <div id="trades" class="trades">
+          <div id="pnl-total" class="pnl-total">+0.00</div>
+        </div>
+      </section>
+    </section>
+
+    <section class="logs">
+      <div class="panel-title"><span>EVENT FEED</span><span id="feed-count">0</span></div>
+      <div id="log-feed" class="log-feed"></div>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      agents: Array.from({ length: 7 }, (_, i) => ({
+        id: `agent_${i + 1}`,
+        label: `A${i + 1}`,
+        name: ["Meteo", "Carto", "Liqui", "Fibo", "Micro", "News", "Chronos"][i],
+        score: 0,
+        status: "red",
+        reason: ""
+      })),
+      logs: [],
+      phase: 0,
+      lastPacketAt: 0
+    };
+
+    const els = {
+      canvas: document.getElementById("network-canvas"),
+      nodes: document.getElementById("agent-nodes"),
+      score: document.getElementById("score"),
+      decision: document.getElementById("decision"),
+      regime: document.getElementById("regime"),
+      session: document.getElementById("session"),
+      strategy: document.getElementById("strategy"),
+      table: document.getElementById("agent-table"),
+      trades: document.getElementById("trades"),
+      pnl: document.getElementById("pnl-total"),
+      logs: document.getElementById("log-feed"),
+      status: document.getElementById("connection"),
+      dot: document.getElementById("status-dot"),
+      latency: document.getElementById("latency"),
+      clock: document.getElementById("clock"),
+      lastUpdate: document.getElementById("last-update"),
+      health: document.getElementById("agent-health"),
+      tradeCount: document.getElementById("trade-count"),
+      feedCount: document.getElementById("feed-count")
+    };
+
+    function colorFor(score) {
+      if (score >= 85) return "green";
+      if (score >= 60) return "orange";
+      return "red";
+    }
+
+    function cssColor(status) {
+      if (status === "green") return getComputedStyle(document.documentElement).getPropertyValue("--green").trim();
+      if (status === "orange") return getComputedStyle(document.documentElement).getPropertyValue("--orange").trim();
+      return getComputedStyle(document.documentElement).getPropertyValue("--red").trim();
+    }
+
+    function layoutAgents() {
+      const rect = els.canvas.getBoundingClientRect();
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const nodeSize = matchMedia("(max-width: 900px)").matches ? 62 : 74;
+      const maxRadius = Math.max(72, Math.min(rect.width, rect.height) / 2 - nodeSize / 2 - 14);
+      const radius = Math.min(Math.min(rect.width, rect.height) * 0.32, maxRadius);
+      state.agents.forEach((agent, index) => {
+        const angle = -Math.PI / 2 + index * (Math.PI * 2 / state.agents.length);
+        agent.x = cx + Math.cos(angle) * radius;
+        agent.y = cy + Math.sin(angle) * radius;
+      });
+    }
+
+    function renderNodes() {
+      els.nodes.innerHTML = "";
+      state.agents.forEach(agent => {
+        const node = document.createElement("div");
+        node.className = `agent-node ${colorFor(agent.score)}`;
+        node.style.left = `${agent.x}px`;
+        node.style.top = `${agent.y}px`;
+        node.title = `${agent.name}: ${Math.round(agent.score)}/100 ${agent.reason || ""}`;
+        node.innerHTML = `<strong>${agent.label}</strong><span>${Math.round(agent.score)}</span>`;
+        els.nodes.appendChild(node);
+      });
+    }
+
+    function drawNetwork() {
+      const canvas = els.canvas;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      if (canvas.width !== Math.floor(rect.width * dpr) || canvas.height !== Math.floor(rect.height * dpr)) {
+        canvas.width = Math.floor(rect.width * dpr);
+        canvas.height = Math.floor(rect.height * dpr);
+      }
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      state.phase += 0.014;
+
+      state.agents.forEach((agent, index) => {
+        const next = state.agents[(index + 1) % state.agents.length];
+        drawSignalLine(ctx, agent.x, agent.y, next.x, next.y, agent, index);
+        drawSignalLine(ctx, agent.x, agent.y, cx, cy, agent, index + 8);
+      });
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, 42 + Math.sin(state.phase * 2) * 2, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(214, 168, 79, 0.55)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = "rgba(214, 168, 79, 0.08)";
+      ctx.fill();
+      requestAnimationFrame(drawNetwork);
+    }
+
+    function drawSignalLine(ctx, x1, y1, x2, y2, agent, offset) {
+      const pulse = (Math.sin(state.phase * 4 + offset) + 1) / 2;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.strokeStyle = cssColor(colorFor(agent.score)).replace(")", `, ${0.16 + pulse * 0.34})`).replace("rgb", "rgba");
+      ctx.lineWidth = 1 + pulse * 1.2;
+      ctx.stroke();
+
+      const px = x1 + (x2 - x1) * pulse;
+      const py = y1 + (y2 - y1) * pulse;
+      ctx.beginPath();
+      ctx.arc(px, py, 2.4, 0, Math.PI * 2);
+      ctx.fillStyle = cssColor(colorFor(agent.score));
+      ctx.fill();
+    }
+
+    function updateDashboard(packet) {
+      const now = performance.now();
+      state.lastPacketAt = now;
+      els.latency.textContent = packet.ts ? `${Math.max(0, Math.round(Date.now() - Date.parse(packet.ts)))} ms` : "-- ms";
+
+      const data = packet.state || packet;
+      const agents = packet.agents?.agents || [];
+      if (agents.length) {
+        state.agents = agents.map((agent, i) => ({
+          ...state.agents[i],
+          ...agent,
+          score: Number(agent.score || 0),
+          status: colorFor(Number(agent.score || 0))
+        }));
+      }
+
+      const market = data.market || {};
+      const orchestrator = data.orchestrator || {};
+      els.score.textContent = Math.round(Number(orchestrator.final_score || orchestrator.score || 0));
+      els.decision.textContent = String(orchestrator.decision || "WAIT");
+      els.regime.textContent = String(market.regime || data.market_data?.regime || "UNKNOWN");
+      els.session.textContent = String(market.session || data.market_data?.session || "UNKNOWN");
+      els.strategy.textContent = String(orchestrator.strategy || "N/A");
+      els.lastUpdate.textContent = new Date().toLocaleTimeString();
+
+      renderAgentTable();
+      renderTrades(packet.trades || { open_trades: [], total_pnl: 0, open_count: 0 });
+      renderLogs(packet.logs || []);
+      layoutAgents();
+      renderNodes();
+      setConnection(true);
+    }
+
+    function renderAgentTable() {
+      els.table.innerHTML = "";
+      let alive = 0;
+      state.agents.forEach(agent => {
+        if (agent.score > 0) alive += 1;
+        const row = document.createElement("div");
+        row.className = "agent-line";
+        const color = colorFor(agent.score);
+        row.innerHTML = `
+          <div class="agent-label" title="${agent.reason || ""}">${agent.label} ${agent.name}</div>
+          <div class="bar"><span class="${color}" style="width:${Math.max(0, Math.min(100, agent.score))}%"></span></div>
+          <div>${Math.round(agent.score)}</div>
+        `;
+        els.table.appendChild(row);
+      });
+      els.health.textContent = `${alive}/7`;
+    }
+
+    function renderTrades(payload) {
+      const trades = payload.open_trades || [];
+      const total = Number(payload.total_pnl || 0);
+      els.tradeCount.textContent = `${trades.length} OPEN`;
+      els.pnl.textContent = `${total >= 0 ? "+" : ""}${total.toFixed(2)}`;
+      els.pnl.className = `pnl-total ${total >= 0 ? "positive" : "negative"}`;
+      els.trades.innerHTML = "";
+      els.trades.appendChild(els.pnl);
+      if (!trades.length) {
+        const empty = document.createElement("div");
+        empty.className = "trade-row";
+        empty.innerHTML = `<small>Status</small><div>No open positions</div>`;
+        els.trades.appendChild(empty);
+        return;
+      }
+      trades.forEach(trade => {
+        const pnl = Number(trade.pnl || 0);
+        const row = document.createElement("div");
+        row.className = "trade-row";
+        row.innerHTML = `
+          <div class="trade-head"><span>#${trade.ticket}</span><span style="color:${pnl >= 0 ? "var(--green)" : "var(--red)"}">${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}</span></div>
+          <div class="trade-grid">
+            <div><small>Direction</small>${trade.direction || "?"}</div>
+            <div><small>Volume</small>${Number(trade.volume || 0).toFixed(2)}</div>
+            <div><small>Entry</small>${Number(trade.entry || 0).toFixed(2)}</div>
+            <div><small>SL / TP1</small>${Number(trade.sl || 0).toFixed(2)} / ${Number(trade.tp1 || 0).toFixed(2)}</div>
+          </div>
+        `;
+        els.trades.appendChild(row);
+      });
+    }
+
+    function renderLogs(logs) {
+      state.logs = logs.slice(-40);
+      els.feedCount.textContent = state.logs.length;
+      els.logs.innerHTML = "";
+      state.logs.slice(-32).forEach(item => {
+        const line = document.createElement("div");
+        line.className = "log-item";
+        const ts = String(item.ts || "").split("T")[1]?.slice(0, 8) || "--:--:--";
+        line.innerHTML = `
+          <span>${ts}</span>
+          <span class="log-level">${item.level || "INFO"}</span>
+          <span class="log-msg">${escapeHtml(item.msg || "")}</span>
+        `;
+        els.logs.appendChild(line);
+      });
+      els.logs.scrollTop = els.logs.scrollHeight;
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch]));
+    }
+
+    function setConnection(ok) {
+      els.status.textContent = ok ? "ONLINE" : "OFFLINE";
+      els.dot.classList.toggle("online", ok);
+    }
+
+    async function fetchFallback() {
+      try {
+        const [stateRes, tradesRes, agentsRes] = await Promise.all([
+          fetch("/api/state"),
+          fetch("/api/trades"),
+          fetch("/api/agents")
+        ]);
+        updateDashboard({
+          state: await stateRes.json(),
+          trades: await tradesRes.json(),
+          agents: await agentsRes.json(),
+          logs: []
+        });
+      } catch (err) {
+        setConnection(false);
+      }
+    }
+
+    function connect() {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${proto}://${location.host}/ws`);
+      ws.onopen = () => setConnection(true);
+      ws.onmessage = event => updateDashboard(JSON.parse(event.data));
+      ws.onclose = () => {
+        setConnection(false);
+        setTimeout(connect, 1500);
+        fetchFallback();
+      };
+      ws.onerror = () => setConnection(false);
+    }
+
+    function tickClock() {
+      els.clock.textContent = new Date().toLocaleTimeString();
+      if (performance.now() - state.lastPacketAt > 3000) setConnection(false);
+    }
+
+    window.addEventListener("resize", () => {
+      layoutAgents();
+      renderNodes();
+    });
+
+    layoutAgents();
+    renderNodes();
+    renderAgentTable();
+    drawNetwork();
+    connect();
+    fetchFallback();
+    setInterval(tickClock, 500);
+  </script>
+</body>
+</html>

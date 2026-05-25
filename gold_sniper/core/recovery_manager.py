@@ -21,8 +21,9 @@ from typing import Optional
 
 import MetaTrader5 as mt5
 
-from config import RECOVERY_FILE_PATH, RECOVERY_DEBOUNCE_SECONDS, MAGIC_NUMBER, SYMBOL
+from config import MAX_SLIPPAGE_POINTS, RECOVERY_FILE_PATH, RECOVERY_DEBOUNCE_SECONDS, MAGIC_NUMBER, SYMBOL
 from utils.logger import get_logger
+from utils.telegram_notifier import send_telegram_notification
 
 logger = get_logger()
 
@@ -61,10 +62,16 @@ async def recover_open_positions(blackboard) -> int:
         return 0
 
     recovered = 0
+    safe_positions = []
+    for pos in our_positions:
+        if await _close_if_gap_breached(pos, blackboard):
+            continue
+        safe_positions.append(pos)
+
     async with blackboard._lock:
         active_trades = blackboard._data.setdefault("active_trades", {})
 
-        for pos in our_positions:
+        for pos in safe_positions:
             ticket = pos.ticket
             if ticket in active_trades:
                 logger.debug(f"♻️  Trade {ticket} déjà dans le Blackboard — skip.")
@@ -100,6 +107,85 @@ async def recover_open_positions(blackboard) -> int:
     if recovered > 0:
         logger.info(f"♻️  Recovery terminé — {recovered} position(s) réinjectée(s) dans le Blackboard.")
     return recovered
+
+
+async def _close_if_gap_breached(position, blackboard) -> bool:
+    """Ferme au marche une position recuperee si le prix a depasse son SL."""
+    sl = float(getattr(position, "sl", 0.0) or 0.0)
+    if sl <= 0:
+        return False
+
+    symbol = getattr(position, "symbol", SYMBOL) or SYMBOL
+    tick = await asyncio.to_thread(mt5.symbol_info_tick, symbol)
+    if tick is None:
+        logger.error(f"Recovery GAP: tick indisponible pour {symbol}, ticket {position.ticket}.")
+        return False
+
+    is_long = int(getattr(position, "type", mt5.POSITION_TYPE_BUY)) == mt5.POSITION_TYPE_BUY
+    current_price = float(tick.bid if is_long else tick.ask)
+    gap_breached = (is_long and current_price < sl) or ((not is_long) and current_price > sl)
+    if not gap_breached:
+        return False
+
+    close_result = await _close_gap_position(position, current_price)
+    closed = bool(close_result and getattr(close_result, "retcode", None) == mt5.TRADE_RETCODE_DONE)
+    if closed:
+        logger.critical(
+            f"GAP DETECTE au cold start - ticket {position.ticket} ferme en urgence "
+            f"prix={current_price:.2f} SL={sl:.2f}"
+        )
+        await send_telegram_notification(
+            blackboard,
+            "⚠️ GAP DÉTECTÉ — Position fermée en urgence",
+        )
+        await _record_gap_closure(blackboard, position, current_price, sl)
+        return True
+
+    retcode = getattr(close_result, "retcode", "UNKNOWN")
+    logger.error(f"Recovery GAP: fermeture echouee ticket {position.ticket} retcode={retcode}.")
+    await send_telegram_notification(
+        blackboard,
+        f"⚠️ GAP DÉTECTÉ — fermeture urgence échouée ticket {position.ticket} ({retcode})",
+    )
+    return False
+
+
+async def _close_gap_position(position, close_price: float):
+    close_type = (
+        mt5.ORDER_TYPE_SELL
+        if int(getattr(position, "type", mt5.POSITION_TYPE_BUY)) == mt5.POSITION_TYPE_BUY
+        else mt5.ORDER_TYPE_BUY
+    )
+    request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "position": int(position.ticket),
+        "symbol": getattr(position, "symbol", SYMBOL) or SYMBOL,
+        "volume": float(position.volume),
+        "type": close_type,
+        "price": float(close_price),
+        "deviation": MAX_SLIPPAGE_POINTS,
+        "magic": MAGIC_NUMBER,
+        "comment": "GoldSniper gap emergency close",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+    return await asyncio.to_thread(mt5.order_send, request)
+
+
+async def _record_gap_closure(blackboard, position, close_price: float, sl: float) -> None:
+    async with blackboard._lock:
+        recovery = blackboard._data.setdefault("recovery", {})
+        gap_events = recovery.setdefault("gap_closures", [])
+        gap_events.append(
+            {
+                "ticket": int(position.ticket),
+                "symbol": getattr(position, "symbol", SYMBOL) or SYMBOL,
+                "type": "BUY" if int(position.type) == mt5.POSITION_TYPE_BUY else "SELL",
+                "sl": float(sl),
+                "close_price": float(close_price),
+                "closed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
 
 def _is_be_activated(position) -> bool:
@@ -168,9 +254,9 @@ async def _save_snapshot(blackboard) -> None:
 
 def load_daily_stats_from_recovery() -> Optional[dict]:
     """
-    Charge les stats journalières depuis recovery.json si le fichier existe
-    et est du jour courant. Utilisé au démarrage pour éviter de perdre
-    le compteur de trades si le bot a été redémarré dans la journée.
+    Charge les stats journalieres depuis recovery.json si le fichier existe
+    et est du jour courant. Utilise au demarrage pour eviter de perdre
+    le compteur de trades si le bot a ete redemarre dans la journee.
     """
     if not os.path.exists(RECOVERY_FILE_PATH):
         return None
@@ -183,14 +269,30 @@ def load_daily_stats_from_recovery() -> Optional[dict]:
         saved_at = datetime.fromisoformat(saved_at_str.replace("Z", "+00:00"))
         now = datetime.now(timezone.utc)
 
-        # Vérifier que la sauvegarde est du même jour
         if saved_at.date() == now.date():
-            logger.info(f"♻️  Stats journalières rechargées depuis recovery.json (sauvegarde: {saved_at_str})")
+            logger.info(f"Stats journalieres rechargees depuis recovery.json (sauvegarde: {saved_at_str})")
             return data.get("daily_stats", {})
-        else:
-            logger.info("♻️  Recovery.json d'un jour précédent — stats journalières ignorées.")
-            return None
+        logger.info("Recovery.json d'un jour precedent - stats journalieres ignorees.")
+        return None
 
     except Exception as e:
-        logger.warning(f"⚠️ Impossible de lire recovery.json : {e}")
+        logger.warning(f"Impossible de lire recovery.json : {e}")
         return None
+
+
+def load_recovery_metadata() -> dict:
+    """Lit les metadonnees de recovery pour notifier un redemarrage apres coupure."""
+    if not os.path.exists(RECOVERY_FILE_PATH):
+        return {}
+    try:
+        with open(RECOVERY_FILE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        active_trades = data.get("active_trades", {}) or {}
+        return {
+            "saved_at": data.get("saved_at"),
+            "active_trade_count": len(active_trades),
+            "state": (data.get("meta") or {}).get("state", "UNKNOWN"),
+        }
+    except Exception as exc:
+        logger.warning(f"Impossible de lire les metadonnees recovery: {exc}")
+        return {}

@@ -30,6 +30,7 @@ class RiskManager(BaseAgent):
         self._last_realized_pnl = 0.0
         self._paper_alert_sent = False
         self._veto_alert_sent = False
+        self._diagnostic_alert_sent = False
 
     async def run(self) -> None:
         """Boucle de surveillance du risque."""
@@ -84,6 +85,7 @@ class RiskManager(BaseAgent):
             reason = f"PAUSE_2H — {self.consecutive_losses} pertes consécutives"
             if self.telegram:
                 await self.telegram.notify_consecutive_losses(self.consecutive_losses)
+            await self._generate_diagnostic_report()
 
         if pause_active:
             veto = True
@@ -153,8 +155,22 @@ class RiskManager(BaseAgent):
         if trades_closed <= self._last_trades_closed:
             return
 
+        closed_today = self.blackboard.get_all().get("positions", {}).get("closed_today", [])
+        new_closed = closed_today[self._last_trades_closed:trades_closed]
+        if new_closed:
+            for trade in new_closed:
+                pnl = float(trade.get("pnl", 0.0) or 0.0)
+                self.consecutive_losses = 0 if pnl >= 0 else self.consecutive_losses + 1
+                if pnl >= 0:
+                    self._diagnostic_alert_sent = False
+            self._last_trades_closed = trades_closed
+            self._last_realized_pnl = realized
+            return
+
         pnl_delta = realized - self._last_realized_pnl
         self.consecutive_losses = 0 if pnl_delta >= 0 else self.consecutive_losses + 1
+        if pnl_delta >= 0:
+            self._diagnostic_alert_sent = False
         self._last_trades_closed = trades_closed
         self._last_realized_pnl = realized
 
@@ -206,20 +222,96 @@ class RiskManager(BaseAgent):
             self._veto_alert_sent = True
 
     async def _generate_diagnostic_report(self) -> None:
-        """Envoie un rapport de diagnostic après plusieurs pertes."""
+        """Envoie un rapport de diagnostic apres plusieurs pertes."""
         if not self.telegram:
+            return
+        if self._diagnostic_alert_sent:
             return
 
         perf = self.blackboard.get_all().get("performance", {})
         agent_acc: dict[str, Any] = perf.get("agent_accuracy", {})
+        closed_today = self.blackboard.get_all().get("positions", {}).get("closed_today", [])
+        recent_losses = [
+            trade for trade in reversed(closed_today)
+            if float(trade.get("pnl", 0.0) or 0.0) < 0 or trade.get("outcome") == "LOSS"
+        ][:self.consecutive_losses]
+        recent_losses = list(reversed(recent_losses))
+
+        wrong_agent = self._identify_wrong_agent(recent_losses, agent_acc)
+        context = self._summarize_loss_context(recent_losses)
+        pattern = self._identify_error_pattern(recent_losses, wrong_agent)
+
         lines = [
             "RAPPORT DIAGNOSTIC",
-            f"Pertes consécutives : {self.consecutive_losses}",
+            f"Pertes consecutives : {self.consecutive_losses}",
+            f"Agent probablement en tort : {wrong_agent}",
+            f"Contexte : {context}",
+            f"Pattern d'erreur : {pattern}",
             "",
-            "Précision agents:",
+            "Precision agents:",
         ]
         for agent_id, data in agent_acc.items():
             lines.append(f"  {agent_id}: {float(data.get('accuracy', 0)) * 100:.0f}%")
+        if recent_losses:
+            lines.append("")
+            lines.append("Trades perdants recents:")
+            for trade in recent_losses:
+                lines.append(
+                    f"  #{trade.get('ticket')} {trade.get('session', 'UNKNOWN')}/"
+                    f"{trade.get('regime', 'UNKNOWN')} pnl={float(trade.get('pnl', 0.0) or 0.0):+.2f}"
+                )
         lines.append("")
-        lines.append("Vérifier les agents avec précision < 60%.")
-        await self.telegram.notify_risk_alert("DIAGNOSTIC APRÈS PERTES", "\n".join(lines))
+        lines.append("Verifier les agents avec precision < 60%.")
+        await self.telegram.notify_risk_alert("DIAGNOSTIC APRES PERTES", "\n".join(lines))
+        self._diagnostic_alert_sent = True
+
+    def _identify_wrong_agent(self, trades: list[dict], agent_acc: dict[str, Any]) -> str:
+        """Trouve l'agent le plus suspect: score fort sur pertes ou faible precision."""
+        suspicion: dict[str, float] = {}
+        for trade in trades:
+            for agent_id, data in (trade.get("agent_breakdown") or {}).items():
+                score = float(data.get("score", 0.0) or 0.0)
+                if score >= 80:
+                    suspicion[agent_id] = suspicion.get(agent_id, 0.0) + score
+        for agent_id, data in agent_acc.items():
+            accuracy = float(data.get("accuracy", 0.0) or 0.0)
+            if accuracy and accuracy < 0.60:
+                suspicion[agent_id] = suspicion.get(agent_id, 0.0) + (0.60 - accuracy) * 100
+        if not suspicion:
+            return "INDETERMINE"
+        return max(suspicion.items(), key=lambda item: item[1])[0]
+
+    def _summarize_loss_context(self, trades: list[dict]) -> str:
+        """Resume session + regime dominants sur les pertes recentes."""
+        if not trades:
+            market = self.blackboard.get_all().get("market", {})
+            return f"{market.get('session', 'UNKNOWN')} + {market.get('regime', 'UNKNOWN')}"
+        sessions: dict[str, int] = {}
+        regimes: dict[str, int] = {}
+        for trade in trades:
+            session = trade.get("session", "UNKNOWN")
+            regime = trade.get("regime", "UNKNOWN")
+            sessions[session] = sessions.get(session, 0) + 1
+            regimes[regime] = regimes.get(regime, 0) + 1
+        session = max(sessions.items(), key=lambda item: item[1])[0]
+        regime = max(regimes.items(), key=lambda item: item[1])[0]
+        return f"{session} + {regime}"
+
+    def _identify_error_pattern(self, trades: list[dict], wrong_agent: str) -> str:
+        """Classe une famille d'erreur simple pour le rapport Telegram."""
+        if not trades:
+            return "donnees insuffisantes"
+        high_scores = [
+            float((trade.get("agent_breakdown") or {}).get(wrong_agent, {}).get("score", 0.0) or 0.0)
+            for trade in trades
+            if wrong_agent != "INDETERMINE"
+        ]
+        same_context = len({(trade.get("session"), trade.get("regime")) for trade in trades}) == 1
+        avg_score = sum(high_scores) / len(high_scores) if high_scores else 0.0
+        if same_context and avg_score >= 80:
+            return f"faux positifs repetes de {wrong_agent} dans le meme contexte"
+        if same_context:
+            return "pertes concentrees sur une session/regime specifique"
+        if avg_score >= 80:
+            return f"agent {wrong_agent} surconfiant sur plusieurs contextes"
+        return "pattern mixte, revue manuelle requise"

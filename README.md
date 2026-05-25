@@ -1,126 +1,112 @@
-# Gold Sniper V2
+# Gold Sniper V3.0
 
-Gold Sniper V2 est un moteur de trading XAUUSD construit autour de 7 agents,
-d'un Blackboard partage, d'un Orchestrateur V2 et de protections operationnelles
-avant toute execution MT5.
+Gold Sniper V3.0 est un moteur de trading XAUUSD en Python, asyncio et MetaTrader 5.
+Il combine un Blackboard temps reel, 7 agents specialises, un orchestrateur event-driven,
+un Risk Manager, une memoire SQLite, Telegram, un dashboard web et un tunnel Cloudflare.
 
-Le code actif du projet se trouve dans:
+## Points forts
 
-```text
-gold_sniper/
-```
+- Orchestrateur event-driven avec latence publication agent -> decision mesuree sous 1 ms en test local.
+- Dictionnaire de strategies actif par session, regime, news et setups exceptionnels.
+- Execution MT5 avec entree, SL et TP broker dans la meme requete `order_send`.
+- Gestion active: TP1 reel, fermeture partielle 50%, breakeven, puis trailing stop.
+- Recovery au cold start avec detection de gap au-dela du SL et fermeture d'urgence.
+- Agent 6 Sentinelle: chaine calendrier `Finnhub -> FMP -> ForexFactory`.
+- Agent 7 Chronos: sessions calculees avec DST Europe/Paris et Friday Mode Telegram.
+- Memoire long terme SQLite: patterns de trades, performance agents, erreurs, strategies.
+- Adaptive weights recalcules apres trade cloture et appliques en live par l'orchestrateur.
+- Dashboard `aiohttp` avec endpoints JSON et WebSocket, expose via Cloudflare Tunnel.
+- Google Drive sync planifiee pour sauvegarder DB, decision log, backtests et rapports.
 
-## Etat de la version publiee
-
-Cette version inclut les scripts valides progressivement:
-
-- AgentResult unifie dans `agents/base_agent.py`.
-- Orchestrateur V2 avec score pondere et seuil `EXECUTION_THRESHOLD = 85`.
-- Decision Log JSONL avec rotation.
-- Telegram notifier.
-- Risk Manager avec veto absolu.
-- Agent 5 AMD complet: Accumulation, sweep 1M, CHoCH.
-- Agent 2 OB scoring 5 facteurs.
-- Agent 3 sweep vs break, Asian Range, IDM.
-- Agent 4 premium/discount et OTE.
-- Agent 6 calendrier economique Finnhub avec fallback.
-- Macro Monitor DXY / US10Y via yfinance avec fallback.
-- Regime Detector.
-- Agent 7 Chronos sessions et kill zones.
-- Position sizing dynamique ATR.
-- Spread Monitor.
-- MT5 Watchdog.
-- Backtesting engine avec cache parquet.
-- Auto-calibration des poids agents apres 50 trades clotures minimum.
-
-## Demarrage rapide
-
-Depuis la racine du repo:
+## Installation
 
 ```powershell
-cd gold_sniper
+python -m pip install -r requirements.txt
+python -m pip install python-dotenv
+```
+
+Si `requirements.txt` n'est pas encore present dans votre copie locale, installez au minimum
+les dependances utilisees par le moteur:
+
+```powershell
+python -m pip install MetaTrader5 aiohttp pandas pyarrow yfinance schedule google-api-python-client google-auth-oauthlib python-dotenv requests
+```
+
+## Configuration
+
+Creer un fichier `.env` a la racine du projet. Ce fichier est ignore par git.
+
+```env
+MT5_ACCOUNT=
+MT5_PASSWORD=
+MT5_SERVER=JustMarkets-Demo3
+TELEGRAM_TOKEN=
+TELEGRAM_CHAT_ID=
+FINNHUB_TOKEN=
+FMP_TOKEN=
+```
+
+`config.py` appelle `load_dotenv()` au demarrage, donc les variables sont chargees
+automatiquement sans export manuel dans le terminal.
+
+## Demarrage
+
+```powershell
 python main.py
 ```
 
-MetaTrader 5 doit etre ouvert et connecte. `XAUUSD` doit etre visible dans le
-Market Watch.
+Sur Windows, `GoldSniper.bat` lance MT5 en mode minimise/cache puis demarre le moteur.
+Le script `scripts/setup_autostart.ps1` peut creer une tache planifiee pour le demarrage
+automatique de session.
 
-## Configuration sensible
+## Dashboard
 
-Les secrets ne sont pas stockes dans le code. Definir les variables
-d'environnement avant lancement si necessaire:
-
-```powershell
-$env:MT5_ACCOUNT="ton_login"
-$env:MT5_PASSWORD="ton_mot_de_passe"
-$env:MT5_SERVER="ton_serveur"
-$env:TELEGRAM_TOKEN="ton_token"
-$env:TELEGRAM_CHAT_ID="ton_chat_id"
-```
-
-`LIVE_MODE` reste defini dans `gold_sniper/config.py`. Par defaut, le projet
-reste en paper trading.
-
-## Ordre de lancement moteur
-
-`main.py` execute le cold start:
-
-1. Connexion MT5.
-2. Recovery des positions ouvertes.
-3. Chargement historique.
-4. Initialisation du Blackboard.
-5. Message Telegram de demarrage.
-6. Lancement de `core.engine.run_engine()`.
-
-Le moteur lance ensuite:
-
-1. data ingestion;
-2. Risk Manager et agents contextuels;
-3. agents de signal;
-4. orchestrateur;
-5. trade manager;
-6. services: account fetcher, MT5 Watchdog, recovery, Telegram sender.
-
-## Logs
-
-Fichiers principaux:
-
-- `gold_sniper/logs/decision_log.jsonl`
-- `gold_sniper/logs/missed_opportunities.jsonl`
-- `gold_sniper/logs/calibration_log.jsonl`
-- `gold_sniper/logs/backtests/backtest_results.jsonl`
-- `gold_sniper/logs/gold_sniper_YYYY-MM-DD.jsonl`
-
-Les JSONL applicatifs tournent par taille avec `LOG_MAX_BYTES` et
-`LOG_BACKUP_COUNT`.
-
-## Backtest
-
-Premier lancement avec MT5 ouvert:
-
-```powershell
-cd gold_sniper
-python backtesting\backtest_engine.py --limit 100
-```
-
-Le cache M1 est cree ici:
+Le dashboard demarre sur:
 
 ```text
-gold_sniper/logs/backtests/XAUUSD_M1_cache.parquet
+http://localhost:8765
 ```
 
-## Calibration
+Endpoints:
 
-La calibration refuse de tourner avec moins de 50 trades clotures:
+- `/api/state`
+- `/api/trades`
+- `/api/agents`
+- `/ws`
+
+Si `cloudflared` est disponible, un lien public `trycloudflare.com` est genere et envoye
+sur Telegram au boot.
+
+## Structure
+
+```text
+agents/       Agents 1 a 7, macro monitor, regime detector, risk manager
+core/         Blackboard, engine, orchestrateur, MT5 bridge, recovery
+execution/    Trade manager, risk calculator, adaptive weights
+data/         Memoire SQLite et loader historique
+utils/        Telegram, reports, Drive sync, watchdogs, logs
+web/          Dashboard aiohttp + HTML
+scripts/      Autostart et lancement MT5 minimise/cache
+backtesting/  Moteur de backtest
+```
+
+## Securite
+
+Ne jamais commiter:
+
+- `.env`
+- `credentials.json`
+- `data/drive_token.json`
+- `data/memory.db`
+- logs, caches, fichiers parquet historiques
+
+Le mode live reste controle par `LIVE_MODE` dans `config.py`. Verifiez toujours le compte
+MT5, le serveur et le symbole avant tout lancement en reel.
+
+## Validation rapide
 
 ```powershell
-cd gold_sniper
-python utils\weight_calibrator.py --dry-run
+python -m py_compile main.py core\engine.py core\orchestrator.py execution\trade_manager.py
+python -c "import config; print(config.MT5_SERVER)"
 ```
 
-## Documentation
-
-Voir aussi:
-
-- `architecture.md`
-- `gold_sniper/architecture.md`

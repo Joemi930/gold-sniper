@@ -2,28 +2,30 @@ import asyncio
 from datetime import datetime, timezone
 
 from agents.base_agent import AgentResult
+from config import FRIDAY_RISK_REDUCTION_HOUR, FRIDAY_TRADING_HALT_HOUR, TZ_LOCAL
 from core.blackboard import BlackBoard
 from utils.logger import get_logger
+from utils.telegram_notifier import send_telegram_notification
 
 
-SESSIONS = {
-    "TOKYO": {"start": 22.0, "end": 7.0, "confidence": 0.50},
-    "LONDON": {"start": 7.0, "end": 12.0, "confidence": 1.00},
-    "OVERLAP": {"start": 12.0, "end": 16.0, "confidence": 1.20},
-    "NEW_YORK": {"start": 16.0, "end": 21.0, "confidence": 1.00},
-    "DEAD": {"start": 21.0, "end": 22.0, "confidence": 0.00},
+LOCAL_SESSIONS = {
+    "TOKYO": {"start": 0.0, "end": 10.0, "confidence": 0.50},
+    "LONDON": {"start": 10.0, "end": 15.0, "confidence": 1.00},
+    "OVERLAP": {"start": 15.0, "end": 19.0, "confidence": 1.20},
+    "NEW_YORK": {"start": 19.0, "end": 23.0, "confidence": 1.00},
+    "DEAD": {"start": 23.0, "end": 0.0, "confidence": 0.00},
     "ROLLOVER": {"start": 23.75, "end": 0.25, "confidence": 0.00},
 }
 
-KILL_ZONES = {
-    "LONDON_OPEN": {"start": 7.0, "end": 10.0, "score": 100},
-    "OVERLAP_KZ": {"start": 12.0, "end": 16.0, "score": 95},
-    "NY_OPEN": {"start": 12.0, "end": 15.0, "score": 100},
+LOCAL_KILL_ZONES = {
+    "LONDON_OPEN": {"start": 10.0, "end": 13.0, "score": 100},
+    "NY_OPEN": {"start": 15.0, "end": 18.0, "score": 100},
+    "OVERLAP_KZ": {"start": 15.0, "end": 19.0, "score": 95},
 }
 
 FRIDAY_RULES = {
-    "risk_reduced_after": 16.0,
-    "halt_after": 19.0,
+    "risk_reduced_after": float(FRIDAY_RISK_REDUCTION_HOUR),
+    "halt_after": float(FRIDAY_TRADING_HALT_HOUR),
 }
 
 TOKYO_OVERRIDE_SCORE = 92.0
@@ -33,6 +35,17 @@ def get_utc_decimal_hour(dt: datetime) -> float:
     return dt.hour + dt.minute / 60.0
 
 
+def get_local_decimal_hour(utc_time: datetime) -> float:
+    local_time = _to_local_time(utc_time)
+    return local_time.hour + local_time.minute / 60.0
+
+
+def _to_local_time(utc_time: datetime) -> datetime:
+    if utc_time.tzinfo is None:
+        utc_time = utc_time.replace(tzinfo=timezone.utc)
+    return utc_time.astimezone(TZ_LOCAL)
+
+
 def _in_time_range(hour: float, start: float, end: float) -> bool:
     if start <= end:
         return start <= hour < end
@@ -40,31 +53,53 @@ def _in_time_range(hour: float, start: float, end: float) -> bool:
 
 
 def identify_session(utc_time: datetime) -> str:
-    hour = get_utc_decimal_hour(utc_time)
-    if _in_time_range(hour, SESSIONS["ROLLOVER"]["start"], SESSIONS["ROLLOVER"]["end"]):
+    hour = get_local_decimal_hour(utc_time)
+    if _in_time_range(hour, LOCAL_SESSIONS["ROLLOVER"]["start"], LOCAL_SESSIONS["ROLLOVER"]["end"]):
         return "ROLLOVER"
-    if _in_time_range(hour, SESSIONS["OVERLAP"]["start"], SESSIONS["OVERLAP"]["end"]):
+    if _in_time_range(hour, LOCAL_SESSIONS["OVERLAP"]["start"], LOCAL_SESSIONS["OVERLAP"]["end"]):
         return "OVERLAP"
-    if _in_time_range(hour, SESSIONS["LONDON"]["start"], SESSIONS["LONDON"]["end"]):
+    if _in_time_range(hour, LOCAL_SESSIONS["LONDON"]["start"], LOCAL_SESSIONS["LONDON"]["end"]):
         return "LONDON"
-    if _in_time_range(hour, SESSIONS["NEW_YORK"]["start"], SESSIONS["NEW_YORK"]["end"]):
+    if _in_time_range(hour, LOCAL_SESSIONS["NEW_YORK"]["start"], LOCAL_SESSIONS["NEW_YORK"]["end"]):
         return "NEW_YORK"
-    if _in_time_range(hour, SESSIONS["TOKYO"]["start"], SESSIONS["TOKYO"]["end"]):
+    if _in_time_range(hour, LOCAL_SESSIONS["TOKYO"]["start"], LOCAL_SESSIONS["TOKYO"]["end"]):
         return "TOKYO"
     return "DEAD"
 
 
 def detect_kill_zone(utc_time: datetime) -> dict:
-    hour = get_utc_decimal_hour(utc_time)
-    for name, config in KILL_ZONES.items():
+    hour = get_local_decimal_hour(utc_time)
+    for name, config in LOCAL_KILL_ZONES.items():
         if _in_time_range(hour, config["start"], config["end"]):
             return {"in_kill_zone": True, "kill_zone_name": name, "kill_zone_score": config["score"]}
     return {"in_kill_zone": False, "kill_zone_name": None, "kill_zone_score": 50}
 
 
+def get_friday_mode(utc_time: datetime) -> str:
+    local_time = _to_local_time(utc_time)
+    if local_time.weekday() != 4:
+        return "NORMAL"
+    hour = local_time.hour + local_time.minute / 60.0
+    if hour >= FRIDAY_RULES["halt_after"]:
+        return "HALT"
+    if hour >= FRIDAY_RULES["risk_reduced_after"]:
+        return "REDUCED"
+    return "NORMAL"
+
+
+async def notify_friday_mode_change(blackboard: BlackBoard, previous_mode: str | None, current_mode: str) -> None:
+    if current_mode == previous_mode or current_mode == "NORMAL":
+        return
+    if current_mode == "REDUCED":
+        await send_telegram_notification(blackboard, "🟡 Friday Mode — Risque réduit à 0.5%")
+    elif current_mode == "HALT":
+        await send_telegram_notification(blackboard, "🔴 Friday Mode — Trading coupé")
+
+
 def check_session_context(utc_time: datetime) -> dict:
-    hour = get_utc_decimal_hour(utc_time)
-    day = utc_time.weekday()
+    local_time = _to_local_time(utc_time)
+    hour = local_time.hour + local_time.minute / 60.0
+    day = local_time.weekday()
 
     if day in (5, 6):
         return {
@@ -85,7 +120,7 @@ def check_session_context(utc_time: datetime) -> dict:
         }
 
     session = identify_session(utc_time)
-    confidence = SESSIONS.get(session, SESSIONS["DEAD"])["confidence"]
+    confidence = LOCAL_SESSIONS.get(session, LOCAL_SESSIONS["DEAD"])["confidence"]
     trading_allowed = session not in {"DEAD", "ROLLOVER", "TOKYO"}
     reason = session
 
@@ -209,6 +244,7 @@ class AgentSessions:
         self.bb = blackboard
         self.logger = get_logger()
         self.name = "agent_7"
+        self._last_friday_mode: str | None = None
 
     async def run(self):
         self.logger.info("Agent 7 (Chronos V2) demarre")
@@ -237,6 +273,9 @@ class AgentSessions:
                     current_price = session_candles[-1]["close"]
 
                 result = score_agent_7(utc_time, volume_profile, current_price)
+                friday_mode = get_friday_mode(utc_time)
+                await notify_friday_mode_change(self.bb, self._last_friday_mode, friday_mode)
+                self._last_friday_mode = friday_mode
                 await self.bb.write_agent_result("agent_7", result)
 
                 payload = result.payload
@@ -256,6 +295,7 @@ class AgentSessions:
                             and volume_profile["val"] <= current_price <= volume_profile["vah"]
                         ),
                         "session_name": payload["session_name"],
+                        "friday_mode": friday_mode,
                         "reason": result.reason,
                     },
                 )

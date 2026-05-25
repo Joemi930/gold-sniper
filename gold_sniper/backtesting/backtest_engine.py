@@ -12,11 +12,23 @@ from statistics import mean
 from typing import Iterable
 
 import MetaTrader5 as mt5
+import numpy as np
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from agents.agent_1_meteo import classify_market_structure, detect_swings, score_agent_1
+from agents.agent_2_cartographe import detect_fvg, detect_order_blocks, score_agent_2
+from agents.agent_3_liquidite import (
+    check_asian_range,
+    detect_equal_levels,
+    detect_inducement,
+    detect_liquidity_event,
+    score_agent_3,
+)
+from agents.agent_4_fibonacci import calculate_ote_levels, score_fibonacci_ote
+from agents.agent_5_microscope import analyze_amd_sequence
 from agents.agent_7_chronos import score_agent_7
 from agents.base_agent import AgentResult
 from config import MT5_PATH, SYMBOL
@@ -175,16 +187,6 @@ def _cache_is_recent(path: Path, now: datetime) -> bool:
     return now - modified < CACHE_MAX_AGE
 
 
-def _ema(values: list[float], period: int) -> float:
-    if not values:
-        return 0.0
-    alpha = 2 / (period + 1)
-    ema = values[0]
-    for value in values[1:]:
-        ema = alpha * value + (1 - alpha) * ema
-    return float(ema)
-
-
 def _atr(bars: list[dict], period: int = 14) -> float:
     if len(bars) < 2:
         return 0.0
@@ -209,6 +211,26 @@ def _aggregate_window(bars: list[dict]) -> dict:
         "spread": bars[-1].get("spread", 0),
         "real_volume": sum(bar.get("real_volume", 0) for bar in bars),
     }
+
+
+def _ohlc_arrays(candles: list[dict]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    return (
+        np.array([c["open"] for c in candles], dtype=float),
+        np.array([c["high"] for c in candles], dtype=float),
+        np.array([c["low"] for c in candles], dtype=float),
+        np.array([c["close"] for c in candles], dtype=float),
+    )
+
+
+def _to_agent_result(agent_id: str, reason: str, hard_filter_pass: bool = False, direction: str | None = None, score: float = 0.0) -> AgentResult:
+    return AgentResult(
+        agent_id=agent_id,
+        score=score,
+        hard_filter_pass=hard_filter_pass,
+        direction=direction,
+        reason=reason,
+        payload={"backtest_real_agent": True},
+    )
 
 
 class BacktestEngine:
@@ -275,7 +297,7 @@ class BacktestEngine:
 
         await self._prepare_blackboard()
 
-        m1_window: deque[dict] = deque(maxlen=300)
+        m1_window: deque[dict] = deque(maxlen=3000)
         candles_15m: list[dict] = []
         candles_4h: list[dict] = []
         decisions = []
@@ -283,16 +305,16 @@ class BacktestEngine:
 
         for idx, bar in enumerate(bars):
             m1_window.append(bar)
-            await self._feed_bar(bar, m1_window, candles_15m, candles_4h)
+            await self._feed_bar(bar, idx, m1_window, candles_15m, candles_4h)
 
             if len(m1_window) < 60:
                 continue
 
-            agent_results = self._simulate_agents(list(m1_window), candles_15m, candles_4h, bar)
+            agent_results = await self._run_real_agents(list(m1_window), candles_15m, candles_4h, bar)
             for result in agent_results:
                 await self.blackboard.write_agent_result(result.agent_id, result)
 
-            decision = await run_orchestrator(agent_results)
+            decision = await run_orchestrator(agent_results, self.blackboard)
             decision_entry = {
                 "ts": bar["time"].isoformat(),
                 "bar_index": idx,
@@ -328,6 +350,10 @@ class BacktestEngine:
 
     async def _prepare_blackboard(self) -> None:
         self.blackboard.reset_pipeline()
+        async with self.blackboard._lock:
+            for candle_deque in self.blackboard._data.get("market_data", {}).get("candles", {}).values():
+                candle_deque.clear()
+            self.blackboard._data["trade_signals"] = {}
         await self.blackboard.update_agent("agent_6", {"veto": False, "blocked": False, "reason": ""})
         await self.blackboard.update_agent("risk_manager", {"veto": False, "trades_today": 0, "reason": ""})
         await self.blackboard.update_market({"regime": "UNKNOWN", "session": "LONDON"})
@@ -336,6 +362,7 @@ class BacktestEngine:
     async def _feed_bar(
         self,
         bar: dict,
+        bar_index: int,
         m1_window: deque[dict],
         candles_15m: list[dict],
         candles_4h: list[dict],
@@ -363,54 +390,172 @@ class BacktestEngine:
         await self.blackboard.write("market_data.atr_14", _atr(list(m1_window), 14))
 
         self.blackboard.read_sync("market_data.candles.1m").append(bar)
-        if len(m1_window) >= 15 and len(m1_window) % 15 == 0:
+        replay_count = bar_index + 1
+        if len(m1_window) >= 15 and replay_count % 15 == 0:
             candle_15m = _aggregate_window(list(m1_window)[-15:])
             candles_15m.append(candle_15m)
             self.blackboard.read_sync("market_data.candles.15m").append(candle_15m)
-        if len(m1_window) >= 240 and len(m1_window) % 240 == 0:
+        if len(m1_window) >= 240 and replay_count % 240 == 0:
             candle_4h = _aggregate_window(list(m1_window)[-240:])
             candles_4h.append(candle_4h)
             self.blackboard.read_sync("market_data.candles.4H").append(candle_4h)
 
-    def _simulate_agents(
+    async def _run_real_agents(
         self,
         m1: list[dict],
         candles_15m: list[dict],
         candles_4h: list[dict],
         bar: dict,
     ) -> list[AgentResult]:
-        closes = [b["close"] for b in m1]
-        highs = [b["high"] for b in m1]
-        lows = [b["low"] for b in m1]
         atr_1m = max(_atr(m1, 14), 0.01)
-        ema_fast = _ema(closes[-40:], 12)
-        ema_slow = _ema(closes[-80:], 26)
-        direction = "LONG" if ema_fast >= ema_slow else "SHORT"
-        trend_strength = min(abs(ema_fast - ema_slow) / atr_1m * 20, 20)
-
-        range_high = max(highs[-60:])
-        range_low = min(lows[-60:])
-        range_size = max(range_high - range_low, 0.01)
-        position = (bar["close"] - range_low) / range_size
-
-        a1_score = min(84 + trend_strength, 96)
-        a2_score = 88 if 0.25 <= position <= 0.75 else 72
-        sweep_long = lows[-1] <= min(lows[-10:]) and bar["close"] > lows[-1] + 0.25 * atr_1m
-        sweep_short = highs[-1] >= max(highs[-10:]) and bar["close"] < highs[-1] - 0.25 * atr_1m
-        a3_score = 88 if (direction == "LONG" and sweep_long) or (direction == "SHORT" and sweep_short) else 78
-        fib_ok = (direction == "LONG" and position <= 0.65) or (direction == "SHORT" and position >= 0.35)
-        a4_score = 88 if fib_ok else 68
-        body = abs(bar["close"] - bar["open"])
-        a5_score = 90 if body >= 0.35 * atr_1m else 82
-
+        atr_15m = max(_atr(candles_15m[-50:], 14), atr_1m)
         session_result = score_agent_7(bar["time"], {"poc": None, "vah": None, "val": None}, bar["close"])
+
+        if len(candles_15m) < 10 or len(candles_4h) < 10:
+            return [
+                _to_agent_result("agent_1", "BT_REAL_AGENT1_INSUFFICIENT_HTF_DATA"),
+                _to_agent_result("agent_2", "BT_REAL_AGENT2_WAITING_AGENT1"),
+                _to_agent_result("agent_3", "BT_REAL_AGENT3_WAITING_AGENT2", hard_filter_pass=True, score=30),
+                _to_agent_result("agent_4", "BT_REAL_AGENT4_WAITING_AGENT2"),
+                _to_agent_result("agent_5", "BT_REAL_AGENT5_WAITING_POI"),
+                AgentResult("agent_6", 100, True, None, "BT_NO_NEWS", payload={"backtest_real_agent": True}),
+                session_result,
+            ]
+
+        open_4h, high_4h, low_4h, close_4h = _ohlc_arrays(candles_4h)
+        open_15m, high_15m, low_15m, close_15m = _ohlc_arrays(candles_15m)
+
+        swings_4h = detect_swings(high_4h, low_4h, close_4h, n=5, atr_14=atr_15m)
+        swings_15m = detect_swings(high_15m, low_15m, close_15m, n=3, atr_14=atr_15m)
+        structure_4h = classify_market_structure(swings_4h, close_4h)
+        structure_15m = classify_market_structure(swings_15m, close_15m)
+        a1 = score_agent_1(structure_4h, structure_15m)
+        await self.blackboard.update_agent("agent_1", {
+            "score": a1.score,
+            "direction": a1.direction,
+            "reason": a1.reason,
+            "hard_filter_pass": a1.hard_filter_pass,
+        })
+        await self.blackboard.write_agent_result("agent_1", a1)
+
+        direction = a1.direction
+        if not direction or a1.score == 0:
+            return [
+                a1,
+                _to_agent_result("agent_2", "BT_REAL_AGENT2_WAITING_VALID_AGENT1"),
+                _to_agent_result("agent_3", "BT_REAL_AGENT3_WAITING_AGENT2", hard_filter_pass=True, score=30),
+                _to_agent_result("agent_4", "BT_REAL_AGENT4_WAITING_AGENT2"),
+                _to_agent_result("agent_5", "BT_REAL_AGENT5_WAITING_POI"),
+                AgentResult("agent_6", 100, True, None, "BT_NO_NEWS", payload={"backtest_real_agent": True}),
+                session_result,
+            ]
+
+        liquidity_pools = dict(self.blackboard.get_all().get("market_analysis", {}).get("liquidity_pools", {}) or {})
+        htf_bias = (a1.payload or {}).get("structure_4h") or direction
+        fvgs = detect_fvg(high_15m, low_15m, atr_15m, direction)
+        obs = detect_order_blocks(
+            high_15m,
+            low_15m,
+            open_15m,
+            close_15m,
+            swings_15m["swing_highs"],
+            swings_15m["swing_lows"],
+            atr_15m,
+            direction,
+            htf_bias=htf_bias,
+            liquidity_pools=liquidity_pools,
+        )
+        a2 = score_agent_2(obs[0] if obs else None, fvgs[0] if fvgs else None, bar["close"], atr_15m, self.blackboard)
+        payload2 = a2.payload or {}
+        await self.blackboard.update_agent("agent_2", {
+            "score": a2.score,
+            "direction": a2.direction,
+            "active_ob": payload2.get("active_ob"),
+            "active_fvg": payload2.get("active_fvg"),
+            "poi_zone": payload2.get("poi_zone"),
+            "ob_score": payload2.get("ob_score", 0),
+            "zone_is_fresh": payload2.get("zone_is_fresh", False),
+            "reason": a2.reason,
+            "hard_filter_pass": a2.hard_filter_pass,
+        })
+        await self.blackboard.write_agent_result("agent_2", a2)
+        await self.blackboard.update_dict("market_analysis.zones", {"order_blocks": obs, "fvgs": fvgs})
+
+        eq_levels = detect_equal_levels(swings_15m["swing_highs"], swings_15m["swing_lows"], high_15m, low_15m, atr_15m)
+        await self.blackboard.update_dict("market_analysis.liquidity_pools", eq_levels)
+        eqh_level = eq_levels["eqh"][0]["level"] if eq_levels["eqh"] else 0.0
+        eql_level = eq_levels["eql"][0]["level"] if eq_levels["eql"] else 0.0
+        liquidity_event = detect_liquidity_event(high_15m, low_15m, close_15m, eqh_level, eql_level, atr_15m, direction)
+        asian_range = check_asian_range(m1, atr_1m)
+        ohlcv_15m = np.column_stack([open_15m, high_15m, low_15m, close_15m])
+        swing_lows_idx = [item["index"] for item in swings_15m["swing_lows"]]
+        swing_highs_idx = [item["index"] for item in swings_15m["swing_highs"]]
+        major_low = min((item["price"] for item in swings_15m["swing_lows"]), default=None)
+        major_high = max((item["price"] for item in swings_15m["swing_highs"]), default=None)
+        idm = detect_inducement(ohlcv_15m, swing_lows_idx, major_low, direction, atr_15m, swing_highs_idx, major_high)
+        a3 = score_agent_3(liquidity_event, asian_range, direction, idm)
+        await self.blackboard.update_agent("agent_3", {
+            "score": a3.score,
+            "direction": a3.direction,
+            "eqh_levels": eq_levels["eqh"],
+            "eql_levels": eq_levels["eql"],
+            "reason": a3.reason,
+            "hard_filter_pass": a3.hard_filter_pass,
+        })
+        await self.blackboard.write_agent_result("agent_3", a3)
+
+        if swings_15m["swing_highs"] and swings_15m["swing_lows"]:
+            last_high = swings_15m["swing_highs"][-1]["price"]
+            last_low = swings_15m["swing_lows"][-1]["price"]
+            if last_high <= last_low:
+                last_high, last_low = float(max(high_15m)), float(min(low_15m))
+            fib_levels = calculate_ote_levels(last_low, last_high, direction)
+            a4 = score_fibonacci_ote(bar["close"], fib_levels, direction, self.blackboard.get_market().get("dxy_bias", "NEUTRAL"))
+        else:
+            a4 = _to_agent_result("agent_4", "BT_REAL_AGENT4_NO_SWINGS", direction=direction)
+        payload4 = a4.payload or {}
+        await self.blackboard.update_agent("agent_4", {
+            "score": a4.score,
+            "direction": a4.direction,
+            "swing_used": {"low_price": payload4.get("levels", {}).get("swing_low"), "high_price": payload4.get("levels", {}).get("swing_high")},
+            "in_ote": payload4.get("in_ote", False),
+            "price_in_ote": payload4.get("price_in_ote", False),
+            "reason": a4.reason,
+            "hard_filter_pass": a4.hard_filter_pass,
+        })
+        await self.blackboard.write_agent_result("agent_4", a4)
+
+        a5 = analyze_amd_sequence(
+            m1[-120:],
+            direction=direction,
+            poi_zone=payload2.get("poi_zone"),
+            atr_1m=atr_1m,
+            in_ote=bool(payload4.get("in_ote", False)),
+            a4_data=self.blackboard.get_agent("agent_4"),
+        )
+        payload5 = a5.payload or {}
+        await self.blackboard.update_agent("agent_5", {
+            "score": a5.score,
+            "direction": a5.direction,
+            "choch_detected": payload5.get("choch_detected", False),
+            "sweep_1m_confirmed": payload5.get("sweep_1m_confirmed", False),
+            "amd_phase": payload5.get("amd_phase", 0),
+            "entry_price": payload5.get("entry"),
+            "sl_price": payload5.get("sl"),
+            "tp1_price": payload5.get("tp1"),
+            "tp2_price": payload5.get("tp2"),
+            "reason": a5.reason,
+            "hard_filter_pass": a5.hard_filter_pass,
+        })
+        await self.blackboard.write_agent_result("agent_5", a5)
+
         return [
-            AgentResult("agent_1", a1_score, True, direction, f"BT_EMA_TREND_{direction}"),
-            AgentResult("agent_2", a2_score, True, direction, f"BT_POI_POSITION={position:.2f}"),
-            AgentResult("agent_3", a3_score, True, direction, "BT_SWEEP_SCORE"),
-            AgentResult("agent_4", a4_score, True, direction, "BT_FIB_ZONE"),
-            AgentResult("agent_5", a5_score, True, direction, "BT_TRIGGER_BODY"),
-            AgentResult("agent_6", 100, True, None, "BT_NO_NEWS"),
+            a1,
+            a2,
+            a3,
+            a4,
+            a5,
+            AgentResult("agent_6", 100, True, None, "BT_NO_NEWS", payload={"backtest_real_agent": True}),
             session_result,
         ]
 

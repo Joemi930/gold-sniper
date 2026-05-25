@@ -5,7 +5,7 @@
 # L'unique agent autorisé à interagir avec le Broker pour modifier le compte.
 # - Écoute BLACKBOARD["trade_signals"] pour placer de nouveaux ordres.
 # - Surveille BLACKBOARD["active_trades"] pour le BreakEven, Trailing Stop,
-#   et la Clôture Partielle à 1:1 R:R.
+#   et la cloture partielle au TP1 reel defini a l'ouverture.
 #
 # FIXES V2.0 :
 #   - BUG#1 : self.FIXED_LOT supprimé → self.risk_calculator.calculate_lot_size()
@@ -28,8 +28,7 @@ import MetaTrader5 as mt5
 from agents.base_agent import BaseAgent
 from config import (
     SYMBOL, MAGIC_NUMBER, COOLDOWN_SECONDS,
-    PARTIAL_CLOSE_PERCENT, BREAKEVEN_RR_TRIGGER,
-    RISK_PCT_PER_TRADE
+    PARTIAL_CLOSE_PERCENT, RISK_PCT_PER_TRADE
 )
 from execution.risk_calculator import RiskCalculator
 from utils.spread_monitor import SpreadMonitor
@@ -58,6 +57,10 @@ class TradeManager(BaseAgent):
         Fallback à 0.01 lot en cas d'erreur MT5.
         """
         try:
+            control = self.blackboard.get_all().get("control", {})
+            runtime_risk = control.get("risk_pct_per_trade")
+            if runtime_risk is not None:
+                self.risk_calculator.risk_percent = float(runtime_risk)
             lot = await asyncio.to_thread(
                 self.risk_calculator.calculate_lot_size,
                 SYMBOL,
@@ -136,10 +139,15 @@ class TradeManager(BaseAgent):
         entry = signal_data["entry_price"]
         sl = signal_data["stop_loss"]
         tp = signal_data["take_profit"]
+        tp1 = signal_data.get("tp1_price") or signal_data.get("tp1") or tp
+        tp2 = signal_data.get("tp2_price") or signal_data.get("tp2") or tp
+        broker_tp = tp2 or tp1
 
         # Guard : SL et TP valides ?
-        if sl <= 0 or tp <= 0:
-            self.logger.error(f"❌ SL ({sl}) ou TP ({tp}) invalide — ordre annulé.")
+        if sl <= 0 or tp1 <= 0 or broker_tp <= 0:
+            self.logger.error(
+                f"SL ({sl}) ou TP invalide (TP1={tp1}, TP2={broker_tp}) - ordre annule."
+            )
             await self.blackboard.write("trade_signals", {})
             return False
 
@@ -151,6 +159,8 @@ class TradeManager(BaseAgent):
         volume = await self._calculate_volume(entry, sl, risk_modifier=risk_mod)
 
         # Construction de la requête MT5
+        # Requete atomique: entree + SL + TP broker dans le meme order_send.
+        # MT5 n'a qu'un seul champ TP; TP1 est stocke pour le partiel.
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": SYMBOL,
@@ -158,7 +168,7 @@ class TradeManager(BaseAgent):
             "type": order_type,
             "price": float(entry),
             "sl": float(sl),
-            "tp": float(tp),
+            "tp": float(broker_tp),
             "deviation": 20,
             "magic": MAGIC_NUMBER,
             "comment": f"GoldSniper V2 [{score:.0f}pts]",
@@ -166,7 +176,10 @@ class TradeManager(BaseAgent):
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
-        self.logger.info(f"🚀 Envoi de l'ordre {action} | {volume} lots | SL={sl:.2f} | TP={tp:.2f}")
+        self.logger.info(
+            f"Envoi ordre atomique {action} | {volume} lots | "
+            f"SL={sl:.2f} | TP1={tp1:.2f} | TP2={broker_tp:.2f}"
+        )
 
         result = await asyncio.to_thread(mt5.order_send, request)
 
@@ -195,12 +208,19 @@ class TradeManager(BaseAgent):
             "entry_price": result.price,
             "original_sl": float(sl),
             "current_sl": float(sl),
-            "tp": float(tp),
+            "tp": float(broker_tp),
+            "tp1": float(tp1),
+            "tp2": float(broker_tp),
+            "broker_tp": float(broker_tp),
             "volume_original": float(volume),
             "breakeven_activated": False,
             "partial_closed": False,
             "opened_at": now_utc.isoformat(),
             "score": score,
+            "agent_breakdown": v2_decision.get("agent_breakdown", {}),
+            "session": v2_decision.get("session"),
+            "regime": v2_decision.get("regime"),
+            "strategy": v2_decision.get("strategy"),
         }
 
         async with self.blackboard._lock:
@@ -217,13 +237,13 @@ class TradeManager(BaseAgent):
         await self.blackboard.write("trade_signals", {})
 
         # Notification Telegram d'entrée
-        rr_ratio = abs(tp - result.price) / abs(result.price - sl) if abs(result.price - sl) > 0 else 0
+        rr_ratio = abs(broker_tp - result.price) / abs(result.price - sl) if abs(result.price - sl) > 0 else 0
         await send_telegram_notification(
             self.blackboard,
             f"🎯 *TRADE OUVERT* — {action} XAUUSD\n"
             f"🔹 Ticket: `{result.order}`\n"
             f"🔹 Entrée: `{result.price:.2f}`\n"
-            f"🔹 SL: `{sl:.2f}` | TP: `{tp:.2f}`\n"
+            f"🔹 SL: `{sl:.2f}` | TP1: `{tp1:.2f}` | TP2: `{broker_tp:.2f}`\n"
             f"🔹 Lots: `{volume}` | R:R: `{rr_ratio:.1f}`\n"
             f"🔹 Score V2: `{score:.0f}/100`"
         )
@@ -238,7 +258,7 @@ class TradeManager(BaseAgent):
         """
         Surveille les trades ouverts :
         1. Nettoyage des trades clôturés par le broker
-        2. Clôture partielle 50% + Break-Even à 1:1 R:R
+        2. Cloture partielle 50% au TP1 reel + Break-Even
         3. Trailing Stop ATR-based après Break-Even (feature new)
         4. Tracking du PnL flottant dans le blackboard
         """
@@ -271,55 +291,63 @@ class TradeManager(BaseAgent):
             entry = trade["entry_price"]
             original_sl = trade["original_sl"]
             tp = trade["tp"]
+            tp1 = trade.get("tp1", tp)
 
             # PnL flottant de ce trade
             floating_pnl = pos.profit
             total_floating_pnl += floating_pnl
 
-            # ── LOGIQUE 1 : Partial Close 50% + BreakEven à 1:1 R:R ──────────
-            if not trade["breakeven_activated"]:
-                initial_risk = abs(entry - original_sl)
-                if initial_risk > 0:
-                    profit_distance = (current_price - entry) if trade["type"] == "BUY" else (entry - current_price)
-                    rr_current = profit_distance / initial_risk if initial_risk > 0 else 0
+            # LOGIQUE 1 : Partial Close 50% + BreakEven au TP1 reel
+            if not trade.get("partial_closed", False):
+                tp1_reached = (
+                    (trade["type"] == "BUY" and current_price >= tp1) or
+                    (trade["type"] == "SELL" and current_price <= tp1)
+                )
 
-                    if rr_current >= BREAKEVEN_RR_TRIGGER:
-                        self.logger.info(f"🛡️ 1:1 R:R atteint sur ticket {ticket} — Partial Close + BreakEven")
+                if tp1_reached:
+                    self.logger.info(
+                        f"TP1 atteint sur ticket {ticket} ({current_price:.2f} / {tp1:.2f}) - "
+                        "Partial Close + BreakEven"
+                    )
 
-                        # 1a. Clôture partielle 50%
-                        close_type = mt5.ORDER_TYPE_SELL if trade["type"] == "BUY" else mt5.ORDER_TYPE_BUY
-                        half_volume = max(0.01, round(pos.volume * (PARTIAL_CLOSE_PERCENT / 100.0), 2))
-                        close_price = tick["bid"] if close_type == mt5.ORDER_TYPE_SELL else tick["ask"]
+                    close_type = mt5.ORDER_TYPE_SELL if trade["type"] == "BUY" else mt5.ORDER_TYPE_BUY
+                    half_volume = max(0.01, round(pos.volume * (PARTIAL_CLOSE_PERCENT / 100.0), 2))
+                    close_price = tick["bid"] if close_type == mt5.ORDER_TYPE_SELL else tick["ask"]
+                    partial_ok = False
 
-                        if close_price > 0:
-                            close_req = {
-                                "action": mt5.TRADE_ACTION_DEAL,
-                                "position": ticket,
-                                "symbol": SYMBOL,
-                                "volume": half_volume,
-                                "type": close_type,
-                                "price": close_price,
-                                "deviation": 20,
-                                "magic": MAGIC_NUMBER,
-                                "comment": f"GoldSniper PartialClose {PARTIAL_CLOSE_PERCENT}%",
-                                "type_time": mt5.ORDER_TIME_GTC,
-                                "type_filling": mt5.ORDER_FILLING_IOC,
-                            }
-                            close_res = await asyncio.to_thread(mt5.order_send, close_req)
-                            if close_res and close_res.retcode == mt5.TRADE_RETCODE_DONE:
-                                self.logger.trade(f"✅ Partial Close {PARTIAL_CLOSE_PERCENT}% ({half_volume} lots) sur {ticket}")
-                                await send_telegram_notification(
-                                    self.blackboard,
-                                    f"📊 *CLÔTURE PARTIELLE* — {trade['type']} XAUUSD\n"
-                                    f"🔹 Ticket: `{ticket}` | {PARTIAL_CLOSE_PERCENT}% = `{half_volume}` lots\n"
-                                    f"🔹 PnL partiel: `{floating_pnl/2:.2f} USD`\n"
-                                    f"🔹 Break-Even activé → Trade Free Risk ✅"
-                                )
-                            else:
-                                err = getattr(close_res, 'retcode', 'UNKNOWN')
-                                self.logger.error(f"❌ Partial Close échoué sur {ticket} — Code: {err}")
+                    if close_price > 0:
+                        close_req = {
+                            "action": mt5.TRADE_ACTION_DEAL,
+                            "position": ticket,
+                            "symbol": SYMBOL,
+                            "volume": half_volume,
+                            "type": close_type,
+                            "price": close_price,
+                            "deviation": 20,
+                            "magic": MAGIC_NUMBER,
+                            "comment": f"GoldSniper Partial TP1 {PARTIAL_CLOSE_PERCENT}%",
+                            "type_time": mt5.ORDER_TIME_GTC,
+                            "type_filling": mt5.ORDER_FILLING_IOC,
+                        }
+                        close_res = await asyncio.to_thread(mt5.order_send, close_req)
+                        if close_res and close_res.retcode == mt5.TRADE_RETCODE_DONE:
+                            partial_ok = True
+                            self.logger.trade(
+                                f"Partial Close TP1 {PARTIAL_CLOSE_PERCENT}% ({half_volume} lots) sur {ticket}"
+                            )
+                            await send_telegram_notification(
+                                self.blackboard,
+                                f"📊 *CLÔTURE PARTIELLE TP1* — {trade['type']} XAUUSD\n"
+                                f"🔹 Ticket: `{ticket}` | {PARTIAL_CLOSE_PERCENT}% = `{half_volume}` lots\n"
+                                f"🔹 TP1: `{tp1:.2f}` | Prix: `{close_price:.2f}`\n"
+                                f"🔹 PnL partiel: `{floating_pnl/2:.2f} USD`\n"
+                                f"🔹 Break-Even active -> Trade Free Risk"
+                            )
+                        else:
+                            err = getattr(close_res, 'retcode', 'UNKNOWN')
+                            self.logger.error(f"Partial Close TP1 echoue sur {ticket} - Code: {err}")
 
-                        # 1b. Déplacement SL au Break-Even
+                    if partial_ok:
                         be_req = {
                             "action": mt5.TRADE_ACTION_SLTP,
                             "position": ticket,
@@ -329,19 +357,20 @@ class TradeManager(BaseAgent):
                         }
                         res = await asyncio.to_thread(mt5.order_send, be_req)
                         if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                            self.logger.trade(f"✅ BreakEven activé sur ticket {ticket}")
+                            self.logger.trade(f"BreakEven active sur ticket {ticket}")
                             async with self.blackboard._lock:
                                 t = self.blackboard._data["active_trades"].get(ticket)
                                 if t:
                                     t["breakeven_activated"] = True
                                     t["partial_closed"] = True
                                     t["current_sl"] = entry
+                                    t["partial_closed_at"] = datetime.now(timezone.utc).isoformat()
                         else:
                             err = getattr(res, 'retcode', 'UNKNOWN')
-                            self.logger.error(f"❌ BreakEven échoué sur {ticket} — Code: {err}")
+                            self.logger.error(f"BreakEven echoue sur {ticket} - Code: {err}")
 
             # ── LOGIQUE 2 : Trailing Stop ATR-based (après BreakEven) ─────────
-            elif trade["breakeven_activated"] and atr > 0:
+            elif trade.get("partial_closed", False) and trade.get("breakeven_activated", False) and atr > 0:
                 current_sl = trade["current_sl"]
                 # On trail à 1× ATR du prix courant
                 trailing_distance = atr * 1.0
@@ -407,20 +436,27 @@ class TradeManager(BaseAgent):
             daily = self.blackboard._data.setdefault("daily_stats", {})
             daily["realized_pnl"] = daily.get("realized_pnl", 0.0) + pnl
             daily["trades_closed"] = daily.get("trades_closed", 0) + 1
+            closed_record = {
+                "ticket": ticket,
+                "type": direction,
+                "entry": entry,
+                "sl": sl,
+                "tp": tp,
+                "pnl": pnl,
+                "outcome": "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN"),
+                "rr_achieved": rr_achieved,
+                "agent_breakdown": trade.get("agent_breakdown", {}),
+                "session": trade.get("session"),
+                "regime": trade.get("regime"),
+                "strategy": trade.get("strategy"),
+                "closed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self.blackboard._data.setdefault("positions", {}).setdefault("closed_today", []).append(closed_record)
 
             # Enregistrement dans paper_trading si applicable
             paper = self.blackboard._data.get("paper_trading", {})
             if paper.get("enabled"):
-                paper.setdefault("simulated_trades", []).append({
-                    "ticket": ticket,
-                    "type": direction,
-                    "entry": entry,
-                    "sl": sl,
-                    "tp": tp,
-                    "pnl": pnl,
-                    "rr_achieved": rr_achieved,
-                    "closed_at": datetime.now(timezone.utc).isoformat(),
-                })
+                paper.setdefault("simulated_trades", []).append(dict(closed_record))
                 paper["simulated_equity"] = paper.get("simulated_equity", 0) + pnl
 
         emoji = "✅" if pnl >= 0 else "❌"
@@ -443,7 +479,11 @@ class TradeManager(BaseAgent):
                 # 1. Vérification d'un nouveau signal
                 signal_data = self.blackboard.read_sync("trade_signals")
                 if signal_data and "signal" in signal_data:
-                    await self.place_order(signal_data)
+                    if self.blackboard.get_all().get("control", {}).get("paused", False):
+                        self.logger.info("Signal ignore: trading en pause Telegram; gestion positions maintenue.")
+                        await self.blackboard.write("trade_signals", {})
+                    else:
+                        await self.place_order(signal_data)
 
                 # 2. Gestion des trades existants (BE, Trailing, Partial Close)
                 await self.manage_active_trades()

@@ -22,14 +22,17 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 import asyncio
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from core.blackboard import BLACKBOARD, BlackBoard
+from core.diamond_detector import alert_diamond_setup, evaluate_diamond_setup
+from core.strategy_dictionary import check_diamond_conditions, select_active_strategy
 from agents.base_agent import AgentResult
 from utils.logger import get_logger
 from utils.telegram_notifier import send_telegram_notification
-from config import MAX_TRADES_PER_DAY, DRAWDOWN_LIMIT
+from config import MAX_TRADES_PER_DAY, DRAWDOWN_LIMIT, EVENT_DRIVEN_TIMEOUT, RISK_PCT_PER_TRADE
 
 # ── Decision Logger (Script 02) — import conditionnel pour ne pas bloquer ──────
 try:
@@ -72,6 +75,30 @@ def _apply_saved_calibrated_weights() -> None:
 
 
 _apply_saved_calibrated_weights()
+
+
+def _resolve_active_weights(board: BlackBoard, strategy) -> tuple[dict[str, float], bool]:
+    """Apply adaptive session weights first, then strategy overrides."""
+    weights = {agent_id: float(weight) for agent_id, weight in BASE_WEIGHTS.items()}
+    adaptive_applied = False
+
+    adaptive_weights = (board.get_all().get("orchestrator", {}) or {}).get("adaptive_weights")
+    if isinstance(adaptive_weights, dict):
+        candidate = {}
+        for agent_id in BASE_WEIGHTS:
+            try:
+                candidate[agent_id] = float(adaptive_weights[agent_id])
+            except (KeyError, TypeError, ValueError):
+                candidate = {}
+                break
+        if candidate and sum(candidate.values()) > 0:
+            weights.update(candidate)
+            adaptive_applied = True
+
+    if strategy.weight_overrides:
+        weights.update({agent_id: float(weight) for agent_id, weight in strategy.weight_overrides.items()})
+
+    return weights, adaptive_applied
 
 # Seuils de décision
 EXECUTION_THRESHOLD  = 85.0   # EXECUTE si score ≥ 85
@@ -157,11 +184,36 @@ async def run_orchestrator(agent_results: list, blackboard: Optional[BlackBoard]
             return result
 
     # ── ÉTAPE 4 : Score pondéré avec modificateurs de régime ────────────────
+    session_context = _extract_session_context(results_map.get("agent_7"), board)
+    session_name = session_context["session_name"]
+    agent_snapshot = {
+        agent_id: {
+            **(getattr(result, "payload", {}) or {}),
+            "score": getattr(result, "score", None),
+            "direction": getattr(result, "direction", None),
+            "hard_filter_pass": getattr(result, "hard_filter_pass", None),
+        }
+        for agent_id, result in results_map.items()
+    }
+    for agent_id in ["agent_1", "agent_2", "agent_3", "agent_4", "agent_5", "agent_6", "agent_7"]:
+        agent_snapshot.setdefault(agent_id, board.get_agent(agent_id))
+
+    agent_6_data = agent_snapshot.get("agent_6", {})
+    post_news = bool(
+        agent_6_data.get("post_news")
+        or agent_6_data.get("post_news_mode")
+        or agent_6_data.get("after_news_window")
+    )
+    diamond_ok = check_diamond_conditions(agent_snapshot)
+    strategy = select_active_strategy(session_name, regime, post_news, diamond_ok)
+
+    weights, adaptive_weights_applied = _resolve_active_weights(board, strategy)
+
     regime_mods   = REGIME_WEIGHT_MODIFIERS.get(regime, {})
     weighted_sum  = 0.0
     total_weight  = 0.0
 
-    for agent_id, base_weight in BASE_WEIGHTS.items():
+    for agent_id, base_weight in weights.items():
         r = results_map.get(agent_id)
         if r is None:
             continue
@@ -193,8 +245,6 @@ async def run_orchestrator(agent_results: list, blackboard: Optional[BlackBoard]
 
     # ── ÉTAPE 6 : Session Awareness (Agent 7 / Chronos) ──────────────────────
     direction = a1.direction  # Direction validée par le Hard Filter
-    session_context = _extract_session_context(results_map.get("agent_7"), board)
-    session_name = session_context["session_name"]
     risk_modifier = session_context["risk_modifier"]
     session_score = decayed_score
 
@@ -242,14 +292,23 @@ async def run_orchestrator(agent_results: list, blackboard: Optional[BlackBoard]
 
     risk_data    = board.get_agent("risk_manager")
     trades_today = risk_data.get("trades_today", 0)
+    base_risk_pct = float(RISK_PCT_PER_TRADE or 1.0)
+    strategy_risk_modifier = float(strategy.risk_pct) / base_risk_pct
+    final_risk_modifier = risk_modifier * strategy_risk_modifier
+    diamond_evaluation = None
 
-    if session_score >= EXECUTION_THRESHOLD:
+    if session_score >= strategy.min_score:
         # Vérifier si la limite de trades est atteinte
         if trades_today >= MAX_TRADES_PER_DAY:
-            if session_score >= EXCEPTIONAL_THRESHOLD:
-                # Setup exceptionnel : alerte Telegram, pas de trade automatique
+            diamond_evaluation = evaluate_diamond_setup(
+                board,
+                agent_snapshot,
+                final_score=session_score,
+                direction=direction,
+            )
+            if diamond_evaluation["is_diamond"]:
                 stars    = 5
-                decision = "EXCEPTIONAL_ALERT"
+                decision = "DIAMOND_ALERT"
             else:
                 stars    = 4
                 decision = "WAIT"
@@ -269,9 +328,17 @@ async def run_orchestrator(agent_results: list, blackboard: Optional[BlackBoard]
         "raw_score":      round(raw_score, 1),
         "stars":          stars,
         "direction":      direction,
-        "risk_modifier":  risk_modifier,
+        "risk_modifier":  final_risk_modifier,
         "regime":         regime,
         "session":        session_name,
+        "strategy":       strategy.name,
+        "strategy_min_score": strategy.min_score,
+        "strategy_exceptional_score": strategy.exceptional_score,
+        "strategy_risk_pct": strategy.risk_pct,
+        "strategy_weight_overrides": strategy.weight_overrides,
+        "adaptive_weights_applied": adaptive_weights_applied,
+        "effective_weights": weights,
+        "diamond_evaluation": diamond_evaluation,
         "reason":         (
             f"SCORE_{session_score:.1f}/100 | base={decayed_score:.1f} | "
             f"régime={regime} | dir={direction} | "
@@ -304,6 +371,21 @@ async def run_orchestrator(agent_results: list, blackboard: Optional[BlackBoard]
             except Exception:
                 pass
 
+    if decision == "DIAMOND_ALERT":
+        await alert_diamond_setup(
+            board,
+            final_result["diamond_evaluation"],
+            final_result["agent_breakdown"],
+            {
+                "session": session_name,
+                "regime": regime,
+                "direction": direction,
+                "trades_today": trades_today,
+                "max_trades_per_day": MAX_TRADES_PER_DAY,
+                "strategy": strategy.name,
+            },
+        )
+
     return final_result
 
 
@@ -323,14 +405,26 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
       - Mise à jour de blackboard["orchestrator"] pour l'UI
     """
     logger         = get_logger()
-    logger.info("▶️  Orchestrateur V2.0 démarré — Seuil execution=85 | Watch=70")
+    logger.info(
+        "Orchestrateur V3 event-driven demarre "
+        f"- seuil execution=strategy.min_score | fallback={EVENT_DRIVEN_TIMEOUT:.1f}s"
+    )
 
     last_rejection_reason = ""
     last_reset_day        = datetime.now(timezone.utc).day
     equity_day_start      = 0.0
+    last_agent_sequence   = 0
+    latency_samples: list[float] = []
 
     while not blackboard.kill_event.is_set():
         try:
+            update_info = await blackboard.wait_for_agent_update(
+                last_sequence=last_agent_sequence,
+                timeout=EVENT_DRIVEN_TIMEOUT,
+            )
+            if update_info is not None:
+                last_agent_sequence = int(update_info.get("sequence") or last_agent_sequence)
+
             now = datetime.now(timezone.utc)
 
             # ── Reset journalier ─────────────────────────────────────────────
@@ -396,11 +490,33 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
 
             # Si aucun agent n'a encore produit de résultat, attendre
             if not agent_results:
-                await asyncio.sleep(1.0)
                 continue
 
             # ── Décision V2 ──────────────────────────────────────────────────
             decision = await run_orchestrator(agent_results, blackboard)
+
+            if update_info and update_info.get("published_at_perf") is not None:
+                latency_ms = (time.perf_counter() - update_info["published_at_perf"]) * 1000
+                latency_samples.append(latency_ms)
+                latency_samples = latency_samples[-50:]
+                last_ten = latency_samples[-10:]
+                avg_latency = sum(last_ten) / len(last_ten)
+                min_latency = min(last_ten)
+                max_latency = max(last_ten)
+                await blackboard.update_dict("orchestrator", {
+                    "last_agent_event": update_info.get("agent_id"),
+                    "last_agent_event_sequence": last_agent_sequence,
+                    "last_latency_ms": round(latency_ms, 3),
+                    "latency_avg_ms": round(avg_latency, 3),
+                    "latency_min_ms": round(min_latency, 3),
+                    "latency_max_ms": round(max_latency, 3),
+                    "latency_samples": [round(sample, 3) for sample in last_ten],
+                })
+                if len(last_ten) == 10 and avg_latency > 50.0:
+                    logger.warning(
+                        f"Latence orchestrateur elevee : avg={avg_latency:.1f}ms "
+                        f"min={min_latency:.1f}ms max={max_latency:.1f}ms"
+                    )
 
             # ── Mise à jour Blackboard pour l'UI ─────────────────────────────
             await blackboard.update_dict("orchestrator", {
@@ -408,11 +524,25 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
                 "stars":        decision["stars"],
                 "decision":     decision["decision"],
                 "direction":    decision["direction"],
+                "strategy":     decision.get("strategy"),
+                "strategy_min_score": decision.get("strategy_min_score"),
+                "strategy_risk_pct": decision.get("strategy_risk_pct"),
                 "last_updated": now,
             })
 
             # ── Émettre le signal de trade si EXECUTE ────────────────────────
             if decision["decision"] == "EXECUTE":
+                control = blackboard._data.get("control", {})
+                if control.get("paused", False):
+                    await blackboard.write("trade_signals", {})
+                    await blackboard.update_dict("orchestrator", {
+                        "pending_signal": None,
+                        "paused": True,
+                        "pause_reason": control.get("pause_reason", "TELEGRAM_PAUSE"),
+                    })
+                    logger.info("Signal EXECUTE ignore: trading en pause Telegram.")
+                    continue
+
                 # Récupérer les niveaux d'entrée depuis Agent 5 (payload AMD complet)
                 a5_data = blackboard.get_agent("agent_5")
                 entry   = a5_data.get("entry_price")
@@ -431,10 +561,15 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
                         "direction":   decision["direction"],
                         "entry_price": entry,
                         "stop_loss":   sl,
+                        "tp1_price":   tp1,
+                        "tp2_price":   tp2 or tp1,
                         "take_profit": tp2 or tp1,
                         "score":       decision["score"],
                         "stars":       decision["stars"],
                         "regime":      decision["regime"],
+                        "strategy":    decision.get("strategy"),
+                        "risk_pct":    decision.get("strategy_risk_pct"),
+                        "risk_modifier": decision.get("risk_modifier", 1.0),
                         "timestamp":   now,
                         "v2_decision": decision,
                     }
@@ -457,10 +592,10 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
                         f"entry={entry} sl={sl} tp={tp2 or tp1}"
                     )
 
-            elif decision["decision"] == "EXCEPTIONAL_ALERT":
+            elif decision["decision"] in {"EXCEPTIONAL_ALERT", "DIAMOND_ALERT"}:
                 # Signal exceptionnel déjà géré (Telegram) dans run_orchestrator
                 logger.warning(
-                    f"⚡ EXCEPTIONAL_ALERT — Score {decision['score']} | "
+                    f"⚡ {decision['decision']} — Score {decision['score']} | "
                     f"Limite trades atteinte, pas d'exécution auto"
                 )
 
@@ -482,11 +617,10 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"❌ Erreur critique Orchestrateur V2 : {e}")
+            logger.error(f"Erreur critique Orchestrateur V3 event-driven : {e}")
 
-        await asyncio.sleep(1.0)
 
-    logger.warning("🛑 Orchestrateur V2.0 arrêté.")
+    logger.warning("Orchestrateur V3 event-driven arrete.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -500,8 +634,11 @@ def _extract_session_context(agent_7_result: Optional[AgentResult], blackboard: 
     bb_agent_7 = board.get_agent("agent_7")
 
     if agent_7_result is None and not bb_agent_7.get("last_updated"):
+        market_session = board.get_market().get("session") or "UNKNOWN"
+        if market_session in {None, "NONE"}:
+            market_session = "UNKNOWN"
         return {
-            "session_name": "UNKNOWN",
+            "session_name": market_session,
             "trading_allowed": True,
             "risk_modifier": 1.0,
             "tokyo_override_score": 92.0,
