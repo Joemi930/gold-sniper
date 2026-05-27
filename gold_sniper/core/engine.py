@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# GOLD SNIPER v1.0 — MOTEUR ASYNCHRONE (ENGINE)
+# GOLD SNIPER V3.0 — MOTEUR ASYNCHRONE (ENGINE)
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # Ossature de la boucle événementielle asyncio.
@@ -184,7 +184,7 @@ async def adaptive_weights_loop(blackboard: BlackBoard) -> None:
 async def run_engine(blackboard: BlackBoard) -> None:
     logger = get_logger()
     logger.info("=" * 60)
-    logger.info("🚀 GOLD SNIPER v1.0 — Lancement du Moteur Asynchrone Complet")
+    logger.info("🚀 GOLD SNIPER V3.0 — Lancement du Moteur Asynchrone Complet")
     logger.info("=" * 60)
 
     # Initialisation des classes
