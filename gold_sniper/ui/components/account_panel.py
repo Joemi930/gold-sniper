@@ -137,7 +137,7 @@ class AccountPanel(ctk.CTkFrame):
 
         # Widgets du trade actif (créés une fois, visibilité contrôlée)
         self._tc_dir = ctk.CTkLabel(
-            self._trade_frame, text="▲ BUY XAUUSD",
+            self._trade_frame, text=f"▲ BUY {MT5_SYMBOL}",
             font=("Consolas", 13, "bold"),
             text_color=theme.NEON_GREEN, fg_color=theme.BG_CARD
         )
@@ -265,7 +265,8 @@ class AccountPanel(ctk.CTkFrame):
         arrow = "▲" if direction == "BUY" else "▼"
         dir_color = theme.NEON_GREEN if direction == "BUY" else theme.RED
 
-        self._tc_dir.configure(text=f"{arrow} {direction} XAUUSD", text_color=dir_color)
+        from config import MT5_SYMBOL
+        self._tc_dir.configure(text=f"{arrow} {direction} {MT5_SYMBOL}", text_color=dir_color)
         self._tc_dir.pack(pady=(8, 0))
 
         self._tc_pnl.configure(text=f"{pnl:+.2f} USD", text_color=pnl_color)

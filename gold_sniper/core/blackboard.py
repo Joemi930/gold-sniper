@@ -1,24 +1,24 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# GOLD SNIPER v1.0 — TABLEAU NOIR (BLACKBOARD / SHARED STATE)
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# GOLD SNIPER v1.0 -- TABLEAU NOIR (BLACKBOARD / SHARED STATE)
+# =============================================================================
 #
-# Le Tableau Noir est le dictionnaire central en RAM où TOUS les agents
-# écrivent leurs données. C'est la clé de voûte de l'architecture.
+# Le Tableau Noir est le dictionnaire central en RAM ou TOUS les agents
+# ecrivent leurs donnees. C'est la cle de voute de l'architecture.
 #
-# Protégé par un asyncio.Lock() pour garantir la cohérence lors d'écritures
-# concurrentes. Chaque agent écrit dans sa propre clé sans interférence.
+# Protege par un asyncio.Lock() pour garantir la coherence lors d'ecritures
+# concurrentes. Chaque agent ecrit dans sa propre cle sans interference.
 #
-# Référence : architecture.md — Section 2.2
+# Reference : architecture.md -- Section 2.2
 #
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 import asyncio
 import time
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Optional, Callable
-# NOTE : AgentResult est importé localement dans write_agent_result()
-# pour éviter l'import circulaire (base_agent importe BlackBoard).
+# NOTE : AgentResult est importe localement dans write_agent_result()
+# pour eviter l'import circulaire (base_agent importe BlackBoard).
 
 from config import (
     LIVE_MODE,
@@ -31,17 +31,18 @@ from config import (
     PAPER_CSV_PATH,
     RECOVERY_FILE_PATH,
     MAX_SPREAD_POINTS,
+    MT5_SYMBOL,
 )
 from utils.logger import get_logger
 
 
 class BlackBoard:
     """
-    Tableau Noir — État global partagé entre toutes les coroutines.
+    Tableau Noir -- Etat global partage entre toutes les coroutines.
 
-    Structure exacte définie dans architecture.md § 2.2.
-    Le dictionnaire interne `_data` n'est jamais accédé directement :
-    on utilise les méthodes `read()` et `write()` qui gèrent le verrou.
+    Structure exacte definie dans architecture.md Sec. 2.2.
+    Le dictionnaire interne `_data` n'est jamais accede directement :
+    on utilise les methodes `read()` et `write()` qui gerent le verrou.
 
     Usage :
         bb = BlackBoard()
@@ -53,9 +54,14 @@ class BlackBoard:
         self._logger = get_logger()
         self._lock = asyncio.Lock()
 
-        # [R1] Event global pour le Kill Switch — vérifié avant chaque order_send
+        # [R1] Event global pour le Kill Switch -- verifie avant chaque order_send
         self._kill_event = asyncio.Event()
         self._agent_update_event = asyncio.Event()
+
+        # [DASHBOARD] Event declenche a chaque write_agent_result() OU update_market().
+        # Le WebSocket l'attend au lieu de dormir 500ms -> latence < 5ms.
+        self._dashboard_update_event = asyncio.Event()
+
         self._agent_update_sequence = 0
         self._latest_agent_update: dict[str, Any] = {
             "sequence": 0,
@@ -64,10 +70,10 @@ class BlackBoard:
             "published_at_perf": None,
         }
 
-        # Timestamp de création
+        # Timestamp de creation
         now = datetime.now(tz=timezone.utc)
 
-        # Bus d'événements V2 : clé = nom de l'événement, valeur = liste de callbacks
+        # Bus d'evenements V2 : cle = nom de l'evenement, valeur = liste de callbacks
         self._subscribers: dict[str, list[Callable]] = {}
         self._events: dict[str, asyncio.Event] = {
             "agent_1_ready": asyncio.Event(),
@@ -79,33 +85,32 @@ class BlackBoard:
             "agent_7_ready": asyncio.Event(),
             "new_candle_1m": asyncio.Event(),
             "new_candle_15m": asyncio.Event(),
-            "price_in_poi": asyncio.Event(),   # Agent 2 active cet event → réveille Agent 5
+            "price_in_poi": asyncio.Event(),   # Agent 2 active cet event -> reveille Agent 5
             "pipeline_reset": asyncio.Event(),
         }
 
-        # ─────────────────────────────────────────────────────────────────
-        # STRUCTURE COMPLÈTE DU TABLEAU NOIR
-        # Miroir exact de architecture.md § 2.2
-        # ─────────────────────────────────────────────────────────────────
+        # -------------------------------------------------------------------------
+        # STRUCTURE COMPLETE DU TABLEAU NOIR
+        # -------------------------------------------------------------------------
         self._data: dict[str, Any] = {
 
-            # ── META : État global du système ────────────────────────────
+            # -- META : Etat global du systeme ------------------------------------
             "meta": {
                 "boot_time": now,
                 "last_tick_time": None,
-                "state": "BOOT",                    # BOOT → READY → TRADING → COOLDOWN → HALTED → KILLED
-                "live_mode": LIVE_MODE,              # [R10] False = Paper Trading
+                "state": "BOOT",           # BOOT -> READY -> TRADING -> COOLDOWN -> HALTED -> KILLED
+                "live_mode": LIVE_MODE,    # [R10] False = Paper Trading
                 "kill_switch": False,
-                "kill_event": self._kill_event,      # [R1] Objet asyncio.Event partagé
+                "kill_event": self._kill_event,   # [R1] Objet asyncio.Event partage
                 "daily_trade_count": 0,
                 "cooldown_until": None,
-                "friday_mode": {                     # [R16]
+                "friday_mode": {           # [R16]
                     "risk_reduced": False,
                     "trading_halted": False,
                 },
             },
 
-            # ── MARKET DATA : Prix, bougies, infos symbole ──────────────
+            # -- CONTROL : Pause / resume / risque live ---------------------------
             "control": {
                 "paused": False,
                 "pause_reason": None,
@@ -119,6 +124,7 @@ class BlackBoard:
                 "memory_loss_count_alerted": 0,
             },
 
+            # -- MEMORY : Compteurs de memoire ------------------------------------
             "memory": {
                 "last_recorded_trade": None,
                 "loss_count": 0,
@@ -126,6 +132,7 @@ class BlackBoard:
                 "updated_at": None,
             },
 
+            # -- MARKET DATA : Prix, bougies, infos symbole -----------------------
             "market_data": {
                 "current_tick": {
                     "bid": 0.0,
@@ -150,43 +157,43 @@ class BlackBoard:
                     "stoplevel": 0,
                     "spread": 0,
                 },
-                "atr_14": None, # [V2] Calculé 1 fois, partagé par TOUS les agents
+                "atr_14": None,  # [V2] Calcule 1 fois, partage par TOUS les agents
             },
 
-            # ── MARKET ANALYSIS : Analyses partagées des agents ──────────
+            # -- MARKET ANALYSIS : Analyses partagees des agents ------------------
             "market_analysis": {
                 "market_structure": {
                     "overall_bias": "NEUTRAL",
                     "trend_4h": "NEUTRAL",
-                    "trend_15m": "NEUTRAL"
+                    "trend_15m": "NEUTRAL",
                 },
                 "zones": {},
                 "liquidity_pools": {
                     "eqh": [],
-                    "eql": []
+                    "eql": [],
                 },
                 "ote_zone": {},
                 "microscope": {
                     "is_choch_detected": False,
-                    "choch_details": {}
+                    "choch_details": {},
                 },
             },
 
-            # ── RISK MANAGEMENT : Boucliers et filtres OPSEC ─────────────
+            # -- RISK MANAGEMENT : Boucliers et filtres OPSEC ---------------------
             "risk_management": {
                 "volatility_gate": {
                     "allow_trade": True,
-                    "next_news_time": None
+                    "next_news_time": None,
                 },
                 "session_gate": {
                     "allow_trade": False,
-                    "current_session": "OFF_HOURS"
+                    "current_session": "OFF_HOURS",
                 },
             },
 
-            # ── MARKET V2 (Shared State) ─────────────────────────────────
+            # -- MARKET V2 (Shared State) -----------------------------------------
             "market": {
-                "symbol": "XAUUSD",
+                "symbol": MT5_SYMBOL,
                 "current_price": None,
                 "bid": None,
                 "ask": None,
@@ -224,7 +231,7 @@ class BlackBoard:
                 "last_tick": None,
             },
 
-            # ── AGENTS V2 ───────────────────────────────────────────────
+            # -- AGENTS V2 --------------------------------------------------------
             "agents": {
                 "agent_1": {
                     "score": 0,
@@ -339,7 +346,7 @@ class BlackBoard:
                 },
             },
 
-            # ── ORCHESTRATEUR V2 ───────────────────────────────────────────
+            # -- ORCHESTRATEUR V2 -------------------------------------------------
             "orchestrator": {
                 "final_score": 0,
                 "stars": 0,
@@ -351,7 +358,7 @@ class BlackBoard:
                 "last_updated": None,
             },
 
-            # ── PERFORMANCE V2 ─────────────────────────────────────────────
+            # -- PERFORMANCE V2 ---------------------------------------------------
             "performance": {
                 "total_trades": 0,
                 "winning_trades": 0,
@@ -367,7 +374,8 @@ class BlackBoard:
                     "agent_5": {"correct": 0, "total": 0, "accuracy": 0.0},
                 },
             },
-            # ── AGENT RESULTS (V2) ───────────────────────────────────────
+
+            # -- AGENT RESULTS (V2) -----------------------------------------------
             "agent_results": {
                 "agent_1": None,
                 "agent_2": None,
@@ -378,13 +386,13 @@ class BlackBoard:
                 "agent_7": None,
             },
 
-            # ── TRADE SIGNALS (Orchestrator output) ──────────────────────
+            # -- TRADE SIGNALS (Orchestrator output) ------------------------------
             "trade_signals": {},
 
-            # ── ACTIVE TRADES (Suivi par TradeManager) ───────────────────
+            # -- ACTIVE TRADES (Suivi par TradeManager) ---------------------------
             "active_trades": {},
 
-            # ── POSITIONS ────────────────────────────────────────────────
+            # -- POSITIONS --------------------------------------------------------
             "positions": {
                 "open_positions": [],
                 "closed_today": [],
@@ -392,7 +400,7 @@ class BlackBoard:
                 "last_sync_time": None,
             },
 
-            # ── RATE LIMITER MT5 [R15] ───────────────────────────────────
+            # -- RATE LIMITER MT5 [R15] -------------------------------------------
             "rate_limiter": {
                 "mt5_calls_this_second": 0,
                 "mt5_last_reset": now,
@@ -400,7 +408,7 @@ class BlackBoard:
                 "last_known_tick": None,
             },
 
-            # ── NOTIFICATIONS TELEGRAM [R9] ──────────────────────────────
+            # -- NOTIFICATIONS TELEGRAM [R9] --------------------------------------
             "notifications": {
                 "telegram_enabled": TELEGRAM_ENABLED,
                 "telegram_bot_token": TELEGRAM_BOT_TOKEN,
@@ -409,7 +417,7 @@ class BlackBoard:
                 "queue": [],
             },
 
-            # ── PAPER TRADING [R10] ──────────────────────────────────────
+            # -- PAPER TRADING [R10] ----------------------------------------------
             "paper_trading": {
                 "enabled": not LIVE_MODE,
                 "simulated_trades": [],
@@ -417,7 +425,7 @@ class BlackBoard:
                 "csv_path": PAPER_CSV_PATH,
             },
 
-            # ── RECOVERY & PERSISTANCE ───────────────────────────────────
+            # -- RECOVERY & PERSISTANCE -------------------------------------------
             "recovery": {
                 "last_save_time": None,
                 "file_path": RECOVERY_FILE_PATH,
@@ -426,138 +434,129 @@ class BlackBoard:
         }
 
         self._logger.info(
-            f"Tableau Noir initialisé — "
-            f"Mode: {'LIVE 🔴' if LIVE_MODE else 'PAPER 📝'} | "
-            f"Bougies: 4H×{CANDLE_HISTORY['4H']} / 15m×{CANDLE_HISTORY['15m']} / 1m×{CANDLE_HISTORY['1m']}"
+            f"Tableau Noir initialise -- "
+            f"Mode: {'LIVE' if LIVE_MODE else 'PAPER'} | "
+            f"Bougies: 4H x{CANDLE_HISTORY['4H']} / 15m x{CANDLE_HISTORY['15m']} / 1m x{CANDLE_HISTORY['1m']}"
         )
 
-    # ─────────────────────────────────────────────────────────────────────
-    # ACCÈS EN LECTURE (thread-safe)
-    # ─────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
+    # ACCES EN LECTURE (thread-safe)
+    # -------------------------------------------------------------------------
 
     async def read(self, path: str) -> Any:
         """
-        Lit une valeur du Tableau Noir de manière thread-safe.
+        Lit une valeur du Tableau Noir de maniere thread-safe.
 
         Args:
-            path: Chemin en notation pointée (ex: "meta.state", "agents.agent_1.score")
+            path: Chemin en notation pointee (ex: "meta.state", "agents.agent_1.score")
 
         Returns:
-            La valeur stockée à ce chemin.
+            La valeur stockee a ce chemin.
 
         Raises:
             KeyError: Si le chemin n'existe pas.
-
-        Exemple :
-            state = await bb.read("meta.state")
-            score = await bb.read("agents.agent_1.score")
         """
         async with self._lock:
             return self._navigate(path)
 
     def read_sync(self, path: str) -> Any:
         """
-        Lecture SYNCHRONE (sans verrou) — à utiliser UNIQUEMENT dans
-        les contextes où le verrou est déjà acquis, ou pour des lectures
+        Lecture SYNCHRONE (sans verrou) -- a utiliser UNIQUEMENT dans
+        les contextes ou le verrou est deja acquis, ou pour des lectures
         non-critiques (ex: affichage UI).
 
-        ⚠️  Aucune garantie de cohérence en écriture concurrente.
+        WARNING : Aucune garantie de coherence en ecriture concurrente.
         """
         return self._navigate(path)
 
-    # ─────────────────────────────────────────────────────────────────────
-    # ACCÈS EN ÉCRITURE (thread-safe)
-    # ─────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
+    # ACCES EN ECRITURE (thread-safe)
+    # -------------------------------------------------------------------------
 
     async def write(self, path: str, value: Any) -> None:
         """
-        Écrit une valeur dans le Tableau Noir de manière thread-safe.
+        Ecrit une valeur dans le Tableau Noir de maniere thread-safe.
 
         Args:
-            path:  Chemin en notation pointée (ex: "meta.state")
-            value: Nouvelle valeur à écrire.
+            path:  Chemin en notation pointee (ex: "meta.state")
+            value: Nouvelle valeur a ecrire.
 
         Raises:
             KeyError: Si le chemin parent n'existe pas.
-
-        Exemple :
-            await bb.write("meta.state", "READY")
-            await bb.write("agents.agent_1.score", 1)
         """
         async with self._lock:
             keys = path.split(".")
             target = self._data
 
-            # Naviguer jusqu'à l'avant-dernier niveau
             for key in keys[:-1]:
                 if isinstance(target, dict):
                     target = target[key]
                 else:
-                    raise KeyError(f"Chemin invalide: '{path}' — '{key}' n'est pas un dict")
+                    raise KeyError(f"Chemin invalide: '{path}' -- '{key}' n'est pas un dict")
 
-            # Écrire la valeur finale
             final_key = keys[-1]
             if isinstance(target, dict):
                 target[final_key] = value
             else:
-                raise KeyError(f"Chemin invalide: '{path}' — impossible d'écrire dans un non-dict")
+                raise KeyError(f"Chemin invalide: '{path}' -- impossible d'ecrire dans un non-dict")
 
     async def update_dict(self, path: str, updates: dict) -> None:
         """
-        Met à jour plusieurs clés d'un sous-dictionnaire en une seule acquisition
-        du verrou. Plus efficace que plusieurs appels à write() séparés.
+        Met a jour plusieurs cles d'un sous-dictionnaire en une seule acquisition
+        du verrou. Plus efficace que plusieurs appels a write() separes.
 
         Args:
             path:    Chemin vers le dictionnaire cible (ex: "agents.agent_1")
-            updates: Dictionnaire des clés/valeurs à mettre à jour.
-
-        Exemple :
-            await bb.update_dict("agents.agent_1", {
-                "score": 1,
-                "bias": "BULLISH",
-                "market_phase": "EXPANSION",
-                "updated_at": datetime.now(tz=timezone.utc),
-            })
+            updates: Dictionnaire des cles/valeurs a mettre a jour.
         """
         async with self._lock:
             target = self._navigate(path)
             if not isinstance(target, dict):
-                raise TypeError(f"'{path}' n'est pas un dictionnaire — update_dict impossible")
+                raise TypeError(f"'{path}' n'est pas un dictionnaire -- update_dict impossible")
             target.update(updates)
 
-    # ─────────────────────────────────────────────────────────────────────
-    # KILL EVENT [R1] — Accès direct sans verrou (asyncio.Event est thread-safe)
-    # ─────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
+    # KILL EVENT [R1] -- Acces direct sans verrou (asyncio.Event est thread-safe)
+    # -------------------------------------------------------------------------
 
     @property
     def kill_event(self) -> asyncio.Event:
         """Retourne l'Event global du Kill Switch (lecture directe, sans verrou)."""
         return self._kill_event
 
+    @property
+    def dashboard_update_event(self) -> asyncio.Event:
+        """
+        Event declenche a chaque write_agent_result() ou update_market().
+        Le handler WebSocket l'attend pour pousser les donnees en < 5ms
+        au lieu de poller toutes les 500ms.
+        """
+        return self._dashboard_update_event
+
     def trigger_kill(self) -> None:
-        """Active le Kill Switch. Irréversible sans redémarrage."""
+        """Active le Kill Switch. Irreversible sans redemarrage."""
         self._kill_event.set()
         self._data["meta"]["kill_switch"] = True
         self._data["meta"]["state"] = "KILLED"
-        self._logger.critical("🔴🔴🔴 KILL EVENT DÉCLENCHÉ — Système en arrêt d'urgence 🔴🔴🔴")
+        self._logger.critical("KILL EVENT DECLENCHE -- Systeme en arret d'urgence")
 
-    # ─────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     # SNAPSHOT (pour le recovery.json)
-    # ─────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
 
     async def snapshot(self) -> dict:
         """
-        Retourne une copie profonde sérialisable du Tableau Noir.
-        Utilisé par le Recovery Manager pour sauvegarder l'état.
+        Retourne une copie profonde serialisable du Tableau Noir.
+        Utilise par le Recovery Manager pour sauvegarder l'etat.
 
         Note : les objets asyncio.Event et deque sont convertis pour
-        être compatibles JSON.
+        etre compatibles JSON.
         """
         import copy
         async with self._lock:
             raw = copy.deepcopy(self._data)
 
-        # Nettoyer les objets non-sérialisables
+        # Nettoyer les objets non-serialisables
         raw["meta"].pop("kill_event", None)
 
         # Convertir les deque en listes
@@ -566,51 +565,53 @@ class BlackBoard:
 
         return raw
 
-    # ─────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     # UTILITAIRES INTERNES
-    # ─────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
 
     def _navigate(self, path: str) -> Any:
         """
-        Navigue dans le dictionnaire imbriqué en suivant un chemin pointé.
-        Usage interne uniquement — pas de verrou ici.
+        Navigue dans le dictionnaire imbrique en suivant un chemin pointe.
+        Usage interne uniquement -- pas de verrou ici.
         """
         keys = path.split(".")
         target = self._data
         for key in keys:
             if isinstance(target, dict):
                 if key not in target:
-                    raise KeyError(f"Clé '{key}' introuvable dans le chemin '{path}'")
+                    raise KeyError(f"Cle '{key}' introuvable dans le chemin '{path}'")
                 target = target[key]
             else:
-                raise KeyError(f"Chemin invalide: '{path}' — tentative de naviguer dans un non-dict")
+                raise KeyError(f"Chemin invalide: '{path}' -- tentative de naviguer dans un non-dict")
         return target
 
-    # ─────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     # V2 METHODS (Direct access & Market context)
-    # ─────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
 
     async def update_agent(self, agent_key: str, data: dict) -> None:
-        """Mise à jour atomique et thread-safe d'un agent."""
+        """Mise a jour atomique et thread-safe d'un agent."""
         async with self._lock:
             if agent_key in self._data["agents"]:
                 self._data["agents"][agent_key].update(data)
                 self._data["agents"][agent_key]["last_updated"] = datetime.utcnow()
-    
+
     async def update_market(self, data: dict) -> None:
-        """Mise à jour des données marché globales."""
+        """Mise a jour des donnees marche globales."""
         async with self._lock:
             if "market" in self._data:
                 self._data["market"].update(data)
                 self._data["market"]["last_tick"] = datetime.utcnow()
-    
+        # Notifier le dashboard immediatement (hors lock pour eviter deadlock)
+        self._dashboard_update_event.set()
+
     def get_agent(self, key: str) -> dict:
-        """Lecture non-bloquante d'un agent (quelques ms de délai acceptables)."""
+        """Lecture non-bloquante d'un agent (quelques ms de delai acceptables)."""
         return self._data.get("agents", {}).get(key, {})
-    
+
     def get_market(self) -> dict:
         return self._data.get("market", {})
-    
+
     def get_all(self) -> dict:
         return self._data
 
@@ -619,22 +620,23 @@ class BlackBoard:
         mode = "LIVE" if self._data.get("meta", {}).get("live_mode") else "PAPER"
         stars = self._data.get("orchestrator", {}).get("star_rating", 0)
         n_pos = len(self._data.get("positions", {}).get("open_positions", []))
-        return f"<BlackBoard state={state} mode={mode} stars={stars}★ positions={n_pos}>"
+        return f"<BlackBoard state={state} mode={mode} stars={stars}* positions={n_pos}>"
 
-    # ─────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     # V2 EVENT BUS METHODS
-    # ─────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
 
-    async def write_agent_result(self, agent_id: str, result):
+    async def write_agent_result(self, agent_id: str, result) -> None:
         """
-        Appelé par chaque agent quand il a fini son calcul.
-        Publie le résultat ET notifie tous les abonnés instantanément.
+        Appele par chaque agent quand il a fini son calcul.
+        Publie le resultat ET notifie tous les abonnes instantanement.
+        Declenche aussi dashboard_update_event pour le WebSocket (< 5ms).
         """
         published_at = datetime.now(tz=timezone.utc)
         published_at_perf = time.perf_counter()
         async with self._lock:
             self._data["agent_results"][agent_id] = result
-            # Propager la direction de l'Agent 1 à tout le système
+            # Propager la direction de l'Agent 1 a tout le systeme
             if agent_id == "agent_1" and result.direction:
                 self._data["meta"]["current_direction"] = result.direction
             self._agent_update_sequence += 1
@@ -644,14 +646,15 @@ class BlackBoard:
                 "published_at": published_at,
                 "published_at_perf": published_at_perf,
             }
-        
-        # Déclencher l'événement SANS le lock (évite les deadlocks)
+
+        # Declencher les evenements SANS le lock (evite les deadlocks)
         event_name = f"{agent_id}_ready"
         if event_name in self._events:
             self._events[event_name].set()
         self._agent_update_event.set()
-        
-        # Notifier les callbacks abonnés
+        self._dashboard_update_event.set()   # [DASHBOARD] Push immediat < 5ms
+
+        # Notifier les callbacks abonnes
         for callback in self._subscribers.get(event_name, []):
             asyncio.create_task(callback(result))
 
@@ -673,11 +676,11 @@ class BlackBoard:
             except asyncio.TimeoutError:
                 return None
         return None
-    
+
     async def wait_for_agent(self, agent_id: str, timeout: float = 5.0) -> Optional["AgentResult"]:
         """
-        Attend le résultat d'un agent spécifique avec timeout de sécurité.
-        Usage : résultat = await blackboard.wait_for_agent("agent_1")
+        Attend le resultat d'un agent specifique avec timeout de securite.
+        Usage : resultat = await blackboard.wait_for_agent("agent_1")
         """
         event = self._events.get(f"{agent_id}_ready")
         if not event:
@@ -687,26 +690,26 @@ class BlackBoard:
             return self._data["agent_results"].get(agent_id)
         except asyncio.TimeoutError:
             return None
-    
-    async def notify_price_in_poi(self, zone_data: dict):
+
+    async def notify_price_in_poi(self, zone_data: dict) -> None:
         """
-        Appelé par Agent 2 quand le prix entre dans un POI (OB/FVG).
-        Réveille Agent 5 (Microscope) immédiatement — sans attendre la prochaine bougie.
+        Appele par Agent 2 quand le prix entre dans un POI (OB/FVG).
+        Reveille Agent 5 (Microscope) immediatement -- sans attendre la prochaine bougie.
         """
         async with self._lock:
             self._data["meta"]["active_poi"] = zone_data
         self._events["price_in_poi"].set()
-    
-    def reset_pipeline(self):
-        """Reset des événements pour le prochain cycle d'analyse."""
+
+    def reset_pipeline(self) -> None:
+        """Reset des evenements pour le prochain cycle d'analyse."""
         for event in self._events.values():
             event.clear()
         for agent_id in self._data["agent_results"]:
             self._data["agent_results"][agent_id] = None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SINGLETON GLOBAL — Importé par tous les agents et l'orchestrateur
+# =============================================================================
+# SINGLETON GLOBAL -- Importe par tous les agents et l'orchestrateur
 # Usage : from core.blackboard import BLACKBOARD
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 BLACKBOARD = BlackBoard()

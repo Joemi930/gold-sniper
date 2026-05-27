@@ -744,17 +744,19 @@
       }
     }
 
-    function connect() {
+    // Reconnexion automatique — Cloudflare peut couper les connexions longues
+    let ws;
+    function connectWS() {
       const proto = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${proto}://${location.host}/ws`);
+      ws = new WebSocket(`${proto}://${location.host}/ws`);
       ws.onopen = () => setConnection(true);
       ws.onmessage = event => updateDashboard(JSON.parse(event.data));
       ws.onclose = () => {
         setConnection(false);
-        setTimeout(connect, 1500);
         fetchFallback();
+        setTimeout(connectWS, 2000);
       };
-      ws.onerror = () => setConnection(false);
+      ws.onerror = () => ws.close();  // onclose s'en charge ensuite
     }
 
     function tickClock() {
@@ -771,7 +773,7 @@
     renderNodes();
     renderAgentTable();
     drawNetwork();
-    connect();
+    connectWS();
     fetchFallback();
     setInterval(tickClock, 500);
   </script>

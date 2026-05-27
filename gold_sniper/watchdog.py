@@ -119,7 +119,10 @@ def run_watchdog(config: WatchdogConfig | None = None) -> int:
 
         cycles += 1
         logging.info(f"Lancement process principal: {' '.join(config.command)}")
-        proc = subprocess.Popen(config.command, cwd=str(config.cwd))
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        proc = subprocess.Popen(config.command, cwd=str(config.cwd), **kwargs)
         launch_time = time.time()
         restart_reason: str | None = None
 
@@ -168,7 +171,7 @@ def _command_from_env() -> list[str]:
     override = os.getenv("GOLD_SNIPER_WATCHDOG_COMMAND")
     if override:
         return shlex.split(override)
-    return [sys.executable, str(MAIN_SCRIPT)]
+    return [r"C:\Users\tetej\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe", str(MAIN_SCRIPT)]
 
 
 if __name__ == "__main__":

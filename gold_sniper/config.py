@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 # ─────────────────────────────────────────────────────────────────────────────
 
 # [R10] Flag de protection absolue : False = Paper Trading (aucun ordre réel)
-LIVE_MODE = False
+LIVE_MODE = os.getenv("LIVE_MODE", "0") == "1"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. IDENTIFIANTS MT5
@@ -31,9 +31,10 @@ MT5_LOGIN     = MT5_ACCOUNT  # Alias V3 pour compatibilite avec les futurs scrip
 MT5_PASSWORD  = os.getenv("MT5_PASSWORD", "")
 MT5_SERVER    = os.getenv("MT5_SERVER", "JustMarkets-Demo3")
 MT5_PATH      = os.getenv("MT5_PATH", "") or None
+MT5_SYMBOL    = os.getenv("MT5_SYMBOL", "XAUUSD")
 
 # Symbole unique — un seul front à la fois (R13 rejeté)
-SYMBOL = "XAUUSD"
+SYMBOL = MT5_SYMBOL
 
 # Identifiant unique du robot pour filtrer nos ordres dans MT5
 MAGIC_NUMBER = 240115  # Format : YYMMDD du premier design (2024-01-15)
@@ -59,7 +60,7 @@ RISK_PERCENT_FRIDAY = 0.5      # [R16] Risque réduit le vendredi après 18h UTC
 MAX_TRADES_PER_DAY  = 2        # Limite journalière (sauf setup Diamant 5★)
 MIN_RISK_REWARD     = 2.0      # R:R minimum requis pour valider un signal
 COOLDOWN_SECONDS    = 180      # 3 minutes de cooldown post-trade
-MAX_SLIPPAGE_POINTS = 30       # 3 pips sur XAUUSD (30 points)
+MAX_SLIPPAGE_POINTS = 30       # 3 pips sur config.MT5_SYMBOL (30 points)
 MAX_DAILY_DRAWDOWN_PERCENT = 5.0  # Arrêt si perte > 5% de l'equity début de journée
 DAILY_LOSS_LIMIT    = 3.0      # -3% -> bascule en paper trading forcé
 DRAWDOWN_LIMIT      = 5.0      # -5% -> veto absolu / arrêt total
@@ -71,7 +72,7 @@ PAPER_MODE_RECOVERY_PCT = 1.5  # Récupération avant retour live
 # 5. FILTRES DE SPREAD
 # ─────────────────────────────────────────────────────────────────────────────
 
-MAX_SPREAD_POINTS         = 30     # Spread max autorisé pour ouvrir un trade
+MAX_SPREAD_POINTS         = 45     # Spread max autorisé pour ouvrir un trade
 MAX_SPREAD_KILL_ZONE      = 40     # Tolérance élargie en Kill Zone liquide
 MAX_SPREAD_RATIO_PCT      = 5.0    # Spread > 5% ATR = exécution trop chère
 SPREAD_ALERT_AFTER_SECONDS = 300   # Alerte Telegram si spread élevé > 5 min
@@ -205,6 +206,14 @@ EVENT_DRIVEN_TIMEOUT        = 5.0    # Fallback A4 si aucun agent ne publie
 DIAMOND_MIN_RR         = 3.0     # R:R minimum pour un setup Diamant
 DIAMOND_SWEET_SPOT_LOW = 0.68    # Fibonacci sweet spot bas
 DIAMOND_SWEET_SPOT_HIGH = 0.73   # Fibonacci sweet spot haut
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 19. POIDS ADAPTATIFS — CONTRÔLE SEMAINE DÉMO
+# ─────────────────────────────────────────────────────────────────────────────
+# Désactivé pendant la 1re semaine démo pour éviter l'oscillation avec
+# weight_calibrator.py (batch/50 trades). Réactiver après validation.
+# Seul weight_calibrator.py sera utilisé, déclenché via /calibrate.
+ADAPTIVE_WEIGHTS_ENABLED = False
 
 # Script 08 — calendrier economique Finnhub
 # Cle gratuite: https://finnhub.io -> Dashboard -> API Key.

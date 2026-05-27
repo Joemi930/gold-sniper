@@ -38,6 +38,35 @@ def build_report(blackboard, report_type: str, now: datetime | None = None) -> s
     losses = sum(1 for trade in closed if float(trade.get("pnl", 0.0) or 0.0) < 0)
     winrate = (wins / len(closed) * 100.0) if closed else 0.0
 
+    if report_type == "weekly":
+        import sqlite3
+        try:
+            conn = sqlite3.connect("data/memory.db")
+            conn.row_factory = sqlite3.Row
+            errs = conn.execute("SELECT pattern_type, frequency FROM error_patterns ORDER BY frequency DESC LIMIT 3").fetchall()
+            strats = conn.execute("SELECT strategy_name, trades_count, win_count, avg_rr FROM strategy_performance ORDER BY trades_count DESC LIMIT 3").fetchall()
+            agents = conn.execute("SELECT agent_id, SUM(was_correct) as correct, COUNT(*) as total FROM agent_performance WHERE was_correct IS NOT NULL GROUP BY agent_id ORDER BY correct*1.0/total DESC").fetchall()
+            conn.close()
+            
+            err_str = "\n".join([f"- {e['pattern_type']}: {e['frequency']} occurrences" for e in errs]) or "- Aucune erreur"
+            strat_str = "\n".join([f"- {s['strategy_name']}: {s['win_count']}/{s['trades_count']} wins, Avg RR: {s['avg_rr']:.2f}" for s in strats]) or "- Aucune stratégie"
+            agent_str = "\n".join([f"- {a['agent_id']}: {a['correct']}/{a['total']} correct ({a['correct']/a['total']*100:.0f}%)" for a in agents if a['total'] > 0]) or "- Aucun agent"
+            
+            recommendation = "Continuer le monitoring avec prudence."
+            if errs and errs[0]['frequency'] > 5:
+                recommendation = f"⚠️ Pattern d'erreur dominant '{errs[0]['pattern_type']}'. Revue recommandée."
+                
+            return (
+                f"RAPPORT HEBDOMADAIRE\n"
+                f"Heure: {now.strftime('%Y-%m-%d %H:%M:%S')} UTC+1\n\n"
+                f"📊 STATS AGENTS\n{agent_str}\n\n"
+                f"🎯 STRATEGIES TOP\n{strat_str}\n\n"
+                f"⚠️ ERREURS FREQUENTES\n{err_str}\n\n"
+                f"💡 RECOMMANDATION\n{recommendation}"
+            )
+        except Exception as e:
+            return f"RAPPORT HEBDOMADAIRE\nErreur lors de la génération: {e}"
+
     title = {
         "daily": "RAPPORT JOURNALIER",
         "weekly": "RAPPORT HEBDOMADAIRE",

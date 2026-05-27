@@ -28,7 +28,7 @@ import MetaTrader5 as mt5
 from agents.base_agent import BaseAgent
 from config import (
     SYMBOL, MAGIC_NUMBER, COOLDOWN_SECONDS,
-    PARTIAL_CLOSE_PERCENT, RISK_PCT_PER_TRADE
+    PARTIAL_CLOSE_PERCENT, RISK_PCT_PER_TRADE, MT5_SYMBOL
 )
 from execution.risk_calculator import RiskCalculator
 from utils.spread_monitor import SpreadMonitor
@@ -190,7 +190,7 @@ class TradeManager(BaseAgent):
             self.logger.error(f"❌ Échec ordre {action} — Code: {retcode} | {comment} | Erreur: {error}")
             await send_telegram_notification(
                 self.blackboard,
-                f"❌ *ORDRE REJETÉ* — {action} XAUUSD\nCode: `{retcode}`\nErreur: `{error}`"
+                f"❌ *ORDRE REJETÉ* — {action} {MT5_SYMBOL}\nCode: `{retcode}`\nErreur: `{error}`"
             )
             await self.blackboard.write("trade_signals", {})
             return False
@@ -240,7 +240,7 @@ class TradeManager(BaseAgent):
         rr_ratio = abs(broker_tp - result.price) / abs(result.price - sl) if abs(result.price - sl) > 0 else 0
         await send_telegram_notification(
             self.blackboard,
-            f"🎯 *TRADE OUVERT* — {action} XAUUSD\n"
+            f"🎯 *TRADE OUVERT* — {action} {MT5_SYMBOL}\n"
             f"🔹 Ticket: `{result.order}`\n"
             f"🔹 Entrée: `{result.price:.2f}`\n"
             f"🔹 SL: `{sl:.2f}` | TP1: `{tp1:.2f}` | TP2: `{broker_tp:.2f}`\n"
@@ -337,7 +337,7 @@ class TradeManager(BaseAgent):
                             )
                             await send_telegram_notification(
                                 self.blackboard,
-                                f"📊 *CLÔTURE PARTIELLE TP1* — {trade['type']} XAUUSD\n"
+                                f"📊 *CLÔTURE PARTIELLE TP1* — {trade['type']} {MT5_SYMBOL}\n"
                                 f"🔹 Ticket: `{ticket}` | {PARTIAL_CLOSE_PERCENT}% = `{half_volume}` lots\n"
                                 f"🔹 TP1: `{tp1:.2f}` | Prix: `{close_price:.2f}`\n"
                                 f"🔹 PnL partiel: `{floating_pnl/2:.2f} USD`\n"
@@ -462,7 +462,7 @@ class TradeManager(BaseAgent):
         emoji = "✅" if pnl >= 0 else "❌"
         await send_telegram_notification(
             self.blackboard,
-            f"{emoji} *TRADE CLÔTURÉ* — {direction} XAUUSD\n"
+            f"{emoji} *TRADE CLÔTURÉ* — {direction} {MT5_SYMBOL}\n"
             f"🔹 Ticket: `{ticket}` | PnL: `{pnl:+.2f} USD`\n"
             f"🔹 Entrée: `{entry:.2f}` | SL: `{sl:.2f}` | TP: `{tp:.2f}`"
         )

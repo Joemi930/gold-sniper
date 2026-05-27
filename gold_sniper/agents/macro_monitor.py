@@ -5,6 +5,7 @@ from typing import Sequence
 
 from core.blackboard import BLACKBOARD, BlackBoard
 from utils.logger import get_logger
+import config
 
 try:
     import yfinance as yf
@@ -19,7 +20,7 @@ except ImportError:  # pragma: no cover - yfinance SSL fallback optional
 
 DXY_SYMBOL = "DX-Y.NYB"
 US10Y_SYMBOL = "^TNX"
-GOLD_SYMBOL = "XAUUSD=X"
+GOLD_SYMBOL = f"{config.MT5_SYMBOL}=X"
 GOLD_FALLBACK_SYMBOL = "GC=F"
 MACRO_UPDATE_INTERVAL_SECONDS = 300
 MACRO_CORRELATION_PERIOD = "5d"
@@ -204,7 +205,7 @@ def analyze_macro_context(
     us10y_prices: Sequence[float],
     gold_prices: Sequence[float] | None = None,
 ) -> dict:
-    """Analyse la correlation Pearson DXY/XAUUSD et retourne le contexte macro."""
+    """Analyse la correlation Pearson DXY/{config.MT5_SYMBOL} et retourne le contexte macro."""
     dxy_bias = classify_trend(dxy_prices)
     us10y_trend = classify_trend(us10y_prices)
     gold_trend = classify_trend(gold_prices or [])

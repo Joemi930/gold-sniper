@@ -1,6 +1,6 @@
 import asyncio
 import ssl
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 import aiohttp
@@ -14,6 +14,7 @@ from utils.telegram_notifier import TelegramNotifier, _notifier_from_config
 TELEGRAM_UPDATES_API = "https://api.telegram.org/bot{token}/getUpdates"
 
 COMMANDS = {
+    "/start": "Demarrage et presentation du bot",
     "/status": "Etat complet du systeme",
     "/pause": "Suspendre les nouveaux trades",
     "/resume": "Reprendre les nouveaux trades",
@@ -25,7 +26,8 @@ COMMANDS = {
     "/regime": "Regime marche et strategie active",
     "/backtest": "Backtest rapide",
     "/calibrate": "Calibration des poids",
-    "/report": "Rapport journalier",
+    "/news": "Prochaines news eco (24h)",
+    "/logs": "Telecharger les logs de la session",
     "/help": "Liste des commandes",
 }
 
@@ -46,6 +48,32 @@ class TelegramCommander:
         self.on_restart = on_restart
         self.logger = get_logger()
         self._last_update_id: int | None = None
+        # Fence anti-/kill persistant : update_id connu au boot, ignoré à la lecture
+        self._boot_update_id: int = -1
+
+    async def _fetch_boot_offset(self, session: aiohttp.ClientSession, url: str) -> None:
+        """
+        Récupère le dernier update_id connu AVANT de commencer à écouter.
+        Tous les messages dont update_id <= _boot_update_id seront ignorés,
+        ce qui empêche la ré-exécution de commandes obsolètes (/kill, etc.)
+        envoyées pendant que le bot était éteint.
+        """
+        try:
+            async with session.get(url, params={"limit": 100}) as resp:
+                payload = await resp.json(content_type=None)
+            updates = payload.get("result", [])
+            if updates:
+                self._boot_update_id = max(int(u.get("update_id", 0)) for u in updates)
+                # Positionner l'offset pour que Telegram ne renvoie plus ces anciens messages
+                self._last_update_id = self._boot_update_id
+                self.logger.info(
+                    f"Telegram commander — fence boot activée : "
+                    f"update_id <= {self._boot_update_id} ignorés."
+                )
+            else:
+                self.logger.info("Telegram commander — aucun message en attente au boot.")
+        except Exception as exc:
+            self.logger.warning(f"Telegram commander — impossible de lire la fence boot : {exc}")
 
     async def run_forever(self) -> None:
         notifications = self.blackboard.read_sync("notifications") if self.blackboard else {}
@@ -59,6 +87,9 @@ class TelegramCommander:
         url = TELEGRAM_UPDATES_API.format(token=token)
         timeout = aiohttp.ClientTimeout(total=35)
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=_build_ssl_context()), timeout=timeout) as session:
+            # ── ÉTAPE 1 : Flush les anciens messages avant d'écouter ───────────
+            await self._fetch_boot_offset(session, url)
+
             self.logger.info("Telegram commander demarre.")
             while not self.blackboard.kill_event.is_set():
                 try:
@@ -68,7 +99,11 @@ class TelegramCommander:
                     async with session.get(url, params=params) as response:
                         payload = await response.json(content_type=None)
                     for update in payload.get("result", []):
-                        self._last_update_id = int(update.get("update_id", 0))
+                        uid = int(update.get("update_id", 0))
+                        self._last_update_id = uid
+                        # Fence : ignorer tout message antérieur au boot
+                        if uid <= self._boot_update_id:
+                            continue
                         await self.handle_update(update, authorized_chat_id=chat_id)
                 except asyncio.CancelledError:
                     raise
@@ -91,6 +126,7 @@ class TelegramCommander:
         command = parts[0].split("@", maxsplit=1)[0].lower()
         args = parts[1:]
         handlers = {
+            "/start": self._cmd_start,
             "/status": self._cmd_status,
             "/pause": self._cmd_pause,
             "/resume": self._cmd_resume,
@@ -100,9 +136,10 @@ class TelegramCommander:
             "/trades": self._cmd_trades,
             "/agents": self._cmd_agents,
             "/regime": self._cmd_regime,
-            "/backtest": self._cmd_backtest,
             "/calibrate": self._cmd_calibrate,
             "/report": self._cmd_report,
+            "/news": self._cmd_news,
+            "/logs": self._cmd_logs,
             "/help": self._cmd_help,
         }
 
@@ -112,6 +149,27 @@ class TelegramCommander:
                 return await self._send(f"Commande inconnue: {command}\nTaper /help")
             return None
         return await handler(args)
+
+    async def _cmd_start(self, args: list[str]) -> str:
+        """
+        Commande /start — repond independamment de l'etat du moteur.
+        Sert a verifier que le bot est actif et a decouvrir les commandes.
+        """
+        text = (
+            "GOLD SNIPER V3 EN LIGNE\n"
+            "Bot de trading algorithmique sur XAUUSD (JustMarkets-Demo3).\n"
+            "\n"
+            "Commandes disponibles :\n"
+            "/status  — Etat du systeme\n"
+            "/trades  — Positions ouvertes\n"
+            "/agents  — Scores agents\n"
+            "/news    — Actualites economiques 24h\n"
+            "/report  — Rapport journalier\n"
+            "/pause   — Suspendre les trades\n"
+            "/resume  — Reprendre les trades\n"
+            "/help    — Toutes les commandes"
+        )
+        return await self._send(text)
 
     async def _cmd_status(self, args: list[str]) -> str:
         data = self.blackboard.get_all()
@@ -157,6 +215,7 @@ class TelegramCommander:
                 "pause_reason": None,
                 "memory_pause": False,
                 "memory_resumed_at": datetime.now(timezone.utc).isoformat(),
+                "risk_manager_pause_reset": True,
             })
         return await self._send("REPRISE ACTIVEE\nNouveaux trades autorises.")
 
@@ -237,15 +296,33 @@ class TelegramCommander:
 
     async def _cmd_backtest(self, args: list[str]) -> str:
         try:
+            await self._send("⏳ Lancement du backtest rapide (synthétique 180 bougies)...")
+            import sys
+            import subprocess
             from pathlib import Path
-            path = Path("logs/backtests/backtest_results.jsonl")
-            if path.exists():
-                last = path.read_text(encoding="utf-8").strip().splitlines()[-1]
-                text = f"BACKTEST\nDernier resultat:\n{last[:1200]}"
+            engine_path = Path("backtesting/backtest_engine.py")
+            if engine_path.exists():
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable, str(engine_path), "--synthetic", "--limit", "180",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45.0)
+                out_str = stdout.decode("utf-8", errors="replace")
+                
+                path = Path("logs/backtests/backtest_results.jsonl")
+                res_text = ""
+                if path.exists() and path.stat().st_size > 0:
+                    last = path.read_text(encoding="utf-8").strip().splitlines()[-1]
+                    res_text = f"\n\nJSON:\n{last[:300]}"
+                
+                text = f"✅ BACKTEST TERMINÉ\n\n{out_str[-800:]}{res_text}"
             else:
-                text = "BACKTEST\nAucun resultat existant. Lance backtesting/backtest_engine.py pour generer un run."
+                text = "Fichier backtest_engine.py introuvable."
+        except asyncio.TimeoutError:
+            text = "⏳ BACKTEST TIMEOUT (Annulé car > 45s)"
         except Exception as exc:
-            text = f"BACKTEST ECHEC: {exc}"
+            text = f"❌ BACKTEST ECHEC: {exc}"
         return await self._send(text)
 
     async def _cmd_calibrate(self, args: list[str]) -> str:
@@ -270,6 +347,72 @@ class TelegramCommander:
             f"PnL total: {pnl:+.2f}"
         )
         return await self._send(text)
+
+    async def _cmd_news(self, args: list[str]) -> str:
+        try:
+            from agents.agent_6_sentinelle import fetch_news_calendar, is_gold_relevant_event, _ensure_utc
+            events = await fetch_news_calendar()
+            now = _ensure_utc(datetime.now(timezone.utc))
+            horizon = now + timedelta(hours=24)
+            upcoming = [
+                e for e in events 
+                if e["impact"] in {"HIGH", "MEDIUM"} 
+                and now <= _ensure_utc(e["time"]) <= horizon
+                and is_gold_relevant_event(e)
+            ]
+            if not upcoming:
+                return await self._send("📅 Aucune annonce HIGH/MEDIUM pour l'or dans les prochaines 24h.")
+            
+            lines = ["📰 ANNONCES ECONOMIQUES — 24H", "──────────────────────"]
+            high_count = 0
+            for e in upcoming:
+                time_str = _ensure_utc(e["time"]).strftime("%Hh%M UTC")
+                impact_emoji = "🔴" if e["impact"] == "HIGH" else "🟠"
+                if e["impact"] == "HIGH":
+                    high_count += 1
+                
+                impact_or = "HAUSSIER si < prevision" if e["currency"] == "USD" else "INCONNU"
+                prev = str(e.get("previous", "N/A"))
+                fcst = str(e.get("forecast", "N/A"))
+                
+                lines.append(f"{impact_emoji} {e['name']} ({e['currency']}) — {time_str}")
+                lines.append(f"   Impact or : {impact_or}")
+                lines.append(f"   Prevision : {fcst} | Precedent : {prev}")
+                lines.append("──────────────────────")
+                
+            if high_count > 0:
+                lines.append(f"⚠️ {high_count} evenements HIGH IMPACT aujourd'hui")
+                    
+            return await self._send("\n".join(lines))
+        except Exception as exc:
+            return await self._send(f"❌ Erreur lors de la récupération des news: {exc}")
+
+    async def _cmd_logs(self, args: list[str]) -> str:
+        """Envoie le log de decision ou le fichier log actuel."""
+        try:
+            from pathlib import Path
+            import os
+            # Chercher le fichier log d'aujourd'hui
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            possible_logs = [
+                Path(f"logs/gold_sniper_{today_str}.jsonl"),
+                Path("logs/decision_log.jsonl")
+            ]
+            
+            sent = False
+            for path in possible_logs:
+                if path.exists() and path.stat().st_size > 0:
+                    if hasattr(self.notifier, "send_document"):
+                        success = await self.notifier.send_document(path, caption=f"Logs: {path.name}")
+                        if success:
+                            sent = True
+                            
+            if sent:
+                return "Logs envoyés avec succès."
+            else:
+                return await self._send("Aucun fichier de log trouvé ou erreur d'envoi.")
+        except Exception as exc:
+            return await self._send(f"❌ Erreur lors de l'envoi des logs: {exc}")
 
     async def _cmd_help(self, args: list[str]) -> str:
         lines = ["COMMANDES DISPONIBLES"]

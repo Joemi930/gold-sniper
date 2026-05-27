@@ -1,8 +1,6 @@
 param(
     [string]$TerminalPath = $env:MT5_TERMINAL_PATH,
-    [ValidateSet("Minimized", "Hidden")]
-    [string]$WindowMode = $(if ($env:MT5_HIDE_WINDOW -in @("1", "true", "True", "TRUE")) { "Hidden" } else { "Minimized" }),
-    [int]$WaitSeconds = 60
+    [int]$WaitSeconds = 15
 )
 
 if ([string]::IsNullOrWhiteSpace($TerminalPath)) {
@@ -28,7 +26,6 @@ public class Mt5WindowTools {
 }
 "@ -ErrorAction SilentlyContinue
 
-$showWindowCode = if ($WindowMode -eq "Hidden") { 0 } else { 6 }
 $deadline = (Get-Date).AddSeconds([Math]::Max(5, $WaitSeconds))
 $handled = $false
 
@@ -36,7 +33,7 @@ while ((Get-Date) -lt $deadline -and -not $handled) {
     Get-Process terminal,terminal64 -ErrorAction SilentlyContinue |
         Where-Object { $_.MainWindowHandle -ne 0 } |
         ForEach-Object {
-            [Mt5WindowTools]::ShowWindow($_.MainWindowHandle, $showWindowCode) | Out-Null
+            [Mt5WindowTools]::ShowWindow($_.MainWindowHandle, 0) | Out-Null
             $script:handled = $true
         }
     if (-not $handled) {

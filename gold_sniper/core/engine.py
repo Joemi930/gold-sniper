@@ -118,8 +118,23 @@ async def account_info_fetcher(blackboard: BlackBoard) -> None:
 
 
 async def adaptive_weights_loop(blackboard: BlackBoard) -> None:
-    """Observe les trades clotures et applique les poids adaptatifs a l'orchestrateur."""
+    """Observe les trades clotures et applique les poids adaptatifs a l'orchestrateur.
+
+    La boucle s'arrête immédiatement si config.ADAPTIVE_WEIGHTS_ENABLED est False.
+    Pendant la semaine démo, seul weight_calibrator.py (batch/50 trades) est utilisé,
+    déclenché manuellement via /calibrate.
+    """
+    import config as _cfg
     logger = get_logger()
+
+    if not _cfg.ADAPTIVE_WEIGHTS_ENABLED:
+        logger.info(
+            "Adaptive weights loop DÉSACTIVÉE (ADAPTIVE_WEIGHTS_ENABLED=False). "
+            "Utiliser /calibrate après 50 trades pour recalibrer les poids."
+        )
+        await blackboard.update_dict("orchestrator", {"adaptive_weights_enabled": False})
+        return  # Boucle inactive — arbitre unique = weight_calibrator
+
     engine = AdaptiveWeightEngine()
     processed_tickets: set[int] = set()
     logger.info("Adaptive weights loop demarree")
@@ -159,6 +174,7 @@ async def adaptive_weights_loop(blackboard: BlackBoard) -> None:
             logger.warning(f"Adaptive weights loop erreur: {exc}")
 
         await asyncio.sleep(0.5)
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────

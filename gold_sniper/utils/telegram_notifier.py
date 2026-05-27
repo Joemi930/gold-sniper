@@ -2,12 +2,16 @@ import asyncio
 import ssl
 from datetime import datetime
 from html import escape
+import os
+from pathlib import Path
 
 import aiohttp
 
 from utils.logger import get_logger
+import config
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
+TELEGRAM_DOC_API = "https://api.telegram.org/bot{token}/sendDocument"
 
 logger = get_logger()
 
@@ -95,6 +99,46 @@ class TelegramNotifier:
             body = await resp.text()
             logger.warning(f"Telegram réponse {resp.status}: {body[:160]}")
             return False
+
+    async def send_document(self, file_path: str | Path, caption: str = "") -> bool:
+        """Envoie un fichier document (ex: log) via Telegram."""
+        if not self.token or not self.chat_id:
+            return False
+
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            logger.warning(f"Telegram send_document: fichier introuvable {path}")
+            return False
+
+        owns_session = False
+        if not self._session or self._session.closed:
+            await self.start()
+            owns_session = True
+
+        url = TELEGRAM_DOC_API.format(token=self.token)
+        try:
+            assert self._session is not None
+            data = aiohttp.FormData()
+            data.add_field("chat_id", self.chat_id)
+            if caption:
+                data.add_field("caption", caption)
+            data.add_field("document", open(path, "rb"), filename=path.name)
+            
+            async with self._session.post(url, data=data, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200:
+                    logger.debug(f"Document {path.name} envoyé avec succès.")
+                    return True
+                body = await resp.text()
+                logger.warning(f"Telegram send_document erreur {resp.status}: {body[:160]}")
+                return False
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(f"Telegram send_document échoué (non-bloquant): {exc}")
+            return False
+        finally:
+            if owns_session:
+                await self.stop()
 
     def _build_ssl_context(self, verify_ssl: bool) -> ssl.SSLContext | bool:
         """Construit un contexte TLS fiable, avec certifi si disponible."""
@@ -231,7 +275,7 @@ class TelegramNotifier:
             f"Evenement : <b>{escape(event_name)}</b>\n"
             f"Impact    : <b>{escape(impact)}</b>\n"
             f"Dans      : {minutes_to} minutes\n"
-            f"Or        : {escape(gold_impact or 'volatilite XAUUSD attendue')}\n"
+            f"Or        : {{escape(gold_impact or f'volatilite {{config.MT5_SYMBOL}} attendue')}}\n"
             f"-> Trading bloque"
         )
         await self.send(message)
@@ -250,7 +294,7 @@ class TelegramNotifier:
             f"Evenement : <b>{escape(event_name)}</b>\n"
             f"Reel      : <b>{escape(actual)}</b>\n"
             f"Prevision : <b>{escape(forecast)}</b>\n"
-            f"Or        : {escape(gold_impact or 'surveiller la reaction XAUUSD')}"
+            f"Or        : {{escape(gold_impact or f'surveiller la reaction {{config.MT5_SYMBOL}}')}}"
         )
         await self.send(message)
 

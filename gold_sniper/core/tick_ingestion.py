@@ -2,7 +2,7 @@
 # GOLD SNIPER v1.0 — TICK INGESTION
 # ═══════════════════════════════════════════════════════════════════════════════
 #
-# Coroutine responsable d'aspirer les prix XAUUSD en temps réel.
+# Coroutine responsable d'aspirer les prix {MT5_SYMBOL} en temps réel.
 # Elle tourne en boucle infinie, interroge le MT5 Bridge, et met à jour
 # le Tableau Noir avec le dernier tick connu.
 #
@@ -15,7 +15,7 @@ import asyncio
 import time
 from datetime import datetime, timezone
 
-from config import SYMBOL, MT5_MAX_CALLS_PER_SECOND
+from config import SYMBOL, MT5_MAX_CALLS_PER_SECOND, MT5_SYMBOL
 from core.blackboard import BlackBoard
 from core.mt5_bridge import bridge
 from utils.logger import get_logger
@@ -23,7 +23,7 @@ from utils.logger import get_logger
 
 async def tick_ingestion_loop(blackboard: BlackBoard) -> None:
     """
-    Aspire les prix XAUUSD via mt5.symbol_info_tick() en continu.
+    Aspire les prix {MT5_SYMBOL} via mt5.symbol_info_tick() en continu.
     Met à jour le Tableau Noir.
     """
     logger = get_logger()

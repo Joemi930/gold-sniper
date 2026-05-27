@@ -69,6 +69,18 @@ CREATE TABLE IF NOT EXISTS strategy_performance (
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_error_patterns_pattern_type
 ON error_patterns(pattern_type);
+
+CREATE TABLE IF NOT EXISTS news_reactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    event_name TEXT NOT NULL,
+    impact TEXT,
+    actual_value TEXT,
+    forecast_value TEXT,
+    price_before REAL,
+    price_after REAL,
+    pips_moved REAL
+);
 """
 
 
@@ -111,6 +123,30 @@ class MemoryDB:
                 row = conn.execute("SELECT * FROM trade_patterns ORDER BY id DESC LIMIT 1").fetchone()
             return dict(row) if row else None
 
+        return await asyncio.to_thread(work)
+
+    async def record_news_reaction(self, event_name: str, impact: str, actual: str, forecast: str, price_before: float, price_after: float, pips_moved: float) -> None:
+        def work() -> None:
+            self._init_sync()
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO news_reactions (timestamp, event_name, impact, actual_value, forecast_value, price_before, price_after, pips_moved)
+                    VALUES (?,?,?,?,?,?,?,?)
+                    """,
+                    (_utcnow(), event_name, impact, actual, forecast, price_before, price_after, pips_moved)
+                )
+                conn.commit()
+        await asyncio.to_thread(work)
+
+    async def get_news_historical_bias(self, event_name: str) -> float | None:
+        def work() -> float | None:
+            self._init_sync()
+            with self._connect() as conn:
+                row = conn.execute("SELECT AVG(pips_moved), COUNT(*) FROM news_reactions WHERE event_name=?", (event_name,)).fetchone()
+                if row and row[1] and int(row[1]) >= 30:
+                    return float(row[0])
+            return None
         return await asyncio.to_thread(work)
 
     def _connect(self) -> sqlite3.Connection:

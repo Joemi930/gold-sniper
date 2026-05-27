@@ -6,12 +6,12 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$BatFile = Join-Path $ProjectRoot "GoldSniper.bat"
+$VbsFile = Join-Path $ProjectRoot "LancerGoldSniper.vbs"
 $LogDir = Join-Path $ProjectRoot "logs"
 $LogPath = Join-Path $LogDir "autostart.log"
 
-if (-not (Test-Path -LiteralPath $BatFile)) {
-    throw "GoldSniper.bat introuvable: $BatFile"
+if (-not (Test-Path -LiteralPath $VbsFile)) {
+    throw "LancerGoldSniper.vbs introuvable: $VbsFile"
 }
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
@@ -22,8 +22,8 @@ $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $Trigger.Delay = "PT${DelaySeconds}S"
 
 $Action = New-ScheduledTaskAction `
-    -Execute "cmd.exe" `
-    -Argument "/c `"`"$BatFile`" >> `"$LogPath`" 2>&1`"" `
+    -Execute "wscript.exe" `
+    -Argument "`"$VbsFile`"" `
     -WorkingDirectory $ProjectRoot
 
 $Settings = New-ScheduledTaskSettingsSet `
@@ -73,5 +73,5 @@ $Info = Get-ScheduledTaskInfo -TaskName $TaskName
 Write-Host "Tache planifiee creee: $($Task.TaskName)"
 Write-Host "Etat: $($Task.State)"
 Write-Host "Prochaine execution: $($Info.NextRunTime)"
-Write-Host "Action: cmd.exe /c `"$BatFile`""
+Write-Host "Action: wscript.exe `"$VbsFile`""
 Write-Host "Delai ouverture session: ${DelaySeconds}s"

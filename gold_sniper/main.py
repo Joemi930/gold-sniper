@@ -27,7 +27,6 @@ from core.recovery_manager import load_daily_stats_from_recovery, load_recovery_
 from data.historical_loader import TIMEFRAMES, dataframe_to_candles, get_warmup_data, preload_historical_data
 from utils.emergency_shutdown import emergency_shutdown
 from utils.logger import get_logger, setup_logger
-from utils.system_tray import run_system_tray
 from utils.telegram_commander import telegram_command_loop
 from utils.telegram_notifier import send_eod_report, send_telegram_notification
 
@@ -35,6 +34,15 @@ from utils.telegram_notifier import send_eod_report, send_telegram_notification
 async def cold_start(blackboard: BlackBoard) -> bool:
     logger = get_logger()
     boot_time = datetime.now(timezone.utc)
+    
+    # Notification IMMEDIATE au lancement
+    import socket
+    await send_telegram_notification(
+        blackboard,
+        f"⏳ **Démarrage Gold Sniper V3** initié sur {socket.gethostname()}...\n"
+        "Chargement MT5 et historique en cours."
+    )
+
     recovery_meta = load_recovery_metadata()
     logger.info("=" * 50)
     logger.info("COLD START - sequence de bootstrap")
@@ -134,7 +142,7 @@ async def cold_start(blackboard: BlackBoard) -> bool:
 
     await send_telegram_notification(
         blackboard,
-        "Gold Sniper V2 demarre\n"
+        "✅ **Gold Sniper V3 100% OPÉRATIONNEL**\n"
         f"Mode: {'LIVE' if LIVE_MODE else 'PAPER'}\n"
         f"Symbole: {SYMBOL} | Seuil: {EXECUTION_THRESHOLD:.0f}/100",
     )
@@ -219,14 +227,11 @@ if __name__ == "__main__":
     engine_thread.start()
 
     try:
-        run_system_tray(stop_event=stop_event, on_emergency_stop=stop_event.set)
+        while engine_thread.is_alive():
+            stop_event.wait(timeout=1.0)
     except KeyboardInterrupt:
         logger.warning("Ctrl+C detecte - arret force")
         stop_event.set()
-    except Exception as exc:
-        logger.critical(f"System tray indisponible ({exc}). Moteur maintenu en arriere-plan.")
-        while engine_thread.is_alive() and not stop_event.is_set():
-            time.sleep(1.0)
     finally:
         stop_event.set()
         engine_thread.join(timeout=2.0)

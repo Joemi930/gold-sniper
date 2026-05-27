@@ -52,6 +52,14 @@ class RiskManager(BaseAgent):
         self._reset_daily_window_if_needed(now, current_equity)
         self._sync_consecutive_losses_from_daily_stats()
 
+        control = self.blackboard.get_all().get("control", {})
+        if control.get("risk_manager_pause_reset"):
+            self.consecutive_losses = 0
+            self.pause_until = None
+            async with self.blackboard._lock:
+                if "control" in self.blackboard._data:
+                    self.blackboard._data["control"]["risk_manager_pause_reset"] = False
+
         daily_loss_pct = self._daily_loss_pct(current_equity)
         veto = False
         reason = "CLEAR"

@@ -1,438 +1,725 @@
-# Gold Sniper V2 - Architecture
+# GOLD SNIPER V3 — ARCHITECTURE COMPLÈTE
 
-Gold Sniper V2 est un moteur de trading XAUUSD base sur Python, asyncio,
-MetaTrader 5 et une architecture multi-agents. Le systeme est concu pour
-avancer par filtres successifs: collecte de donnees, analyse par agents,
-veto risque/news, scoring orchestre, puis execution controlee.
+> Document de référence exhaustif. Toute modification du système doit être répercutée ici.
+> Dernière mise à jour : 2026-05-27
 
-## FONCTIONNALITES
+---
 
-Inventaire audite le 2026-05-25. Statuts:
+## 1. Vue d'ensemble du système
 
-- ACTIF: code branche dans le demarrage ou valide par test local.
-- PARTIEL: code present mais dependant d'un token, d'un compte, d'une action OAuth,
-  ou non applique de bout en bout.
-- INACTIF: code present mais non branche, ancien chemin remplace, ou artefact mort.
+| Paramètre | Valeur |
+|---|---|
+| **Objectif** | Robot de trading algorithmique autonome sur XAUUSD |
+| **Broker** | JustMarkets — serveur Demo3 |
+| **Symbole** | XAUUSD (or spot, CFD) |
+| **Mode actif** | Paper Trading (LIVE_MODE=0) — passer à 1 après validation démo |
+| **Compte** | Login MT5 = 1200037833 (alias `MT5_ACCOUNT`) |
+| **Magic Number** | 240115 (filtre nos ordres dans MT5) |
+| **Langage** | Python 3.11+ / asyncio |
+| **Hébergement** | PC Windows local, démarrage auto via Task Scheduler + Watchdog externe |
+| **Accès distant** | Dashboard Web via Cloudflare Tunnel (URL publique aléatoire) + Telegram |
 
-| Nom | Fichier | Description (1 phrase) | Statut |
-|---|---|---|---|
-| Connexion MT5 | `core/mt5_bridge.py` | Initialise MT5, lit ticks, symboles, positions et donnees historiques. | ACTIF |
-| Tick ingestion | `core/tick_ingestion.py` | Publie les ticks XAUUSD dans le Blackboard avec cadence limitee. | ACTIF |
-| Candle builder | `core/candle_builder.py` | Construit et met a jour les bougies multi-timeframes depuis les ticks. | ACTIF |
-| Blackboard central | `core/blackboard.py` | Stocke l'etat partage, les agents, les signaux, le controle et les evenements. | ACTIF |
-| Event bus agents | `core/blackboard.py` | Reveil event-driven de l'orchestrateur via `wait_for_agent_update`. | ACTIF |
-| Orchestrateur V3 | `core/orchestrator.py` | Agrege les agents, applique veto, strategie active, scores et decision. | ACTIF |
-| Dictionnaire de strategies | `core/strategy_dictionary.py` | Selectionne les strategies actives par session, regime, news et diamond setup. | ACTIF |
-| Agent 1 Meteo | `agents/agent_1_meteo.py` | Analyse le biais structurel HTF et sert de hard filter directionnel. | ACTIF |
-| Agent 2 Cartographe | `agents/agent_2_cartographe.py` | Detecte et score OB/FVG/POI avec bougies institutionnelles. | ACTIF |
-| Bougies institutionnelles | `agents/agent_2_cartographe.py` | Detecte engulfing, rejection candle et institutional candle pour booster l'OB. | ACTIF |
-| Agent 3 Liquidite | `agents/agent_3_liquidite.py` | Detecte sweep, break, Asian Range et signaux de liquidite. | ACTIF |
-| Agent 4 Fibonacci | `agents/agent_4_fibonacci.py` | Calcule premium/discount, OTE et sweet spot 70.5%. | ACTIF |
-| Agent 5 Microscope | `agents/agent_5_microscope.py` | Valide la sequence AMD avec sweep puis CHoCH. | ACTIF |
-| Agent 6 Sentinelle | `agents/agent_6_sentinelle.py` | Gere news high impact, blackout, alertes et fallback Finnhub -> FMP -> ForexFactory. | ACTIF |
-| Agent 7 Chronos | `agents/agent_7_chronos.py` | Determine sessions, kill zones, DST dynamique et Friday mode. | ACTIF |
-| Regime detector | `agents/regime_detector.py` | Publie le regime de marche courant dans le Blackboard. | ACTIF |
-| Macro monitor Pearson | `agents/macro_monitor.py` | Calcule correlation DXY/Gold et force macro via yfinance. | ACTIF |
-| Risk Manager | `agents/risk_manager.py` | Applique drawdown, pertes consecutives, veto et diagnostic. | ACTIF |
-| Diagnostic Risk Telegram | `agents/risk_manager.py`, `core/engine.py` | Envoie un rapport apres 3 pertes consecutives si Telegram est configure. | PARTIEL |
-| Trade Manager | `execution/trade_manager.py` | Execute les signaux, pose SL/TP broker, gere TP1, BE et trailing. | ACTIF |
-| Order_send atomique SL/TP | `execution/trade_manager.py` | Envoie entree, SL et TP broker dans la meme requete MT5. | ACTIF |
-| Fermeture partielle TP1 | `execution/trade_manager.py` | Ferme 50% au vrai TP1 stocke a l'ouverture, puis breakeven et trailing. | ACTIF |
-| Emergency shutdown | `utils/emergency_shutdown.py` | Ferme ou bloque les positions en cas de commande kill ou risque critique. | ACTIF |
-| Recovery positions MT5 | `core/recovery_manager.py` | Reimporte les positions MT5 ouvertes dans le Blackboard au redemarrage. | ACTIF |
-| Gap detection cold start | `core/recovery_manager.py` | Ferme en urgence une position recuperee si le prix courant a depasse le SL. | ACTIF |
-| Decision log | `utils/decision_logger.py` | Ecrit decisions et opportunites manquees en JSONL avec rotation. | ACTIF |
-| Missed opportunities | `utils/decision_logger.py`, `core/diamond_detector.py` | Journalise les signaux non executes et setups diamond. | ACTIF |
-| Memoire SQLite | `data/memory_db.py` | Cree `data/memory.db` et tables patterns/performance/erreurs/strategies. | ACTIF |
-| Pause apres 5 pertes cumulees | `data/memory_db.py` | Suspend les nouveaux trades, analyse les patterns et notifie Telegram. | PARTIEL |
-| Performance agents | `data/memory_db.py` | Enregistre la precision individuelle apres chaque trade cloture. | ACTIF |
-| Adaptive weights | `execution/adaptive_weights.py`, `core/engine.py`, `core/orchestrator.py` | Recalcule les poids apres trade cloture, les publie et l'orchestrateur les applique en live. | ACTIF |
-| Rapports automatiques | `utils/report_scheduler.py` | Planifie rapports journalier, hebdomadaire et mensuel. | ACTIF |
-| Google Drive sync | `utils/drive_sync.py` | Synchronise DB, logs, backtests et rapports vers Drive a 23h UTC+1. | PARTIEL |
-| Telegram notifier | `utils/telegram_notifier.py` | Envoie boot, signaux, trades, news, risk alerts et rapports. | PARTIEL |
-| Telegram telecommande | `utils/telegram_commander.py` | Gere `/status`, `/pause`, `/resume`, `/restart`, `/risk`, etc. | PARTIEL |
-| Dashboard aiohttp | `web/dashboard_server.py` | Expose `/api/state`, `/api/trades`, `/api/agents` et `/ws`. | ACTIF |
-| Dashboard HTML | `web/dashboard.html` | Interface sombre avec agents animes, score, positions et logs. | ACTIF |
-| Cloudflare tunnel | `web/dashboard_server.py` | Lance cloudflared et capture une URL `trycloudflare.com`. | PARTIEL |
-| Backtesting | `backtesting/backtest_engine.py` | Rejoue XAUUSD M1, alimente agents/orchestrateur et logge les resultats. | ACTIF |
-| Calibration poids | `utils/weight_calibrator.py` | Calcule des poids depuis le decision log si assez de trades clotures. | PARTIEL |
-| Historique 6 mois | `data/historical_loader.py` | Precharge M1/M5/M15/H1/H4 en parquet avec cache incremental. | ACTIF |
-| Warmup agents | `main.py`, `data/historical_loader.py` | Injecte les donnees historiques de demarrage dans le Blackboard. | ACTIF |
-| Diamond setup | `core/diamond_detector.py` | Detecte le setup 5 etoiles et alerte sans trader automatiquement. | ACTIF |
-| Spread monitor | `utils/spread_monitor.py` | Bloque les entrees sur spread anormal et alerte apres 5 minutes. | ACTIF |
-| MT5 watchdog interne | `utils/mt5_watchdog.py` | Surveille la connexion MT5 et tente la reconnexion. | ACTIF |
-| Watchdog externe | `watchdog.py` | Surveille le heartbeat du moteur et redemarre `main.py` si bloque. | ACTIF |
-| Heartbeat moteur | `main.py` | Ecrit un fichier heartbeat pour le watchdog externe. | ACTIF |
-| Autostart Windows | `scripts/setup_autostart.ps1` | Cree une tache planifiee Windows pour lancer `GoldSniper.bat`. | PARTIEL |
-| MT5 minimise/cache | `GoldSniper.bat`, `scripts/start_mt5_minimized.ps1` | Lance MT5 minimise ou cache via PowerShell et Win32 ShowWindow. | ACTIF |
-| Calendrier ForexFactory | `scrapers/economic_calendar.py` | Fallback XML ForexFactory avec cache local. | ACTIF |
-| Calendrier Finnhub | `agents/agent_6_sentinelle.py` | Source prioritaire si `FINNHUB_TOKEN` est configure. | PARTIEL |
-| FMP token | `config.py` | Token FMP configure avec limite 200 req/jour pour macro/fondamental uniquement. | ACTIF |
-| FMP integration | `agents/agent_6_sentinelle.py` | Source intermediaire dans la chaine Finnhub -> FMP -> ForexFactory. | ACTIF |
-| Rate limiter MT5 global | `config.py`, `core/blackboard.py`, `core/tick_ingestion.py` | Limite appliquee au tick ingestion, pas a tous les appels MT5. | PARTIEL |
-| DST sessions | `config.py`, `agents/agent_7_chronos.py` | Sessions calculees depuis `TZ_LOCAL=Europe/Paris` avec bascule ete/hiver automatique. | ACTIF |
-| Friday mode notifications | `agents/agent_7_chronos.py` | Envoie une notification Telegram lors du passage risque reduit puis trading coupe. | ACTIF |
-| UI CustomTkinter | `ui/` | Ancienne UI locale encore presente mais non lancee par `main.py`. | INACTIF |
-| Ancien `core/agent_result.py` | `core/__pycache__/agent_result*.pyc` | Source supprimee, reste seulement un artefact pyc. | INACTIF |
+### Philosophie de conception
 
-Fonctionnalites partielles ou inactives a traiter avant lancement reel:
+Le système repose sur le pattern **Blackboard Architecture** : un état global central en RAM, alimenté par des agents spécialisés qui travaillent en parallèle. L'Orchestrateur lit cet état à chaque cycle, agrège les scores, et décide d'exécuter ou non un trade. Aucun agent ne communique directement avec un autre — tout passe par le Blackboard.
 
-- Telegram et Drive dependent encore de variables d'environnement ou de l'OAuth
-  Drive: sans elles, les notifications/sync restent en mode code/fallback.
-- Le compte MT5 connecte pendant l'audit n'est pas le JustMarkets-Demo3 attendu.
-- Le rate limiter MT5 n'est pas un wrapper central autour de tous les appels MT5.
-- L'ancienne UI reste dans le repo et doit etre supprimee ou archivee si le
-  dashboard web devient l'unique interface.
+---
 
-## Vue d'ensemble
+## 2. Structure complète du dossier
 
-```text
-MT5
- |
- v
-core.mt5_bridge
- |
- +--> tick_ingestion + candle_builder
- |
- v
-Blackboard
- |
- +--> Risk Manager          veto absolu
- +--> Agent 6 Sentinelle    news / Finnhub / stealth mode
- +--> Agent 7 Chronos       sessions / kill zones
- +--> Macro Monitor         DXY + US10Y
- +--> Regime Detector       regime marche
- |
- +--> Agent 1 Meteo         structure HTF
- +--> Agent 2 Cartographe   OB/FVG scoring
- +--> Agent 3 Liquidite     sweep vs break
- +--> Agent 4 Fibonacci     premium/discount/OTE
- +--> Agent 5 Microscope    AMD: sweep puis CHoCH
- |
- v
-core.orchestrator
- |
- v
-execution.trade_manager
- |
- v
-Decision Log + Telegram + Recovery
 ```
-
-## Demarrage moteur
-
-Le point d'entree est `main.py`.
-
-1. Connexion MT5 via `core.mt5_bridge.bridge.connect()`.
-2. Recovery des positions MT5 ouvertes.
-3. Chargement historique 15m et 4H.
-4. Initialisation des stats journalieres.
-5. Message Telegram de demarrage.
-6. Lancement du moteur asynchrone `core.engine.run_engine()`.
-
-Dans `core.engine`, l'ordre de lancement est:
-
-1. `tick_ingestion`
-2. `candle_builder`
-3. `risk_manager`
-4. `agent_6_senti`
-5. `agent_7_sess`
-6. `macro_monitor`
-7. `regime_detector`
-8. `agent_1_meteo`
-9. `agent_2_carto`
-10. `agent_3_liqui`
-11. `agent_4_fibo`
-12. `agent_5_micro`
-13. `orchestrator`
-14. `trade_manager`
-15. services: account info, MT5 watchdog, recovery persistence, Telegram sender
-
-## Source de verite AgentResult
-
-La seule definition valide est `agents/base_agent.py`.
-
-Tous les agents retournent un `AgentResult` avec:
-
-- `agent_id`
-- `score`
-- `hard_filter_pass`
-- `direction`
-- `reason`
-- `payload`
-- `veto`
-- `risk_modifier`
-
-`core/agent_result.py` a ete supprime pour eviter deux formats concurrents.
-
-## Blackboard
-
-`core.blackboard.BlackBoard` est l'etat partage central.
-
-Il contient notamment:
-
-- `meta`: etat systeme, mode, kill switch, connexion MT5.
-- `market_data`: ticks, bougies, infos symbole.
-- `market`: regime, session, macro bias, spread monitor.
-- `agents`: dernier etat lisible de chaque agent.
-- `agent_results`: derniers `AgentResult` normalises.
-- `orchestrator`: decision courante.
-- `trade_signals`: signal executable.
-- `active_trades`: trades suivis par le Trade Manager.
-- `notifications`: configuration et queue Telegram.
-
-Les ecritures passent par `write`, `update_dict` ou `write_agent_result`.
-
-## Agents
-
-### Agent 1 - Meteo
-
-Analyse la structure HTF et le biais directionnel. C'est un hard filter.
-
-### Agent 2 - Cartographe
-
-Score les Order Blocks sur 5 facteurs independants:
-
-- fraicheur de la zone;
-- force de l'impulsion;
-- alignement HTF;
-- presence FVG;
-- confluence liquidite.
-
-Un OB faible est rejete meme s'il est techniquement valide.
-
-### Agent 3 - Liquidite
-
-Differencie un sweep d'un break:
-
-- sweep: prix traverse brievement un niveau puis reintegre, score positif;
-- break: prix casse et reste de l'autre cote, signal annule avec `hard_filter_pass=False`.
-
-Il detecte aussi Asian Range et IDM.
-
-### Agent 4 - Fibonacci
-
-Calcule:
-
-- equilibre 50%;
-- zone OTE 61.8% a 78.6%;
-- sweet spot 70.5%.
-
-Regles absolues:
-
-- LONG en premium interdit;
-- SHORT en discount interdit.
-
-### Agent 5 - Microscope
-
-Valide la sequence AMD complete:
-
-1. Accumulation.
-2. Manipulation: sweep 1M confirme.
-3. Distribution: CHoCH valide.
-
-Un CHoCH sans sweep prealable est rejete.
-
-### Agent 6 - Sentinelle
-
-Lit le calendrier economique via Finnhub quand disponible.
-
-Regles critiques:
-
-- veto absolu 15 minutes avant/apres une news high impact;
-- stealth mode pendant 1h apres l'evenement;
-- fallback si Finnhub est indisponible;
-- publication des alertes dans le Blackboard et Telegram.
-
-### Agent 7 - Chronos
-
-Detecte:
-
-- TOKYO;
-- LONDON;
-- NEW_YORK;
-- OVERLAP London-NY.
-
-TOKYO seul bloque les setups sous 92/100. OVERLAP booste le score via
-`risk_modifier`.
-
-## Orchestrateur V2
-
-`core.orchestrator` agregue les agents et applique les veto.
-
-Ordre de decision:
-
-1. Veto absolu Risk Manager ou Agent 6.
-2. Hard filters Agent 1 et Agent 2.
-3. Conflit directionnel Agent 1 vs Agent 3.
-4. Score pondere par regime de marche.
-5. Decroissance temporelle du signal.
-6. Ajustement session Chronos.
-7. Decision finale.
-
-Seuils:
-
-- `EXECUTION_THRESHOLD = 85`
-- `WATCH_THRESHOLD = 70`
-- `EXCEPTIONAL_THRESHOLD = 92`
-
-Le Risk Manager garde un veto absolu meme si le score global est 95/100.
-
-## Risk Manager
-
-Parametres critiques dans `config.py`:
-
-- `RISK_PCT_PER_TRADE = 1.0`
-- `DAILY_LOSS_LIMIT = 3.0`
-- `DRAWDOWN_LIMIT = 5.0`
-- pause 2h apres 3 pertes consecutives.
-
-Le sizing est calcule dynamiquement avec ATR: plus l'ATR est eleve, plus le
-lot est reduit.
-
-## Execution
-
-`execution.trade_manager.TradeManager` consomme `trade_signals` et verifie:
-
-- kill switch;
-- mode paper/live;
-- spread monitor;
-- sizing ATR;
-- niveaux entry/SL/TP;
-- gestion active du trade.
-
-## Spread Monitor
-
-`utils.spread_monitor.SpreadMonitor` lit le spread MT5 avant entree.
-
-- spread normal: trade autorise;
-- spread eleve: trade bloque et logge dans le Decision Log;
-- rollover/news: anomalie detectee;
-- spread eleve plus de 5 minutes: alerte Telegram.
-
-## MT5 Watchdog
-
-`utils.mt5_watchdog.MT5Watchdog` surveille la connexion MT5.
-
-Si MT5 se deconnecte:
-
-1. `bridge.connected` passe a `False`;
-2. les nouvelles entrees sont bloquees par veto Risk Manager;
-3. le watchdog tente une reconnexion;
-4. Telegram alerte si la deconnexion persiste;
-5. au retour MT5, le veto de deconnexion est leve.
-
-## Decision Log
-
-`utils.decision_logger` ecrit:
-
-- `logs/decision_log.jsonl`
-- `logs/missed_opportunities.jsonl`
-
-Les fichiers JSONL tournent par taille avec:
-
-- `LOG_MAX_BYTES`
-- `LOG_BACKUP_COUNT`
-
-Chaque cycle garde la decision, le score, la direction, le regime et le
-detail des agents.
-
-## Backtesting
-
-`backtesting/backtest_engine.py` telecharge XAUUSD M1 depuis MT5 au premier
-lancement et cree:
-
-```text
-logs/backtests/XAUUSD_M1_cache.parquet
-```
-
-Si le cache a moins de 24h, il est recharge sans retelechargement complet.
-Le moteur rejoue les bougies chronologiquement, alimente les 7 agents, passe
-par l'orchestrateur et ecrit:
-
-```text
-logs/backtests/backtest_results.jsonl
-```
-
-## Auto-calibration
-
-`utils/weight_calibrator.py` lit `logs/decision_log.jsonl`.
-
-La calibration refuse de tourner avec moins de 50 trades clotures. Si les
-donnees sont suffisantes, elle calcule la precision individuelle des agents,
-ajuste les poids de l'orchestrateur et logge dans:
-
-```text
-logs/calibration_log.jsonl
-```
-
-## Telegram
-
-`utils.telegram_notifier` gere:
-
-- demarrage systeme;
-- signaux;
-- ouverture/fermeture trades;
-- news;
-- risk alerts;
-- spread alerts;
-- rapport de fin de jour.
-
-Les identifiants ne sont pas stockes dans le code. `config.py` lit:
-
-- `TELEGRAM_TOKEN`
-- `TELEGRAM_CHAT_ID`
-
-## Fichiers principaux
-
-```text
 gold_sniper/
-  main.py
-  config.py
-  README.md
-  architecture.md
-  agents/
-  backtesting/
-  core/
-  execution/
-  ui/
-  utils/
-  logs/
+├── main.py                     # Point d'entrée — démarre toutes les coroutines
+├── config.py                   # SEULE source de vérité des paramètres
+├── watchdog.py                 # Watchdog externe (processus séparé)
+├── .env                        # Variables sensibles (tokens, mots de passe)
+├── GoldSniper.bat              # Lance le bot via pythonw.exe (sans console)
+├── LancerGoldSniper.vbs        # Double-clic silencieux → GoldSniper.bat
+├── lancer_manager.vbs          # Lance le PC Manager (interface admin)
+├── Installer_Manager.bat       # Installe les dépendances pip
+├── recovery.json               # Snapshot de récupération (auto-généré)
+├── watchdog_heartbeat.tmp      # Fichier de battement de cœur (Watchdog interne)
+│
+├── core/                       # Moteur central
+│   ├── blackboard.py           # État global partagé (SINGLETON BLACKBOARD)
+│   ├── engine.py               # Boucle principale, tick ingestion, orchestration
+│   ├── orchestrator.py         # Orchestrateur V2.0 — agrège les scores, décide
+│   ├── strategy_dictionary.py  # 9 stratégies avec leurs paramètres
+│   ├── diamond_detector.py     # Détecteur setup 5★ Diamant
+│   ├── recovery_manager.py     # Sauvegarde/restore de l'état (recovery.json)
+│   ├── mt5_bridge.py           # Couche d'abstraction MT5 (rate-limited)
+│   ├── candle_builder.py       # Construit les bougies OHLCV depuis les ticks
+│   └── tick_ingestion.py       # Ingestion des ticks MT5 en temps réel
+│
+├── agents/                     # Les 7 agents d'analyse + Risk Manager
+│   ├── base_agent.py           # Classe abstraite commune à tous les agents
+│   ├── agent_1_meteo.py        # Météo de marché (bias 4H/15m, BOS/CHOCH)
+│   ├── agent_2_cartographe.py  # Cartographie (OB, FVG, Breaker Blocks, POI)
+│   ├── agent_3_liquidite.py    # Liquidité (EQH/EQL, sweep, range asiatique)
+│   ├── agent_4_fibonacci.py    # OTE Fibonacci (61.8–78.6%, sweet spot 68–73%)
+│   ├── agent_5_microscope.py   # Microscope 1m (CHOCH, AMD, confirmation entrée)
+│   ├── agent_6_sentinelle.py   # Calendrier économique (news, veto, stealth)
+│   ├── agent_7_chronos.py      # Sessions, Kill Zones, Volume Profile
+│   ├── risk_manager.py         # Surveillance equity, drawdown, pertes consécutives
+│   ├── regime_detector.py      # Détection du régime de marché (trend/range/volatile)
+│   └── macro_monitor.py        # DXY, US10Y, corrélations macro via yfinance/FMP
+│
+├── execution/                  # Gestion des ordres
+│   ├── trade_manager.py        # Cycle de vie complet d'un trade (SL/TP, BE, trailing)
+│   ├── adaptive_weights.py     # Poids adaptatifs (désactivé semaine démo)
+│   └── risk_calculator.py      # Calcul du lot size basé sur l'ATR
+│
+├── utils/                      # Utilitaires transversaux
+│   ├── logger.py               # Logger structuré JSONL (rotation, rétention 30j)
+│   ├── telegram_notifier.py    # Envoi de notifications Telegram (async)
+│   ├── telegram_commander.py   # Écoute et traitement des commandes Telegram
+│   ├── decision_logger.py      # Log JSON de chaque décision (EXECUTE/REJECT/WAIT)
+│   ├── drive_sync.py           # Sync quotidien vers Google Drive (23h00)
+│   ├── report_scheduler.py     # Rapport hebdomadaire automatique (dimanche 20h)
+│   ├── spread_monitor.py       # Surveillance spread temps réel, alertes
+│   ├── mt5_watchdog.py         # Watchdog interne MT5 (connexion, reconnexion)
+│   ├── weight_calibrator.py    # Calibration des poids (batch 50 trades, /calibrate)
+│   ├── system_tray.py          # Icône Windows barre de notification (pystray)
+│   ├── math_utils.py           # Fonctions mathématiques (ATR, pivots, etc.)
+│   ├── risk_calculator.py      # Calcul de risque (lot sizing ATR)
+│   ├── emergency_shutdown.py   # Arrêt d'urgence + fermeture de toutes les positions
+│   └── telegram_command_listener.py  # Listener léger (wrapper de telegram_commander)
+│
+├── data/                       # Données persistées
+│   ├── memory_db.py            # Interface SQLite (mémoire trades, patterns, analyses)
+│   ├── memory.db               # Base de données SQLite (générée automatiquement)
+│   ├── historical_loader.py    # Chargement des données historiques MT5 → parquet
+│   ├── credentials.json        # OAuth2 Google Drive (NE PAS COMMITTER)
+│   ├── drive_token.json        # Token Drive auto-généré après première auth
+│   └── historical/             # Cache parquet des données historiques XAUUSD
+│
+├── web/                        # Dashboard Web
+│   ├── dashboard.html          # Interface HTML/CSS/JS (SPA, pas de framework)
+│   └── dashboard_server.py     # Serveur aiohttp + WebSocket event-driven
+│
+├── backtesting/
+│   └── backtest_engine.py      # Moteur de backtest (cache parquet, warmup, validation)
+│
+├── scripts/
+│   ├── setup_autostart.ps1     # Configure le démarrage Windows automatique
+│   └── start_mt5_minimized.ps1 # Lance MT5 en mode minimisé en arrière-plan
+│
+├── logs/                       # Fichiers de logs (auto-créé)
+│   ├── gold_sniper_YYYY-MM-DD.jsonl   # Logs structurés du bot
+│   ├── watchdog.log            # Logs du watchdog externe
+│   ├── decision_log.jsonl      # Historique de chaque décision
+│   ├── reports/                # Rapports hebdomadaires générés
+│   └── backtests/              # Résultats des backtests
+│
+└── tests/                      # Tests unitaires
 ```
 
-## Configuration sensible
+---
 
-Les secrets doivent venir de l'environnement et ne pas etre commites:
+## 3. Pipeline de décision A→Z
 
-- `MT5_ACCOUNT`
-- `MT5_PASSWORD`
-- `MT5_SERVER`
-- `MT5_PATH` optionnel
-- `TELEGRAM_TOKEN`
-- `TELEGRAM_CHAT_ID`
-
-## Commandes utiles
-
-Demarrer:
-
-```powershell
-python main.py
+```
+MT5 (ticks XAUUSD)
+        │
+        ▼
+[tick_ingestion.py]
+  • Lit les ticks via mt5.copy_ticks_from()
+  • Rate-limiter : max 10 appels MT5/seconde
+  • Écrit dans Blackboard["market_data"]["current_tick"]
+        │
+        ▼
+[candle_builder.py]
+  • Agrège les ticks en bougies 1m / 15m / 4H
+  • Déclenche les events "new_candle_1m" et "new_candle_15m"
+  • Stocke dans Blackboard["market_data"]["candles"]
+        │
+        ▼
+[7 Agents en parallèle — asyncio.gather()]
+  Agent 1 (Météo)    → lit candles 4H+15m → publie bias + BOS
+  Agent 2 (Carto)    → lit candles 15m    → publie OB/FVG/POI
+  Agent 3 (Liquidité)→ lit candles 15m+1m → publie EQH/EQL/sweep
+  Agent 4 (Fibonacci)→ lit candles 15m    → publie OTE zone
+  Agent 5 (Microscope)→ attend "price_in_poi" event → confirme 1m
+  Agent 6 (Sentinelle)→ fetch calendrier économique → veto si news
+  Agent 7 (Chronos)  → heure UTC → session/kill_zone/VP
+        │
+        ▼
+[Blackboard.write_agent_result(agent_id, result)]
+  • Stocke le résultat dans Blackboard["agent_results"]
+  • Déclenche dashboard_update_event → WebSocket < 5ms
+  • Déclenche agent_N_ready event → Orchestrateur se réveille
+        │
+        ▼
+[orchestrator.py — attend tous les agents]
+  1. Vérifie les hard filters (Agent 1, Agent 2 obligatoires)
+  2. Vérifie les vetos (Agent 6, Risk Manager, spread_monitor)
+  3. Calcule le score pondéré : Σ(agent_score × poids × regime_modifier)
+  4. Applique la stratégie active (session × régime)
+  5. Seuil de déclenchement : 70 points minimum
+  6. Décision : EXECUTE / REJECT / WAIT / COOLDOWN
+        │
+        ▼
+[diamond_detector.py] (si score > 90)
+  • Vérifie RR ≥ 3.0, sweet spot Fibonacci 68–73%
+  • Labellise le signal comme "DIAMOND_5STAR"
+        │
+        ▼
+[trade_manager.py] (si EXECUTE)
+  • Calcule le lot size : equity × risk% / (SL_pips × tick_value)
+  • Vérifie spread < MAX_SPREAD_POINTS (45)
+  • Vérifie cooldown, limite journalière (2 trades/j)
+  • Envoie order_send() via mt5_bridge.py
+  • Pose SL + TP1 + TP2 atomiquement
+  • Surveille TP1 (BE), trailing SL, TP2 (fermeture partielle 50%)
+        │
+        ▼
+[decision_logger.py] + [telegram_notifier.py]
+  • Log JSON de la décision
+  • Notification Telegram : trade ouvert, TP1 atteint, SL touché, etc.
+        │
+        ▼
+[risk_manager.py] (boucle parallèle, toutes les 10s)
+  • Recalcule drawdown journalier
+  • Veto si drawdown ≥ 5% ou 3 pertes consécutives
+        │
+        ▼
+[Dashboard WebSocket] → Navigateur / Mobile
+  • Latence < 5ms grâce à dashboard_update_event (event-driven)
 ```
 
-Backtest rapide:
+---
 
-```powershell
-python backtesting\backtest_engine.py --limit 100
+## 4. Les 7 Agents
+
+### Agent 1 — Météo de marché (`agent_1_meteo.py`)
+
+| Propriété | Valeur |
+|---|---|
+| **Rôle** | Filtre macro : détermine le biais directionnel global |
+| **Input** | Bougies 4H (120 bougies) + 15m (384 bougies) |
+| **Output** | `direction` (LONG/SHORT/NEUTRAL), `bias_4h`, `bias_15m`, `mtf_aligned`, `bos_level` |
+| **Logique** | Détecte les Break of Structure (BOS) et Change of Character (CHOCH) par analyse des swing highs/lows. Alignement multi-timeframe requis (4H ET 15m dans le même sens). |
+| **Score** | 0 (pas d'alignement) ou 1 (alignement parfait) — **Hard Filter** |
+| **Poids** | 25% (le plus élevé) |
+| **Veto** | `hard_filter_pass = False` bloque toute la pipeline |
+
+### Agent 2 — Cartographe (`agent_2_cartographe.py`)
+
+| Propriété | Valeur |
+|---|---|
+| **Rôle** | Carte des Points d'Intérêt (POI) : OB, FVG, Breaker Blocks |
+| **Input** | Bougies 15m |
+| **Output** | `active_ob`, `active_fvg`, `breaker_blocks[]`, `poi_zone`, `zone_is_fresh` |
+| **Logique** | Identifie les Order Blocks (dernière bougie avant un mouvement impulsif), Fair Value Gaps (écart entre High[i+1] et Low[i-1]), et les Breaker Blocks (OB cassé qui change de polarité). |
+| **Score** | 0–100 basé sur fraîcheur, taille, retouches du POI |
+| **Poids** | 20% |
+| **Veto** | `hard_filter_pass = False` si aucune zone valide |
+
+### Agent 3 — Liquidité (`agent_3_liquidite.py`)
+
+| Propriété | Valeur |
+|---|---|
+| **Rôle** | Détecte les chasses de liquidité (liquidity sweeps) |
+| **Input** | Bougies 15m + 1m, range asiatique |
+| **Output** | `sweep_detected`, `sweep_side`, `sweep_depth_ratio`, `asian_range`, `idm_detected` |
+| **Logique** | Identifie les Equal Highs/Lows (EQH/EQL), vérifie si le prix a chassé ces niveaux (sweep). Calcule le range asiatique (session 0h–8h UTC+1) et vérifie qu'il est ≥ 30% de l'ATR(14, 4H) [R8]. |
+| **Score** | 0–100 basé sur profondeur du sweep et qualité de l'IDM |
+| **Poids** | 15% |
+
+### Agent 4 — Fibonacci (`agent_4_fibonacci.py`)
+
+| Propriété | Valeur |
+|---|---|
+| **Rôle** | Valide que le prix est dans la zone OTE Fibonacci |
+| **Input** | Bougies 15m (swing high/low derniers mouvements) |
+| **Output** | `ote_low`, `ote_high`, `ote_sweet`, `in_ote`, `in_discount`, `in_premium`, `precision_pct` |
+| **Logique** | Calcule les retracements 61.8%–78.6% du dernier mouvement impulsif. Sweet spot : 68–73% (zone d'Optimal Trade Entry). Distinction premium/discount selon l'équilibre 50%. |
+| **Score** | 0–100 basé sur la précision de positionnement dans l'OTE |
+| **Poids** | 15% |
+
+### Agent 5 — Microscope (`agent_5_microscope.py`)
+
+| Propriété | Valeur |
+|---|---|
+| **Rôle** | Confirmation d'entrée en 1 minute (micro-structure) |
+| **Input** | Bougies 1m (1440 bougies) — activé par l'event `price_in_poi` |
+| **Output** | `choch_detected`, `choch_price`, `sweep_1m_confirmed`, `amd_phase`, `entry_price`, `sl_price`, `tp1_price`, `tp2_price` |
+| **Logique** | Attend que le prix entre dans un POI (Agent 2 déclenche `price_in_poi`). Cherche alors un CHOCH sur 1m + sweep de liquidité 1m pour confirmer l'inversion. Identifie la phase AMD (Accumulation/Manipulation/Distribution). |
+| **Score** | 0–100 basé sur qualité du CHOCH et timing AMD |
+| **Poids** | 15% |
+
+### Agent 6 — Sentinelle (`agent_6_sentinelle.py`)
+
+| Propriété | Valeur |
+|---|---|
+| **Rôle** | Gardien calendrier économique — veto absolu autour des news |
+| **Input** | Finnhub API (primaire) → FMP API (fallback) → ForexFactory (scraping XML, fallback final) |
+| **Output** | `veto`, `impact_level`, `next_event`, `resume_at`, `stealth_mode`, `feed_alive` |
+| **Logique** | Scrape le calendrier toutes les 60s. Veto ±15min autour des news HIGH impact (USD/XAU). Stealth mode 60min après une news majeure. Si toutes les sources échouent 5× consécutives → `ASSUME_HOSTILE` (blocage automatique). Mémoire 30 jours des événements passés en SQLite. |
+| **Score** | 100 (neutre) ou 0 (veto) |
+| **Poids** | 0% (agent de veto, pas de score pondéré) |
+
+### Agent 7 — Chronos (`agent_7_chronos.py`)
+
+| Propriété | Valeur |
+|---|---|
+| **Rôle** | Gestionnaire des sessions et Kill Zones temporelles |
+| **Input** | `datetime.now(UTC)`, Volume Profile calculé |
+| **Output** | `in_kill_zone`, `kill_zone_name`, `risk_modifier`, `trading_allowed`, `vp_poc`, `vp_vah`, `vp_val` |
+| **Logique** | Autorise le trading uniquement dans les 3 Kill Zones : London Open (8h–11h), NY Open (13h–16h), Overlap (13h–17h). Gère le DST automatiquement via `zoneinfo`. Friday Mode : réduction risque 18h, arrêt 21h [R16]. Bloque pendant le rollover 23h45–00h15 [R5]. |
+| **Score** | 0 (hors Kill Zone) ou 60–100 (selon qualité de la session) |
+| **Poids** | 10% |
+
+---
+
+## 5. L'Orchestrateur V2.0 (`core/orchestrator.py`)
+
+### Fonctionnement event-driven
+
+L'Orchestrateur ne tourne pas en polling. Il attend les events `agent_N_ready` via `asyncio.Event`. Dès que tous les agents requis ont publié, il déclenche son calcul.
+
+### Pipeline de décision
+
+```
+1. HARD FILTERS (bloquants absolus)
+   • Agent 1 hard_filter_pass = True (alignement multi-tf)
+   • Agent 2 hard_filter_pass = True (POI valide)
+   • Agent 6 veto = False (pas de news en cours)
+   • Risk Manager veto = False (drawdown OK)
+   • Control.paused = False (pas en pause Telegram)
+   • Spread < MAX_SPREAD_POINTS (45 points)
+   • Kill Zone active (Agent 7 trading_allowed = True)
+
+2. CALCUL DU SCORE
+   score = Σ(agent_i.score × poids_i × regime_modifier)
+   
+   Poids par défaut :
+   Agent 1 : 25%  Agent 2 : 20%  Agent 3 : 15%
+   Agent 4 : 15%  Agent 5 : 15%  Agent 7 : 10%
+
+3. MODIFICATEUR DE RÉGIME
+   TRENDING_BULL/BEAR : ×1.2 (bonus momentum)
+   RANGING            : ×0.9 (malus choppy)
+   VOLATILE/HIGH_VOL  : ×0.7 (malus risque)
+   UNKNOWN            : ×1.0 (neutre)
+
+4. STRATÉGIE ACTIVE
+   Sélectionnée selon session × régime (9 combinaisons)
+   Chaque stratégie a son seuil de déclenchement (70–85 pts)
+
+5. DÉCROISSANCE TEMPORELLE
+   Signal non exécuté : score × 0.98 par cycle de 5s
+   Score < 40 : signal abandonné
+
+6. DÉCISION FINALE
+   score ≥ seuil + tous hard filters : EXECUTE
+   veto actif                         : REJECT
+   score insuffisant                  : WAIT
+   post-trade                         : COOLDOWN (180s)
 ```
 
-Calibration dry-run:
+---
 
-```powershell
-python utils\weight_calibrator.py --dry-run
+## 6. Le Risk Manager (`agents/risk_manager.py`)
+
+### Seuils de protection
+
+| Condition | Action |
+|---|---|
+| Perte journalière ≥ 3% | Bascule en Paper Trading forcé |
+| Perte journalière ≥ 5% | **VETO absolu** — arrêt total |
+| 3 pertes consécutives | Pause 2 heures + rapport diagnostic Telegram |
+| Récupération > 1.5% | Retour en mode Live automatique |
+
+### Intégration `/resume`
+
+La commande `/resume` (Telegram) écrit `control.risk_manager_pause_reset = True` dans le Blackboard. Au prochain cycle du Risk Manager (toutes les 10s), ce flag est détecté : `consecutive_losses` est remis à 0, `pause_until = None`. Le flag est ensuite effacé pour éviter les réinitialisations répétées.
+
+### Rapport diagnostic (automatique)
+
+Après 3 pertes consécutives, le Risk Manager génère et envoie via Telegram :
+- Nombre de pertes
+- Agent le plus suspect (score fort sur les trades perdants)
+- Session/Régime dominant sur les pertes
+- Pattern d'erreur identifié
+- Précision de chaque agent en %
+
+---
+
+## 7. Les 9 stratégies du dictionnaire (`core/strategy_dictionary.py`)
+
+| Stratégie | Session | Régime | Seuil | Paramètres spéciaux |
+|---|---|---|---|---|
+| `LONDON_TREND_FOLLOWER` | London Open | TRENDING | 72 pts | Trailing SL activé dès TP1 |
+| `LONDON_OTE_PULLBACK` | London Open | RANGING | 75 pts | OTE strict 68–73% |
+| `LONDON_VOLATILE_SNIPER` | London Open | VOLATILE | 82 pts | Lot réduit ×0.7 |
+| `NY_TREND_FOLLOWER` | NY Open | TRENDING | 70 pts | Max 2 trades/session |
+| `NY_REVERSAL` | NY Open | RANGING | 78 pts | CHOCH 1m obligatoire |
+| `NY_VOLATILE_SNIPER` | NY Open | VOLATILE | 85 pts | Score minimum élevé |
+| `OVERLAP_MOMENTUM` | Overlap | TRENDING | 70 pts | Volume Profile POC requis |
+| `OVERLAP_SCALP` | Overlap | RANGING | 76 pts | TP1 réduit (1.5R) |
+| `GENERIC_DIAMOND` | Tout | Tout | 88 pts | Réservé aux setups 5★ |
+
+---
+
+## 8. Gestion des trades (`execution/trade_manager.py`)
+
+### Cycle de vie d'un trade
+
+```
+ORDER_SENT
+    │
+    ▼
+OPEN (SL + TP1 + TP2 posés atomiquement)
+    │
+    ├── TP1 atteint (RR = 1.0) ──→ Breakeven activé (SL → entry)
+    │                              Fermeture partielle 50% du volume
+    │
+    ├── TP2 atteint (RR = 2.0) ──→ Fermeture du solde + notification
+    │
+    └── SL touché ──────────────→ Trade fermé + compteur pertes++
 ```
 
-Validation syntaxe:
+### Lot sizing ATR
 
-```powershell
-python -m py_compile main.py core\engine.py core\orchestrator.py
+```python
+lot = (equity × risk_pct / 100) / (sl_pips × tick_value_per_pip)
+# sl_pips calculé depuis l'ATR(14, 15m) × 1.5
+# Arrondi au volume_step MT5
+# Clampé entre volume_min et volume_max
 ```
+
+### Règles atomiques
+
+- SL + TP1 + TP2 posés dans le même cycle que l'ordre d'entrée
+- Si le spread dépasse 2× la moyenne mobile pendant une modification → report de la modification
+- Slippage maximum autorisé : 30 points (3 pips)
+
+---
+
+## 9. Calendrier économique — Chaîne Finnhub → FMP → ForexFactory
+
+### Flux de données
+
+```
+Finnhub API (https://finnhub.io)
+  └─ Gratuit, 60 req/min, JSON propre, fiable
+  └─ Échec ? → FMP API (https://financialmodelingprep.com)
+              └─ 200 req/jour max, données macro + calendrier
+              └─ Échec ? → ForexFactory (scraping XML cache/forexfactory.xml)
+                           └─ Dernier recours, pas de clé requise
+```
+
+### Règles de blocage
+
+| Condition | Action |
+|---|---|
+| News HIGH impact USD/XAU dans ±15min | Veto (score Agent 6 = 0) |
+| Stealth mode (60min post-news HIGH) | Score réduit de 30% |
+| 5 échecs consécutifs toutes sources | Mode ASSUME_HOSTILE : veto permanent jusqu'au redémarrage |
+| Feed vivant mais news inconnue | Passage silencieux (feed_alive = True) |
+
+### Mémoire 30 jours (SQLite)
+
+Chaque événement économique récupéré est stocké en base avec son impact réel observé (variation prix XAUUSD ±5min). Utilisé pour affiner l'analyse d'impact.
+
+---
+
+## 10. Sessions et Kill Zones (UTC+1 / Europe/Paris)
+
+| Session | Début | Fin | Trading |
+|---|---|---|---|
+| ASIA | 00h00 | 08h00 | NON |
+| **LONDON_OPEN** (Kill Zone) | **08h00** | **11h00** | **OUI** |
+| LONDON (cadre large) | 08h00 | 17h00 | Non (sauf Kill Zone) |
+| **NY_OPEN** (Kill Zone) | **13h00** | **16h00** | **OUI** |
+| **OVERLAP** (Kill Zone) | **13h00** | **17h00** | **OUI** |
+| NY (cadre large) | 13h00 | 22h00 | Non (sauf Kill Zone) |
+| OFF_HOURS | 22h00 | 00h00 | NON |
+| ROLLOVER | 23h45 | 00h15 | NON (blocage absolu) |
+
+### Modes spéciaux
+
+- **DST** : géré automatiquement via `zoneinfo.ZoneInfo("Europe/Paris")`
+- **Friday Mode** : risque → 0.5% à 18h00, trading arrêté à 21h00 [R16]
+- **Rollover** : aucune ouverture ni modification d'ordre possible
+
+---
+
+## 11. Mémoire — SQLite (`data/memory_db.py`)
+
+### Tables principales
+
+| Table | Contenu |
+|---|---|
+| `trades` | Historique complet (ticket, entrée, SL, TP, PnL, session, régime) |
+| `agent_scores` | Score de chaque agent sur chaque trade exécuté |
+| `news_events` | Calendrier économique archivé (30 jours) |
+| `loss_analyses` | Rapports diagnostics post-pertes consécutives |
+| `weight_snapshots` | Historique des poids calibrés |
+
+### Analyse 5 pertes consécutives
+
+1. Extraction des 5 derniers trades perdants
+2. Identification de l'agent le plus suspect
+3. Corrélation session/régime dominant
+4. Rapport Telegram + stockage en `loss_analyses`
+5. Suggestion automatique : réduire le poids de l'agent suspect
+
+### Google Drive sync (`utils/drive_sync.py`)
+
+- Déclenché tous les soirs à **23h00** (scheduler `schedule`)
+- Fichiers uploadés : `data/memory.db`, `logs/decision_log.jsonl`, `logs/backtests/`, `logs/reports/`
+- Credentials : `data/credentials.json` (OAuth2) + `data/drive_token.json` (token auto-refresh)
+- Dossier Drive : `GoldSniper_V3_Backups`
+- Nommage : `YYYY-MM-DD__data__memory.db`
+
+---
+
+## 12. Telegram — Commandes et notifications
+
+### Commandes disponibles
+
+| Commande | Description | Conditions |
+|---|---|---|
+| `/start` | Présentation du bot et liste rapide | Toujours disponible |
+| `/status` | État complet : mode, session, régime, score, trades | Toujours disponible |
+| `/pause` | Suspend l'ouverture de nouveaux trades | Moteur actif |
+| `/resume` | Reprend les trades + reset compteur pertes | Moteur actif |
+| `/kill` | Arrêt d'urgence + fermeture de toutes les positions | Toujours disponible |
+| `/restart` | Redémarre le moteur sans couper MT5 | Moteur actif |
+| `/risk 0.5` | Modifie le risque par trade (0.1–3.0%) | Moteur actif |
+| `/trades` | Liste des positions ouvertes avec SL/TP/PnL | Toujours disponible |
+| `/agents` | Scores et états de tous les agents | Moteur actif |
+| `/regime` | Régime marché, session, stratégie active, DXY/US10Y | Moteur actif |
+| `/news` | Annonces économiques HIGH/MEDIUM des 24h suivantes | Moteur actif |
+| `/report` | Rapport journalier (trades, PnL réalisé + flottant) | Toujours disponible |
+| `/backtest` | Dernier résultat de backtest stocké | Toujours disponible |
+| `/calibrate` | Déclenche la calibration des poids (50 trades min) | Moteur actif |
+| `/help` | Liste complète des commandes | Toujours disponible |
+
+### Notifications automatiques
+
+| Événement | Message envoyé |
+|---|---|
+| Démarrage du bot | "Gold Sniper V3 démarré — mode PAPER/LIVE" |
+| Dashboard en ligne | URL Cloudflare publique |
+| Trade ouvert | Ticket, direction, entry, SL, TP1, TP2, lot, session, régime |
+| TP1 atteint | Ticket, PnL partiel, BE activé |
+| TP2 atteint | Ticket, PnL final, trade fermé |
+| SL touché | Ticket, perte en USD, pertes consécutives |
+| 3 pertes consécutives | Rapport diagnostic complet + pause 2h |
+| Drawdown > 3% | Passage en Paper Trading |
+| Drawdown > 5% | VETO absolu activé |
+| Spread élevé > 5min | Alerte spread (niveau actuel + max autorisé) |
+| News HIGH détectée | Nom, heure, impact, veto activé |
+| Watchdog restart | Crash détecté + numéro de restart |
+
+### Sécurité
+
+- **Fence anti-replay** : au démarrage, tous les messages antérieurs au boot sont ignorés (via `_boot_update_id`). Évite la ré-exécution de `/kill` stocké pendant l'arrêt.
+- **Chat ID vérifié** : seul le `TELEGRAM_CHAT_ID` configuré dans `.env` peut exécuter des commandes.
+
+---
+
+## 13. Dashboard Web (`web/`)
+
+### Architecture
+
+```
+Navigateur / Mobile
+        │ WebSocket (wss://)
+        ▼
+Cloudflare Tunnel
+        │ http://localhost:8765
+        ▼
+aiohttp server (dashboard_server.py)
+        │
+        ├── GET  /             → dashboard.html (SPA)
+        ├── GET  /api/state    → JSON état complet
+        ├── GET  /api/trades   → JSON positions ouvertes
+        ├── GET  /api/agents   → JSON scores agents
+        └── WS   /ws           → WebSocket event-driven
+```
+
+### WebSocket event-driven (latence < 5ms)
+
+Le handler WebSocket **ne poll pas** (plus de `sleep(0.5)`). Il attend `blackboard.dashboard_update_event` — un `asyncio.Event` déclenché à chaque :
+- `write_agent_result()` (résultat d'un agent)
+- `update_market()` (nouveau tick marché)
+
+Timeout de secours : 1 seconde (heartbeat minimal).
+
+### Reconnexion automatique (Cloudflare)
+
+```javascript
+function connectWS() {
+    ws = new WebSocket(wsUrl);
+    ws.onclose = () => { fetchFallback(); setTimeout(connectWS, 2000); };
+    ws.onerror = () => ws.close();  // onclose gère le reste
+    ws.onmessage = (e) => updateDashboard(JSON.parse(e.data));
+}
+```
+
+Si Cloudflare coupe la connexion (timeout 100s), reconnexion automatique en 2s avec fallback HTTP polling.
+
+### Payload WebSocket
+
+```json
+{
+  "type": "state",
+  "ts": "2026-05-27T00:00:00.000000",
+  "state": { "meta": {...}, "market": {...}, "orchestrator": {...} },
+  "trades": { "open_trades": [...], "total_pnl": 0.0, "open_count": 0 },
+  "agents": { "agents": [...], "updated_at": "..." },
+  "logs":   [ {"ts": "...", "level": "INFO", "msg": "..."} ]
+}
+```
+
+---
+
+## 14. Infrastructure
+
+### Watchdog externe (`watchdog.py`)
+
+Processus Python **indépendant** qui surveille le processus principal :
+
+| Paramètre | Valeur |
+|---|---|
+| Intervalle de vérification | 5 secondes |
+| Timeout heartbeat | 60 secondes |
+| Délai avant restart | 10 secondes |
+| Max restarts / 10 minutes | 3 |
+
+Le bot principal écrit `watchdog_heartbeat.tmp` toutes les 2 secondes. Si le fichier n'est pas mis à jour sous 60s → le watchdog tue le processus et le relance.
+
+**Exécutable** : `C:\Users\tetej\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe` (hardcodé dans `_command_from_env()`). Override possible via `GOLD_SNIPER_WATCHDOG_COMMAND`.
+
+### Auto-boot Windows
+
+`scripts/setup_autostart.ps1` crée une tâche dans le Task Scheduler Windows :
+- **Déclencheur** : ouverture de session utilisateur
+- **Commande** : `pythonw.exe watchdog.py` (le watchdog lance `main.py`)
+- MT5 lancé en arrière-plan via `scripts/start_mt5_minimized.ps1`
+
+### MT5 minimisé
+
+`scripts/start_mt5_minimized.ps1` : lance MT5 avec `SW_SHOWMINIMIZED` pour ne pas polluer l'écran. MT5 doit être déjà installé et configuré sur le compte JustMarkets-Demo3.
+
+### Rotation des logs
+
+- Format JSONL (une ligne JSON par entrée)
+- Rotation à 10 MB
+- Rétention 30 jours (purge automatique au démarrage)
+- Fichier watchdog séparé : `logs/watchdog.log`
+
+---
+
+## 15. APIs connectées
+
+| API | Usage | Clé | Limite | Statut |
+|---|---|---|---|---|
+| **MT5 (MetaTrader5 lib)** | Ticks, bougies, ordres, compte | Login/Password dans `.env` | 10 appels/s (rate-limiter) | ✅ Principal |
+| **Telegram Bot API** | Notifications + commandes | `TELEGRAM_TOKEN` dans `.env` | 30 msg/s | ✅ Actif |
+| **Finnhub** | Calendrier économique | `FINNHUB_TOKEN` dans `.env` | 60 req/min (gratuit) | ✅ Primaire Agent 6 |
+| **FMP** | Macro (DXY, US10Y, calendrier) | `FMP_TOKEN` dans `.env` | 200 req/jour | ⚠️ Fallback Agent 6 |
+| **yfinance** | DXY, GLD, US10Y (corrélations macro) | Aucune | Non documentée | ✅ Macro Monitor |
+| **Google Drive** | Backup SQLite + logs | OAuth2 `credentials.json` | 15 GB gratuit | ✅ Sync 23h00 |
+| **Cloudflare Tunnel** | Dashboard public | `cloudflared.exe` local | Gratuit (trycloudflare) | ✅ Auto au boot |
+
+---
+
+## 16. Règles de trading codées (liste exhaustive)
+
+| Règle | Code | Description |
+|---|---|---|
+| R1 | `kill_event` | Kill Switch global irréversible — arrêt immédiat de toute activité |
+| R2 | Hard filters A1+A2 | Les agents 1 et 2 doivent tous les deux passer leur hard filter |
+| R3 | Seuil de score | Score minimum 70 pts pour EXECUTE (variable selon stratégie) |
+| R4 | Veto Agent 6 | News HIGH/MEDIUM ±15min = blocage absolu |
+| R5 | Rollover | Aucun ordre ni modification entre 23h45 et 00h15 UTC+1 |
+| R6 | Spread max | Spread > 45 points = pas d'ouverture |
+| R7 | Assume Hostile | 5 échecs consécutifs du feed news = veto automatique |
+| R8 | Range asiatique | Range asiatique < 30% ATR(14,4H) = Agent 3 score 0 |
+| R9 | Telegram | Toutes les alertes critiques envoyées sur Telegram |
+| R10 | Paper Trading | LIVE_MODE=0 = simulation pure (aucun ordre réel envoyé à MT5) |
+| R11 | Cooldown | 180s de cooldown obligatoire après chaque trade |
+| R12 | Risque 1% | Maximum 1% de l'equity par trade (paramétrable via /risk) |
+| R13 | Un seul symbole | Seul XAUUSD traité — multi-symbole rejeté |
+| R14 | RR minimum | Risk:Reward ≥ 2.0 requis pour valider un signal |
+| R15 | Rate limiter MT5 | Maximum 10 appels MT5 par seconde |
+| R16 | Friday Mode | Risque réduit à 0.5% après 18h vendredi, arrêt à 21h |
+| R17 | Logs 30j | Rotation des logs automatique, rétention 30 jours |
+| R18 | Trades/jour | Maximum 2 trades par jour (sauf Diamant 5★) |
+| R19 | Slippage max | Slippage > 30 points = ordre refusé |
+| R20 | Décroissance | Signal non exécuté : score × 0.98 toutes les 5s |
+
+---
+
+## 17. Backtest Engine (`backtesting/backtest_engine.py`)
+
+### Architecture
+
+- **Cache Parquet** : données historiques XAUUSD stockées dans `data/historical/` au format Parquet. Rechargement instantané (< 1s) sans requête MT5.
+- **Warmup** : 100 bougies de warmup avant le début de la période testée pour initialiser les indicateurs (ATR, swings).
+- **Fidélité** : rejoue exactement la même logique que le moteur live (mêmes agents, même Orchestrateur).
+
+### Validation
+
+```
+Résultats stockés dans : logs/backtests/backtest_results.jsonl
+Accessible via Telegram : /backtest
+Métriques : win rate, profit factor, max drawdown, Sharpe ratio
+```
+
+---
+
+## 18. Calibration des poids (`utils/weight_calibrator.py`)
+
+### Conditions
+
+- Minimum **50 trades** en base SQLite pour déclencher une calibration
+- Calcul : précision de chaque agent sur les trades gagnants vs perdants
+- Normalisation : les nouveaux poids somment à 100%
+- Stockage : snapshot en base + application immédiate dans l'Orchestrateur
+
+### Adaptive Weights (désactivé)
+
+```python
+ADAPTIVE_WEIGHTS_ENABLED = False  # config.py ligne 216
+```
+
+Désactivé pendant la 1ère semaine démo pour éviter l'oscillation. Réactiver après 50+ trades validés. La calibration manuelle via `/calibrate` reste disponible.
+
+---
+
+## 19. Problèmes connus et limitations actuelles
+
+| Problème | Sévérité | Statut |
+|---|---|---|
+| `utils/system_tray.py` absent de la base de code | Critique | ✅ Créé |
+| `timedelta` manquant dans `telegram_commander.py` (import) | Critique | ✅ Corrigé |
+| `/start` Telegram retournait "commande inconnue" | Haute | ✅ Corrigé |
+| Dashboard WebSocket latence 361 638ms (polling 500ms) | Haute | ✅ Corrigé (event-driven < 5ms) |
+| WebSocket Cloudflare pas de reconnexion automatique | Haute | ✅ Corrigé (connectWS, 2000ms) |
+| `data/credentials.json` non versionné (normal, sécurité) | Info | Documenté |
+| `pythonw.exe` chemin hardcodé dans watchdog.py | Moyenne | Acceptable — override via env var |
+| FMP : limite 200 req/jour facile à atteindre | Moyenne | Mitigation : cache 60s |
+| ForexFactory scraping XML peut casser si le site change | Basse | Fallback local `cache_forexfactory.xml` |
+
+---
+
+## 20. Roadmap V4.0
+
+| Fonctionnalité | Priorité | Notes |
+|---|---|---|
+| **Multi-symbole** (EURUSD, NAS100) | Haute | Nécessite refacto Blackboard (par symbole) |
+| **Backtesting vectorisé** (numpy/pandas pur) | Haute | 100× plus rapide que la simulation tick-by-tick |
+| **Agent 8 — Sentiment** (COT, retail positioning) | Moyenne | Sources : CFTC COT + MT4/MT5 retail sentiment |
+| **Interface web admin** (controls Telegram dans le dashboard) | Moyenne | Évite d'ouvrir Telegram pour /pause, /resume |
+| **Mode Live automatique** après 50 trades démo profitables | Haute | Validation humaine requise avant flip LIVE_MODE=1 |
+| **Alertes SMS** (Twilio) en complément Telegram | Basse | Redondance si Telegram down |
+| **Equity curve en temps réel** dans le dashboard | Moyenne | Graphique canvas JS |
+| **API REST publique** pour intégration n8n/Zapier | Basse | Export signaux vers d'autres systèmes |
+| **Gestion multi-compte** (MT5 + MT4 simultané) | Basse | Architecture complexe |
+| **Détection de régime par ML** (SVM/LSTM) | Haute | Remplace le détecteur heuristique actuel |

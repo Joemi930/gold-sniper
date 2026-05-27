@@ -11,7 +11,7 @@ try:
 except ImportError:  # pragma: no cover - MT5 est disponible sur la machine trading
     mt5 = None
 
-from config import MT5_ACCOUNT, MT5_PASSWORD, MT5_PATH, MT5_SERVER, SYMBOL
+from config import MT5_ACCOUNT, MT5_PASSWORD, MT5_PATH, MT5_SERVER, SYMBOL, MT5_SYMBOL
 
 
 DATA_DIR = Path("data/historical")
@@ -186,7 +186,7 @@ def preload_historical_data(
     symbol: str = SYMBOL,
 ) -> dict[str, pd.DataFrame]:
     """
-    Precharge XAUUSD sur M1/M5/M15/H1/H4.
+    Precharge {MT5_SYMBOL} sur M1/M5/M15/H1/H4.
 
     Cache frais (<24h): lecture parquet. Cache stale: telecharge uniquement les
     bougies manquantes depuis la derniere bougie connue, puis fusionne.

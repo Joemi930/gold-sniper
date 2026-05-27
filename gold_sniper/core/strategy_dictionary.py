@@ -159,25 +159,34 @@ STRATEGY_DICTIONARY: list[Strategy] = [
         weight_overrides={"agent_6": 1, "agent_1": 35},
         priority=7,
     ),
-    Strategy(
-        name="DIAMOND_SETUP",
-        description="Setup 5 etoiles diamant - confluence maximale - 3eme trade autorise",
-        sessions=["LONDON", "NY_OPEN", "OVERLAP"],
-        regimes=["TRENDING", "ACCUMULATION"],
-        min_score=92.0,
-        exceptional_score=97.0,
-        risk_pct=1.5,
-        sl_atr_multiplier=0.7,
-        tp1_rr=2.0,
-        tp2_rr=4.0,
-        tp3_enabled=True,
-        require_sweep=True,
-        require_fvg_in_ob=True,
-        require_idm_swept=True,
-        min_ob_score=75.0,
-        weight_overrides=None,
-        priority=0,
-    ),
+    # ─────────────────────────────────────────────────────────────────────────
+    # DIAMOND_SETUP — DÉSACTIVÉ du dictionnaire de stratégies (correction audit)
+    # ─────────────────────────────────────────────────────────────────────────
+    # Le Diamond Setup est une ALERTE MANUELLE uniquement (core/diamond_detector.py).
+    # Il ne doit jamais déclencher un trade automatique via l'orchestrateur.
+    # L'entrée ci-dessous est commentée pour garantir que select_active_strategy()
+    # ne peut pas retourner DIAMOND_SETUP — la détection reste dans diamond_detector.py.
+    #
+    # Strategy(
+    #     name="DIAMOND_SETUP",
+    #     description="Setup 5 etoiles diamant - confluence maximale - 3eme trade autorise",
+    #     sessions=["LONDON", "NY_OPEN", "OVERLAP"],
+    #     regimes=["TRENDING", "ACCUMULATION"],
+    #     min_score=92.0,
+    #     exceptional_score=97.0,
+    #     risk_pct=1.5,
+    #     sl_atr_multiplier=0.7,
+    #     tp1_rr=2.0,
+    #     tp2_rr=4.0,
+    #     tp3_enabled=True,
+    #     require_sweep=True,
+    #     require_fvg_in_ob=True,
+    #     require_idm_swept=True,
+    #     min_ob_score=75.0,
+    #     weight_overrides=None,
+    #     priority=0,
+    # ),
+
     Strategy(
         name="DEFAULT_CONSERVATIVE",
         description="Strategie par defaut hors contexte identifie - tres conservatrice",
@@ -225,10 +234,12 @@ def select_active_strategy(
     session = normalize_session(session)
     regime = normalize_regime(regime)
 
-    if diamond_conditions_met:
-        diamond = _by_name("DIAMOND_SETUP")
-        if session in diamond.sessions and regime in diamond.regimes:
-            return diamond
+    # DIAMOND_SETUP est retiré du dictionnaire — alerte manuelle uniquement via diamond_detector.py.
+    # Le bloc ci-dessous est conservé pour mémoire mais ne peut jamais s'activer.
+    # if diamond_conditions_met:
+    #     diamond = _by_name("DIAMOND_SETUP")
+    #     if session in diamond.sessions and regime in diamond.regimes:
+    #         return diamond
 
     if regime == "RANGING":
         ranging = _by_name("RANGING_BOUNDARY")

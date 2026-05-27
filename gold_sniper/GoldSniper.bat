@@ -7,19 +7,19 @@ powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0sc
 
 where pythonw.exe > nul 2>&1
 if %errorlevel% equ 0 (
-    start "Gold Sniper V2.1" /min pythonw.exe "%~dp0main.py"
+    start "Gold Sniper V2.1" /min pythonw.exe "%~dp0watchdog.py"
     exit /b 0
 )
 
 where pyw.exe > nul 2>&1
 if %errorlevel% equ 0 (
-    start "Gold Sniper V2.1" /min pyw.exe "%~dp0main.py"
+    start "Gold Sniper V2.1" /min pyw.exe "%~dp0watchdog.py"
     exit /b 0
 )
 
 where python.exe > nul 2>&1
 if %errorlevel% equ 0 (
-    start "Gold Sniper V2.1" /min python.exe "%~dp0main.py"
+    start "Gold Sniper V2.1" /min python.exe "%~dp0watchdog.py"
     exit /b 0
 )
 

@@ -3,7 +3,7 @@ import json
 import re
 from collections import deque
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -57,24 +57,37 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
     blackboard = request.app["blackboard"]
     ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(request)
+    update_event = blackboard.dashboard_update_event
+
+    def _build_payload() -> str:
+        data = blackboard.get_all()
+        return json.dumps(
+            {
+                "type": "state",
+                "state": build_state_summary(data),
+                "trades": build_trades_payload(data),
+                "agents": build_agents_payload(data),
+                "logs": read_recent_logs(limit=40),
+                "ts": datetime.now(timezone.utc).isoformat(),
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
     try:
+        # Envoi immediat a la connexion
+        await ws.send_str(_build_payload())
+
         while not ws.closed:
-            data = blackboard.get_all()
-            await ws.send_str(
-                json.dumps(
-                    {
-                        "type": "state",
-                        "state": build_state_summary(data),
-                        "trades": build_trades_payload(data),
-                        "agents": build_agents_payload(data),
-                        "logs": read_recent_logs(limit=40),
-                        "ts": datetime.utcnow().isoformat(),
-                    },
-                    ensure_ascii=False,
-                    default=str,
-                )
-            )
-            await asyncio.sleep(0.5)
+            # On efface AVANT d'attendre pour ne pas rater les mises a jour
+            # qui arrivent pendant l'envoi precedent.
+            update_event.clear()
+            try:
+                await asyncio.wait_for(update_event.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass  # Fallback 1 s pour garantir un heartbeat meme si aucun agent ne publie
+            if not ws.closed:
+                await ws.send_str(_build_payload())
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -144,6 +157,7 @@ async def start_cloudflare_tunnel(
             f"http://localhost:{port}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            creationflags=0x08000000,
         )
         _cloudflare_process = proc
     except FileNotFoundError:
@@ -226,7 +240,7 @@ def build_agents_payload(data: dict[str, Any]) -> dict[str, Any]:
                 "updated_at": raw.get("updated_at") or result_data.get("timestamp"),
             }
         )
-    return {"agents": payload, "updated_at": datetime.utcnow().isoformat()}
+    return {"agents": payload, "updated_at": datetime.now(timezone.utc).isoformat()}
 
 
 def build_state_summary(data: dict[str, Any]) -> dict[str, Any]:

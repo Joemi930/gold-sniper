@@ -19,6 +19,7 @@ try:
         NEWS_HIGH_IMPACT_BLACKOUT_MINUTES,
         NEWS_SCRAPE_INTERVAL_SECONDS,
         NEWS_STEALTH_AFTER_MINUTES,
+        MT5_SYMBOL,
     )
 except ImportError:
     FMP_TOKEN = ""
@@ -26,6 +27,7 @@ except ImportError:
     NEWS_HIGH_IMPACT_BLACKOUT_MINUTES = 15
     NEWS_SCRAPE_INTERVAL_SECONDS = 60
     NEWS_STEALTH_AFTER_MINUTES = 60
+    MT5_SYMBOL = "XAUUSD"
 
 try:
     from scrapers.economic_calendar import EconomicCalendarScraper
@@ -123,7 +125,7 @@ def normalize_calendar_event(raw: dict, now: datetime | None = None) -> dict:
 
 
 def is_gold_relevant_event(event: dict) -> bool:
-    """Garde les evenements USD ou high-impact pertinents pour XAUUSD."""
+    f"""Garde les evenements USD ou high-impact pertinents pour {MT5_SYMBOL}."""
     currency = str(event.get("currency", "")).upper()
     name = str(event.get("name", ""))
     return "US" in currency or "USD" in currency or any(keyword.lower() in name.lower() for keyword in HIGH_IMPACT_KEYWORDS)
@@ -239,7 +241,55 @@ class AgentSentinelle:
     async def run(self):
         """Demarre les boucles fetch calendrier et surveillance blackout."""
         self.logger.info("Agent 6 (Sentinelle Finnhub) demarre")
-        await asyncio.gather(self._news_scraper_loop(), self._blackout_check_loop())
+        if not hasattr(self, 'tracked_news'):
+            self.tracked_news = {}
+        await asyncio.gather(
+            self._news_scraper_loop(), 
+            self._blackout_check_loop(),
+            self._news_reaction_tracker_loop()
+        )
+
+    async def _news_reaction_tracker_loop(self):
+        while not self.bb.kill_event.is_set():
+            try:
+                now = _ensure_utc(datetime.now(timezone.utc))
+                tick = self.bb.read_sync("market_data.current_tick")
+                current_price = float(tick.get("bid", 0.0)) if tick else 0.0
+
+                for raw_event in self.events_cache or []:
+                    event = normalize_calendar_event(raw_event, now)
+                    if event["impact"] != "HIGH" or not is_gold_relevant_event(event):
+                        continue
+                    
+                    event_time = _ensure_utc(event["time"])
+                    event_key = self._event_key(event)
+                    
+                    if current_price > 0:
+                        time_diff = (event_time - now).total_seconds()
+                        if 0 <= time_diff <= 300:
+                            if event_key not in self.tracked_news:
+                                self.tracked_news[event_key] = {"price_before": current_price, "event": event}
+                    
+                    if event_key in self.tracked_news and not self.tracked_news[event_key].get("recorded"):
+                        if now >= event_time + timedelta(minutes=NEWS_STEALTH_AFTER_MINUTES) and current_price > 0:
+                            price_before = self.tracked_news[event_key]["price_before"]
+                            pips_moved = current_price - price_before
+                            
+                            from data.memory_db import MemoryDB
+                            mem = MemoryDB()
+                            actual = str(event.get("actual", ""))
+                            forecast = str(event.get("forecast", ""))
+                            await mem.record_news_reaction(event["name"], "HIGH", actual, forecast, price_before, current_price, pips_moved)
+                            
+                            self.tracked_news[event_key]["recorded"] = True
+                            
+                            bias = await mem.get_news_historical_bias(event["name"])
+                            if bias is not None:
+                                await self.bb.update_dict("market", {"news_historical_bias": bias})
+            except Exception as exc:
+                self.logger.warning(f"Tracker news erreur: {exc}")
+                
+            await asyncio.sleep(60)
 
     async def _news_scraper_loop(self):
         """Rafraichit le calendrier economique sans tuer l'agent si Finnhub tombe."""
@@ -419,22 +469,22 @@ class AgentSentinelle:
     def _expected_gold_impact(self, event: dict) -> str:
         name = str(event.get("name", "")).lower()
         if any(key in name for key in ["cpi", "ppi", "pce", "inflation", "interest rate", "fomc", "powell"]):
-            return "USD/rates sensibles: surprise hawkish = pression baissiere sur XAUUSD, dovish = soutien."
+            return f"USD/rates sensibles: surprise hawkish = pression baissiere sur {MT5_SYMBOL}, dovish = soutien."
         if any(key in name for key in ["nfp", "non-farm", "unemployment", "jobless", "adp"]):
             return "Emploi USD sensible: donnees fortes = USD/rendements haussiers, pression sur l'or."
         if any(key in name for key in ["gdp", "retail sales", "ism"]):
-            return "Croissance USD: surprise forte peut peser sur l'or; faiblesse peut soutenir XAUUSD."
-        return "Volatilite XAUUSD attendue; attendre la reaction post-news."
+            return f"Croissance USD: surprise forte peut peser sur l'or; faiblesse peut soutenir {MT5_SYMBOL}."
+        return f"Volatilite {MT5_SYMBOL} attendue; attendre la reaction post-news."
 
     def _actual_vs_forecast_gold_impact(self, event: dict, actual: str, forecast: str) -> str:
         actual_num = self._to_float(actual)
         forecast_num = self._to_float(forecast)
         if actual_num is None or forecast_num is None:
-            return "Comparer manuellement la surprise macro et la reaction XAUUSD."
+            return f"Comparer manuellement la surprise macro et la reaction {MT5_SYMBOL}."
         surprise = actual_num - forecast_num
         name = str(event.get("name", "")).lower()
         if abs(surprise) < 1e-9:
-            return "Conforme au consensus: reaction XAUUSD probablement guidee par le contexte."
+            return f"Conforme au consensus: reaction {MT5_SYMBOL} probablement guidee par le contexte."
         stronger_is_bearish_gold = not any(key in name for key in ["unemployment", "jobless"])
         if surprise > 0:
             return "Surprise au-dessus du consensus: biais initial baissier or." if stronger_is_bearish_gold else "Surprise au-dessus du consensus: biais initial haussier or."

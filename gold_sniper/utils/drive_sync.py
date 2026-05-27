@@ -1,10 +1,17 @@
 import asyncio
 import json
 import mimetypes
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
+
+# ── Allows running this file directly: python utils/drive_sync.py ────────────
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+# ─────────────────────────────────────────────────────────────────────────────
 
 import schedule
 from google.auth.transport.requests import Request
@@ -18,7 +25,7 @@ from utils.telegram_notifier import send_telegram_notification
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-CREDENTIALS_PATH = ROOT_DIR / "credentials.json"
+CREDENTIALS_PATH = ROOT_DIR / "data" / "credentials.json"
 TOKEN_PATH = ROOT_DIR / "data" / "drive_token.json"
 ERROR_LOG = ROOT_DIR / "logs" / "drive_sync_errors.log"
 REPORTS_DIR = ROOT_DIR / "logs" / "reports"
