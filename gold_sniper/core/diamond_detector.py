@@ -6,7 +6,7 @@ from typing import Any
 
 from config import DIAMOND_MIN_RR
 from core.blackboard import BLACKBOARD, BlackBoard
-from utils.telegram_notifier import send_telegram_notification
+from utils.discord_notifier import send_discord_notification
 
 
 MISSED_OPPORTUNITIES = Path("logs/missed_opportunities.jsonl")
@@ -86,7 +86,7 @@ async def alert_diamond_setup(
         return False
 
     message = format_diamond_message(evaluation, context)
-    await send_telegram_notification(blackboard, message)
+    await send_discord_notification(blackboard, message)
     await _log_diamond_opportunity(evaluation, agent_breakdown, context)
 
     async with blackboard._lock:

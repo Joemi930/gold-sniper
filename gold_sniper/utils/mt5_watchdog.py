@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from config import WATCHDOG_HEARTBEAT_INTERVAL, WATCHDOG_TIMEOUT_CRITICAL, WATCHDOG_TIMEOUT_WARNING
 from core.mt5_bridge import bridge
 from utils.logger import get_logger
-from utils.telegram_notifier import send_telegram_notification
+from utils.discord_notifier import send_discord_notification
 
 
 class MT5Watchdog:
@@ -49,7 +49,7 @@ class MT5Watchdog:
         if was_disconnected:
             await self._clear_disconnect_veto()
             self.logger.info("MT5 reconnecte — reprise de la surveillance normale")
-            await send_telegram_notification(
+            await send_discord_notification(
                 self.blackboard,
                 "✅ MT5 reconnecte — le bot reprend la surveillance normale.",
             )
@@ -66,7 +66,7 @@ class MT5Watchdog:
 
         if elapsed >= WATCHDOG_TIMEOUT_WARNING and not self.warning_sent:
             self.warning_sent = True
-            await send_telegram_notification(
+            await send_discord_notification(
                 self.blackboard,
                 "⚠️ MT5 deconnecte — nouvelles entrees bloquees, reconnexion en cours.",
             )
@@ -78,7 +78,7 @@ class MT5Watchdog:
         if elapsed >= WATCHDOG_TIMEOUT_CRITICAL and not self.critical_sent:
             self.critical_sent = True
             self.logger.critical("MT5 toujours deconnecte apres tentatives de reconnexion")
-            await send_telegram_notification(
+            await send_discord_notification(
                 self.blackboard,
                 "🚨 MT5 toujours deconnecte — verifie le terminal et les trades ouverts.",
             )

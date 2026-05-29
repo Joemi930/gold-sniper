@@ -1,7 +1,11 @@
-# GOLD SNIPER V3 — ARCHITECTURE COMPLÈTE
+# GOLD SNIPER V3.1 — ARCHITECTURE COMPLÈTE
 
 > Document de référence exhaustif. Toute modification du système doit être répercutée ici.
-> Dernière mise à jour : 2026-05-27
+> Dernière mise à jour : 2026-05-29
+>
+> **Changelog V3.1** : migration Telegram → Discord ; PC Manager comme gateway unique ;
+> signal `bot_ready.json` ; correctif Cloudflare `include_listeners` ; anti-doublons processus.
+> Voir aussi [`MIGRATION_DISCORD_MACON.md`](MIGRATION_DISCORD_MACON.md).
 
 ---
 
@@ -15,9 +19,10 @@
 | **Mode actif** | Paper Trading (LIVE_MODE=0) — passer à 1 après validation démo |
 | **Compte** | Login MT5 = 1200037833 (alias `MT5_ACCOUNT`) |
 | **Magic Number** | 240115 (filtre nos ordres dans MT5) |
-| **Langage** | Python 3.11+ / asyncio |
-| **Hébergement** | PC Windows local, démarrage auto via Task Scheduler + Watchdog externe |
-| **Accès distant** | Dashboard Web via Cloudflare Tunnel (URL publique aléatoire) + Telegram |
+| **Langage** | Python 3.11+ / asyncio (testé Python 3.14 + `truststore`) |
+| **Hébergement** | PC Windows local — PC Manager (Task Scheduler) + Watchdog + `main.py` |
+| **Accès distant** | Dashboard Web via Cloudflare Tunnel + pilotage **Discord** (`pc_manager.py`) |
+| **Version** | **V3.1** — interface Discord (remplace Telegram V3.0) |
 
 ### Philosophie de conception
 
@@ -29,16 +34,17 @@ Le système repose sur le pattern **Blackboard Architecture** : un état global 
 
 ```
 gold_sniper/
-├── main.py                     # Point d'entrée — démarre toutes les coroutines
+├── main.py                     # Point d'entrée moteur — cold start, dashboard, engine
+├── pc_manager.py               # Gateway Discord UNIQUE — lifecycle !start !kill !restart
 ├── config.py                   # SEULE source de vérité des paramètres
-├── watchdog.py                 # Watchdog externe (processus séparé)
-├── .env                        # Variables sensibles (tokens, mots de passe)
-├── GoldSniper.bat              # Lance le bot via pythonw.exe (sans console)
-├── LancerGoldSniper.vbs        # Double-clic silencieux → GoldSniper.bat
-├── lancer_manager.vbs          # Lance le PC Manager (interface admin)
-├── Installer_Manager.bat       # Installe les dépendances pip
+├── watchdog.py                 # Watchdog externe (surveille main.py)
+├── .env                        # Variables sensibles (DISCORD_TOKEN, MT5, …)
+├── GoldSniper.bat              # Lance watchdog (avec garde anti-doublon)
+├── LancerManager.bat           # Lance le PC Manager manuellement
+├── Install_Autostart.bat       # Installe autostart Windows (tâche planifiée manager)
 ├── recovery.json               # Snapshot de récupération (auto-généré)
-├── watchdog_heartbeat.tmp      # Fichier de battement de cœur (Watchdog interne)
+├── kill_flag.txt               # Arrêt demandé par !kill (pc_manager)
+├── watchdog_heartbeat.tmp      # Battement de cœur watchdog externe
 │
 ├── core/                       # Moteur central
 │   ├── blackboard.py           # État global partagé (SINGLETON BLACKBOARD)
@@ -71,8 +77,17 @@ gold_sniper/
 │
 ├── utils/                      # Utilitaires transversaux
 │   ├── logger.py               # Logger structuré JSONL (rotation, rétention 30j)
-│   ├── telegram_notifier.py    # Envoi de notifications Telegram (async)
-│   ├── telegram_commander.py   # Écoute et traitement des commandes Telegram
+│   ├── discord_notifier.py     # Notifications Discord (embeds REST, canaux alerts/reports)
+│   ├── discord_commander.py    # Consommation data/discord_inbox.jsonl (commandes !)
+│   ├── discord_commands.py     # Normalisation !status / alias FR
+│   ├── discord_boot_notify.py  # Notifications boot PC Manager
+│   ├── bot_ready.py            # Écriture data/bot_ready.json (signal Cloudflare)
+│   ├── cloudflared_manager.py  # Cleanup cloudflared / port 8765
+│   ├── single_instance.py      # Anti-doublons manager + pile bot
+│   ├── lifecycle_lock.py       # Déduplication messages lifecycle Discord
+│   ├── inbox_lock.py           # Verrou cross-process inbox JSONL
+│   ├── ssl_bundle.py           # SSL Python 3.14 Windows (truststore)
+│   ├── mt5_bootstrap.py        # Démarrage MT5 avant !start
 │   ├── decision_logger.py      # Log JSON de chaque décision (EXECUTE/REJECT/WAIT)
 │   ├── drive_sync.py           # Sync quotidien vers Google Drive (23h00)
 │   ├── report_scheduler.py     # Rapport hebdomadaire automatique (dimanche 20h)
@@ -83,9 +98,12 @@ gold_sniper/
 │   ├── math_utils.py           # Fonctions mathématiques (ATR, pivots, etc.)
 │   ├── risk_calculator.py      # Calcul de risque (lot sizing ATR)
 │   ├── emergency_shutdown.py   # Arrêt d'urgence + fermeture de toutes les positions
-│   └── telegram_command_listener.py  # Listener léger (wrapper de telegram_commander)
+│   └── system_metrics.py       # RAM/CPU pour !pc_status et !health
 │
 ├── data/                       # Données persistées
+│   ├── discord_inbox.jsonl     # File commandes Discord (PC Manager → moteur)
+│   ├── bot_ready.json          # URL Cloudflare + phase boot (lu par pc_manager)
+│   ├── pc_manager.lock         # Verrou instance unique PC Manager
 │   ├── memory_db.py            # Interface SQLite (mémoire trades, patterns, analyses)
 │   ├── memory.db               # Base de données SQLite (générée automatiquement)
 │   ├── historical_loader.py    # Chargement des données historiques MT5 → parquet
@@ -101,8 +119,11 @@ gold_sniper/
 │   └── backtest_engine.py      # Moteur de backtest (cache parquet, warmup, validation)
 │
 ├── scripts/
-│   ├── setup_autostart.ps1     # Configure le démarrage Windows automatique
-│   └── start_mt5_minimized.ps1 # Lance MT5 en mode minimisé en arrière-plan
+│   ├── setup_windows_autostart.ps1  # Tâche planifiée PC Manager (une seule entrée)
+│   ├── stop_all_gold_sniper.ps1     # Arrêt complet dépannage
+│   ├── guard_launch.py              # Refuse double lancement manager/bot
+│   ├── install_deps.ps1             # pip install requirements.txt
+│   └── start_mt5_minimized.ps1      # Lance MT5 minimisé (legacy / optionnel)
 │
 ├── logs/                       # Fichiers de logs (auto-créé)
 │   ├── gold_sniper_YYYY-MM-DD.jsonl   # Logs structurés du bot
@@ -173,9 +194,9 @@ MT5 (ticks XAUUSD)
   • Surveille TP1 (BE), trailing SL, TP2 (fermeture partielle 50%)
         │
         ▼
-[decision_logger.py] + [telegram_notifier.py]
+[decision_logger.py] + [discord_notifier.py]
   • Log JSON de la décision
-  • Notification Telegram : trade ouvert, TP1 atteint, SL touché, etc.
+  • Notification Discord : trade ouvert, TP1 atteint, SL touché, etc.
         │
         ▼
 [risk_manager.py] (boucle parallèle, toutes les 10s)
@@ -286,7 +307,7 @@ L'Orchestrateur ne tourne pas en polling. Il attend les events `agent_N_ready` v
    • Agent 2 hard_filter_pass = True (POI valide)
    • Agent 6 veto = False (pas de news en cours)
    • Risk Manager veto = False (drawdown OK)
-   • Control.paused = False (pas en pause Telegram)
+   • Control.paused = False (pas en pause via !pause Discord)
    • Spread < MAX_SPREAD_POINTS (45 points)
    • Kill Zone active (Agent 7 trading_allowed = True)
 
@@ -328,16 +349,16 @@ L'Orchestrateur ne tourne pas en polling. Il attend les events `agent_N_ready` v
 |---|---|
 | Perte journalière ≥ 3% | Bascule en Paper Trading forcé |
 | Perte journalière ≥ 5% | **VETO absolu** — arrêt total |
-| 3 pertes consécutives | Pause 2 heures + rapport diagnostic Telegram |
+| 3 pertes consécutives | Pause 2 heures + rapport diagnostic Discord |
 | Récupération > 1.5% | Retour en mode Live automatique |
 
 ### Intégration `/resume`
 
-La commande `/resume` (Telegram) écrit `control.risk_manager_pause_reset = True` dans le Blackboard. Au prochain cycle du Risk Manager (toutes les 10s), ce flag est détecté : `consecutive_losses` est remis à 0, `pause_until = None`. Le flag est ensuite effacé pour éviter les réinitialisations répétées.
+La commande `!resume` (Discord) écrit `control.risk_manager_pause_reset = True` dans le Blackboard. Au prochain cycle du Risk Manager (toutes les 10s), ce flag est détecté : `consecutive_losses` est remis à 0, `pause_until = None`. Le flag est ensuite effacé pour éviter les réinitialisations répétées.
 
 ### Rapport diagnostic (automatique)
 
-Après 3 pertes consécutives, le Risk Manager génère et envoie via Telegram :
+Après 3 pertes consécutives, le Risk Manager génère et envoie via Discord :
 - Nombre de pertes
 - Agent le plus suspect (score fort sur les trades perdants)
 - Session/Régime dominant sur les pertes
@@ -463,7 +484,7 @@ Chaque événement économique récupéré est stocké en base avec son impact r
 1. Extraction des 5 derniers trades perdants
 2. Identification de l'agent le plus suspect
 3. Corrélation session/régime dominant
-4. Rapport Telegram + stockage en `loss_analyses`
+4. Rapport Discord + stockage en `loss_analyses`
 5. Suggestion automatique : réduire le poids de l'agent suspect
 
 ### Google Drive sync (`utils/drive_sync.py`)
@@ -476,49 +497,108 @@ Chaque événement économique récupéré est stocké en base avec son impact r
 
 ---
 
-## 12. Telegram — Commandes et notifications
+## 12. Discord — Commandes et notifications (V3.1)
 
-### Commandes disponibles
+### Architecture communication
 
-| Commande | Description | Conditions |
+```
+Utilisateur (#gold-sniper-commands)
+        │
+        ▼
+pc_manager.py (Gateway Discord UNIQUE)
+        ├── Lifecycle : !start !kill !restart !pc_status
+        │       → watchdog.py → main.py
+        │       → attend data/bot_ready.json (URL Cloudflare)
+        └── Opérationnel : !status !agents … (moteur actif)
+                → data/discord_inbox.jsonl
+                        ▼
+                discord_commander.py (dans main.py)
+                        ▼
+                discord_notifier.py → #gold-sniper-alerts / #gold-sniper-reports
+```
+
+### Canaux Discord
+
+| Canal | Variable `.env` | Usage |
 |---|---|---|
-| `/start` | Présentation du bot et liste rapide | Toujours disponible |
-| `/status` | État complet : mode, session, régime, score, trades | Toujours disponible |
-| `/pause` | Suspend l'ouverture de nouveaux trades | Moteur actif |
-| `/resume` | Reprend les trades + reset compteur pertes | Moteur actif |
-| `/kill` | Arrêt d'urgence + fermeture de toutes les positions | Toujours disponible |
-| `/restart` | Redémarre le moteur sans couper MT5 | Moteur actif |
-| `/risk 0.5` | Modifie le risque par trade (0.1–3.0%) | Moteur actif |
-| `/trades` | Liste des positions ouvertes avec SL/TP/PnL | Toujours disponible |
-| `/agents` | Scores et états de tous les agents | Moteur actif |
-| `/regime` | Régime marché, session, stratégie active, DXY/US10Y | Moteur actif |
-| `/news` | Annonces économiques HIGH/MEDIUM des 24h suivantes | Moteur actif |
-| `/report` | Rapport journalier (trades, PnL réalisé + flottant) | Toujours disponible |
-| `/backtest` | Dernier résultat de backtest stocké | Toujours disponible |
-| `/calibrate` | Déclenche la calibration des poids (50 trades min) | Moteur actif |
-| `/help` | Liste complète des commandes | Toujours disponible |
+| Alerts | `DISCORD_ALERTS_CHANNEL_ID` | Boot, trades, alertes risque, news |
+| Commands | `DISCORD_COMMANDS_CHANNEL_ID` | Commandes utilisateur |
+| Reports | `DISCORD_REPORTS_CHANNEL_ID` | Rapports journaliers / hebdo |
+| Logs | `DISCORD_LOGS_CHANNEL_ID` | Logs détaillés (optionnel) |
 
-### Notifications automatiques
+### Commandes lifecycle (PC Manager)
 
-| Événement | Message envoyé |
+| Commande | Description |
 |---|---|
-| Démarrage du bot | "Gold Sniper V3 démarré — mode PAPER/LIVE" |
-| Dashboard en ligne | URL Cloudflare publique |
-| Trade ouvert | Ticket, direction, entry, SL, TP1, TP2, lot, session, régime |
-| TP1 atteint | Ticket, PnL partiel, BE activé |
-| TP2 atteint | Ticket, PnL final, trade fermé |
-| SL touché | Ticket, perte en USD, pertes consécutives |
-| 3 pertes consécutives | Rapport diagnostic complet + pause 2h |
-| Drawdown > 3% | Passage en Paper Trading |
-| Drawdown > 5% | VETO absolu activé |
-| Spread élevé > 5min | Alerte spread (niveau actuel + max autorisé) |
-| News HIGH détectée | Nom, heure, impact, veto activé |
-| Watchdog restart | Crash détecté + numéro de restart |
+| `!start` | Démarre MT5 si besoin, watchdog, attend URL Cloudflare |
+| `!kill` | Arrêt complet (kill_flag, watchdog, main, cloudflared) |
+| `!restart` | `!kill` puis `!start` |
+| `!pc_status` | RAM, CPU, état pile — disponible même si moteur arrêté |
 
-### Sécurité
+Alias FR : `!demarrer`, `!arreter`, `!redemarrer`, `!etatpc`.
 
-- **Fence anti-replay** : au démarrage, tous les messages antérieurs au boot sont ignorés (via `_boot_update_id`). Évite la ré-exécution de `/kill` stocké pendant l'arrêt.
-- **Chat ID vérifié** : seul le `TELEGRAM_CHAT_ID` configuré dans `.env` peut exécuter des commandes.
+### Commandes opérationnelles (moteur actif, via inbox)
+
+| Commande | Description |
+|---|---|
+| `!status` / `!statut` | État complet système |
+| `!pause` / `!resume` | Suspendre / reprendre les trades |
+| `!kill` | *(lifecycle — géré par PC Manager)* |
+| `!risk 0.5` | Modifier le risque (0.1–3.0%) |
+| `!trades` | Positions ouvertes |
+| `!agents` | Scores des 7 agents |
+| `!regime` | Régime, session, stratégie |
+| `!news` | Calendrier 24h |
+| `!report` | Rapport journalier immédiat |
+| `!backtest` | Dernier backtest |
+| `!calibrate` | Calibration des poids |
+| `!health` | Diagnostic système (psutil) |
+| `!chart` | Graphique XAUUSD (matplotlib) |
+| `!logs` / `!memory` | Logs session / stats SQLite |
+| `!help` / `!aide` | Liste des commandes |
+
+### Notifications automatiques (embeds)
+
+| Événement | Canal typique |
+|---|---|
+| Démarrage moteur | Alerts — embed « Gold Sniper opérationnel » + URL Cloudflare |
+| Trade ouvert / TP / SL | Alerts |
+| 3 pertes consécutives | Alerts + rapport diagnostic |
+| Drawdown / spread / news | Alerts |
+| Rapports planifiés | Reports |
+| Crash watchdog | Alerts (REST API) |
+
+### Sécurité Discord
+
+- **Utilisateur unique** : seul `DISCORD_USER_ID` peut commander.
+- **Canal commands** : messages hors `DISCORD_COMMANDS_CHANNEL_ID` ignorés.
+- **Déduplication lifecycle** : `utils/lifecycle_lock.py` (`claim_discord_message`) — un message = une exécution.
+- **Debounce** : cooldown sur `!start` / `!restart` (évite double-clic).
+- **Anti-doublon processus** : un seul `pc_manager.py` actif (`data/pc_manager.lock`).
+- **Jamais localhost dans Discord** : uniquement URL `trycloudflare.com` publique.
+
+### Signal de boot : `data/bot_ready.json`
+
+Écrit par `web/dashboard_server.py` dès obtention de l’URL Cloudflare :
+
+```json
+{
+  "ready_at": "2026-05-29T06:08:33Z",
+  "cloudflare_url": "https://xxx.trycloudflare.com",
+  "phase": "cloudflare_ready",
+  "pid": 12345,
+  "mode": "PAPER"
+}
+```
+
+Le PC Manager poll ce fichier dans `_wait_for_bot_ready()` (timeout `BOOT_READY_TIMEOUT`, défaut 180 s).
+
+### Correctif Cloudflare V3.1 (critique)
+
+`utils/cloudflared_manager.cleanup_before_tunnel()` :
+
+- **`include_listeners=False`** (défaut) lors du tunnel depuis `main.py` — ne pas tuer le processus qui écoute sur le port 8765.
+- **`include_listeners=True`** uniquement dans `prepare_clean_stack_start()` avant un nouveau `!start`.
 
 ---
 
@@ -580,6 +660,21 @@ Si Cloudflare coupe la connexion (timeout 100s), reconnexion automatique en 2s a
 
 ## 14. Infrastructure
 
+### PC Manager (`pc_manager.py`) — V3.1
+
+Processus **toujours actif** sur le PC de trading (autostart Windows). Responsabilités :
+
+| Fonction | Détail |
+|---|---|
+| Gateway Discord | Seul `discord.Client` du système |
+| Lifecycle | `!start`, `!kill`, `!restart`, MT5 bootstrap |
+| Attente boot | Poll `data/bot_ready.json` + URL Cloudflare |
+| Enqueue commandes | Écrit dans `data/discord_inbox.jsonl` si moteur actif |
+| SSL | `utils/ssl_bundle.py` + hook `_async_setup_hook` (Python 3.14) |
+
+**Python** : `PYTHON_BIN` dans `config.py` (défaut `pythoncore-3.14-64\pythonw.exe`).  
+**Logs** : `logs/pc_manager.log`.
+
 ### Watchdog externe (`watchdog.py`)
 
 Processus Python **indépendant** qui surveille le processus principal :
@@ -593,14 +688,20 @@ Processus Python **indépendant** qui surveille le processus principal :
 
 Le bot principal écrit `watchdog_heartbeat.tmp` toutes les 2 secondes. Si le fichier n'est pas mis à jour sous 60s → le watchdog tue le processus et le relance.
 
-**Exécutable** : `C:\Users\tetej\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe` (hardcodé dans `_command_from_env()`). Override possible via `GOLD_SNIPER_WATCHDOG_COMMAND`.
+**Exécutable** : `PYTHON_BIN` dans `config.py` (via `_command_from_env()` dans `watchdog.py`). Override : `GOLD_SNIPER_WATCHDOG_COMMAND`.
 
-### Auto-boot Windows
+**Notifications crash** : REST Discord (`notify_discord`) — alias legacy `notify_telegram`.
 
-`scripts/setup_autostart.ps1` crée une tâche dans le Task Scheduler Windows :
+### Auto-boot Windows (V3.1)
+
+`scripts/setup_windows_autostart.ps1` crée **une seule** tâche planifiée `GoldSniper_PC_Manager` :
 - **Déclencheur** : ouverture de session utilisateur
-- **Commande** : `pythonw.exe watchdog.py` (le watchdog lance `main.py`)
-- MT5 lancé en arrière-plan via `scripts/start_mt5_minimized.ps1`
+- **Commande** : `pythonw.exe pc_manager.py` (pas de double entrée Démarrage + tâche)
+- Au boot : policy `kill_flag` → attente `!start` manuel ou autostart bot selon configuration
+
+`Install_Autostart.bat` / `scripts/check_autostart.ps1` pour vérifier l’installation.
+
+MT5 : démarré par `_ensure_mt5_or_fail()` dans le PC Manager avant chaque `!start`.
 
 ### MT5 minimisé
 
@@ -620,7 +721,8 @@ Le bot principal écrit `watchdog_heartbeat.tmp` toutes les 2 secondes. Si le fi
 | API | Usage | Clé | Limite | Statut |
 |---|---|---|---|---|
 | **MT5 (MetaTrader5 lib)** | Ticks, bougies, ordres, compte | Login/Password dans `.env` | 10 appels/s (rate-limiter) | ✅ Principal |
-| **Telegram Bot API** | Notifications + commandes | `TELEGRAM_TOKEN` dans `.env` | 30 msg/s | ✅ Actif |
+| **Discord API** | Gateway (PC Manager) + REST (notifier) | `DISCORD_TOKEN` dans `.env` | Rate limits Discord | ✅ Actif V3.1 |
+| **Telegram Bot API** | *(V3.0 — retiré)* | `TELEGRAM_*` legacy | — | ❌ Remplacé |
 | **Finnhub** | Calendrier économique | `FINNHUB_TOKEN` dans `.env` | 60 req/min (gratuit) | ✅ Primaire Agent 6 |
 | **FMP** | Macro (DXY, US10Y, calendrier) | `FMP_TOKEN` dans `.env` | 200 req/jour | ⚠️ Fallback Agent 6 |
 | **yfinance** | DXY, GLD, US10Y (corrélations macro) | Aucune | Non documentée | ✅ Macro Monitor |
@@ -641,7 +743,7 @@ Le bot principal écrit `watchdog_heartbeat.tmp` toutes les 2 secondes. Si le fi
 | R6 | Spread max | Spread > 45 points = pas d'ouverture |
 | R7 | Assume Hostile | 5 échecs consécutifs du feed news = veto automatique |
 | R8 | Range asiatique | Range asiatique < 30% ATR(14,4H) = Agent 3 score 0 |
-| R9 | Telegram | Toutes les alertes critiques envoyées sur Telegram |
+| R9 | Discord | Toutes les alertes critiques envoyées sur Discord (#gold-sniper-alerts) |
 | R10 | Paper Trading | LIVE_MODE=0 = simulation pure (aucun ordre réel envoyé à MT5) |
 | R11 | Cooldown | 180s de cooldown obligatoire après chaque trade |
 | R12 | Risque 1% | Maximum 1% de l'equity par trade (paramétrable via /risk) |
@@ -668,7 +770,7 @@ Le bot principal écrit `watchdog_heartbeat.tmp` toutes les 2 secondes. Si le fi
 
 ```
 Résultats stockés dans : logs/backtests/backtest_results.jsonl
-Accessible via Telegram : /backtest
+Accessible via Discord : `!backtest`
 Métriques : win rate, profit factor, max drawdown, Sharpe ratio
 ```
 
@@ -697,15 +799,17 @@ Désactivé pendant la 1ère semaine démo pour éviter l'oscillation. Réactive
 
 | Problème | Sévérité | Statut |
 |---|---|---|
-| `utils/system_tray.py` absent de la base de code | Critique | ✅ Créé |
-| `timedelta` manquant dans `telegram_commander.py` (import) | Critique | ✅ Corrigé |
-| `/start` Telegram retournait "commande inconnue" | Haute | ✅ Corrigé |
-| Dashboard WebSocket latence 361 638ms (polling 500ms) | Haute | ✅ Corrigé (event-driven < 5ms) |
-| WebSocket Cloudflare pas de reconnexion automatique | Haute | ✅ Corrigé (connectWS, 2000ms) |
-| `data/credentials.json` non versionné (normal, sécurité) | Info | Documenté |
-| `pythonw.exe` chemin hardcodé dans watchdog.py | Moyenne | Acceptable — override via env var |
-| FMP : limite 200 req/jour facile à atteindre | Moyenne | Mitigation : cache 60s |
-| ForexFactory scraping XML peut casser si le site change | Basse | Fallback local `cache_forexfactory.xml` |
+| Timeout Cloudflare 180s sur `!start` | Critique | ✅ V3.1 — `include_listeners=False` dans cleanup tunnel |
+| `main.py` crash code=1 ~5s (watchdog loop) | Critique | ✅ V3.1 — même correctif |
+| Réponses Discord en double | Haute | ✅ V3.1 — single instance PC Manager + autostart unique |
+| PC Manager muet (SSL Python 3.14) | Critique | ✅ V3.1 — `ssl_bundle.py` + truststore |
+| `!kill` ne stoppait pas tout | Haute | ✅ V3.1 — kill_flag + cleanup cloudflared |
+| Port 8765 WinError 10048 | Haute | ✅ Mitigation — `stop_all` + prepare_clean_stack_start |
+| Dashboard WebSocket latence (polling) | Haute | ✅ Corrigé (event-driven < 5ms) |
+| WebSocket Cloudflare reconnexion | Haute | ✅ Corrigé (connectWS, 2000ms) |
+| `data/credentials.json` non versionné | Info | Documenté |
+| FMP : limite 200 req/jour | Moyenne | Mitigation : cache 60s |
+| ForexFactory XML peut casser | Basse | Fallback `cache_forexfactory.xml` |
 
 ---
 
@@ -716,9 +820,9 @@ Désactivé pendant la 1ère semaine démo pour éviter l'oscillation. Réactive
 | **Multi-symbole** (EURUSD, NAS100) | Haute | Nécessite refacto Blackboard (par symbole) |
 | **Backtesting vectorisé** (numpy/pandas pur) | Haute | 100× plus rapide que la simulation tick-by-tick |
 | **Agent 8 — Sentiment** (COT, retail positioning) | Moyenne | Sources : CFTC COT + MT4/MT5 retail sentiment |
-| **Interface web admin** (controls Telegram dans le dashboard) | Moyenne | Évite d'ouvrir Telegram pour /pause, /resume |
+| **Interface web admin** (controls Discord dans le dashboard) | Moyenne | Évite d'ouvrir Discord pour !pause, !resume |
 | **Mode Live automatique** après 50 trades démo profitables | Haute | Validation humaine requise avant flip LIVE_MODE=1 |
-| **Alertes SMS** (Twilio) en complément Telegram | Basse | Redondance si Telegram down |
+| **Alertes SMS** (Twilio) en complément Discord | Basse | Redondance si Discord down |
 | **Equity curve en temps réel** dans le dashboard | Moyenne | Graphique canvas JS |
 | **API REST publique** pour intégration n8n/Zapier | Basse | Export signaux vers d'autres systèmes |
 | **Gestion multi-compte** (MT5 + MT4 simultané) | Basse | Architecture complexe |

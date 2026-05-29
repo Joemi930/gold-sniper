@@ -1,15 +1,23 @@
 import asyncio
 import sys
 import threading
-import time
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 
 import MetaTrader5 as mt5
 
 sys.path.insert(0, ".")
 
+try:
+    from utils.ssl_bundle import configure_ssl_environment
+
+    configure_ssl_environment()
+except ImportError:
+    pass
+
 from config import (
+    KILL_FLAG_PATH,
     LIVE_MODE,
     LOG_BACKUP_COUNT,
     LOG_DIR,
@@ -25,32 +33,28 @@ from core.mt5_bridge import bridge
 from core.orchestrator import EXECUTION_THRESHOLD
 from core.recovery_manager import load_daily_stats_from_recovery, load_recovery_metadata, recover_open_positions
 from data.historical_loader import TIMEFRAMES, dataframe_to_candles, get_warmup_data, preload_historical_data
+from utils.discord_commander import discord_command_loop
+from utils.discord_notifier import send_eod_report
 from utils.emergency_shutdown import emergency_shutdown
 from utils.logger import get_logger, setup_logger
-from utils.telegram_commander import telegram_command_loop
-from utils.telegram_notifier import send_eod_report, send_telegram_notification
 
 
 async def cold_start(blackboard: BlackBoard) -> bool:
     logger = get_logger()
-    boot_time = datetime.now(timezone.utc)
-    
-    # Notification IMMEDIATE au lancement
-    import socket
-    await send_telegram_notification(
-        blackboard,
-        f"⏳ **Démarrage Gold Sniper V3** initié sur {socket.gethostname()}...\n"
-        "Chargement MT5 et historique en cours."
-    )
-
-    recovery_meta = load_recovery_metadata()
     logger.info("=" * 50)
     logger.info("COLD START - sequence de bootstrap")
     logger.info("=" * 50)
 
     logger.info("Phase 1: connexion MT5")
     if not await bridge.connect():
-        return False
+        from utils.mt5_bootstrap import ensure_mt5_running
+
+        logger.warning("MT5 non connecte — tentative lancement terminal puis retry")
+        ok, detail = await asyncio.to_thread(ensure_mt5_running)
+        logger.info("ensure_mt5_running: ok=%s detail=%s", ok, detail)
+        if not await bridge.connect():
+            logger.critical("Echec connexion MT5 apres ensure_mt5_running")
+            return False
 
     logger.info("Phase 2: recovery manager")
     saved_daily = load_daily_stats_from_recovery()
@@ -62,23 +66,17 @@ async def cold_start(blackboard: BlackBoard) -> bool:
             f"{saved_daily.get('realized_pnl', 0):.2f}$"
         )
 
+    recovery_meta = load_recovery_metadata()
     recovered = await recover_open_positions(blackboard)
     if recovery_meta:
-        await send_telegram_notification(
-            blackboard,
-            "PC REDEMARRE APRES COUPURE\n"
-            f"Derniere sauvegarde/extinction estimee: {recovery_meta.get('saved_at', 'N/A')}\n"
-            f"Redemarrage: {boot_time.isoformat()}\n"
-            f"Etat precedent: {recovery_meta.get('state', 'UNKNOWN')}\n"
-            f"Positions recuperees: {recovered} "
-            f"(snapshot actif: {recovery_meta.get('active_trade_count', 0)})",
+        logger.info(
+            "Recovery apres coupure: saved_at=%s state=%s positions=%s",
+            recovery_meta.get("saved_at", "N/A"),
+            recovery_meta.get("state", "UNKNOWN"),
+            recovered,
         )
     if recovered > 0:
         logger.warning(f"{recovered} position(s) orpheline(s) recuperee(s).")
-        await send_telegram_notification(
-            blackboard,
-            f"Recovery - {recovered} position(s) orpheline(s) recuperee(s) au redemarrage.",
-        )
     else:
         logger.info("Aucune position orpheline.")
 
@@ -136,21 +134,20 @@ async def cold_start(blackboard: BlackBoard) -> bool:
                 "drawdown_halt": False,
             },
         )
+        blackboard._data.setdefault("meta", {})["boot_time"] = datetime.now(timezone.utc).isoformat()
 
     await blackboard.write("meta.state", "READY")
     logger.info(f"COLD START termine - Mode: {'LIVE' if LIVE_MODE else 'PAPER'}")
-
-    await send_telegram_notification(
-        blackboard,
-        "✅ **Gold Sniper V3 100% OPÉRATIONNEL**\n"
-        f"Mode: {'LIVE' if LIVE_MODE else 'PAPER'}\n"
-        f"Symbole: {SYMBOL} | Seuil: {EXECUTION_THRESHOLD:.0f}/100",
-    )
     return True
 
 
 async def async_main(blackboard: BlackBoard, stop_event: threading.Event) -> None:
     logger = get_logger()
+
+    if Path(KILL_FLAG_PATH).exists():
+        logger.warning("kill_flag present — arret immediat (attendre !start via pc_manager)")
+        stop_event.set()
+        return
 
     async def write_external_watchdog_heartbeat() -> None:
         heartbeat_path = WATCHDOG_HEARTBEAT_FILE
@@ -171,12 +168,40 @@ async def async_main(blackboard: BlackBoard, stop_event: threading.Event) -> Non
             pass
         await emergency_shutdown(blackboard, reason="LOCAL_STOP")
 
+    async def watch_kill_flag() -> None:
+        while not stop_event.is_set() and not blackboard.kill_event.is_set():
+            if Path(KILL_FLAG_PATH).exists():
+                logger.warning("kill_flag detecte — arret du moteur")
+                blackboard.kill_event.set()
+                try:
+                    from web.dashboard_server import stop_cloudflare_tunnel
+
+                    await stop_cloudflare_tunnel()
+                except Exception as exc:
+                    logger.warning("Arret cloudflared sur kill_flag: %s", exc)
+                try:
+                    await emergency_shutdown(blackboard, reason="KILL_FLAG", notify=False)
+                except Exception:
+                    pass
+                stop_event.set()
+                return
+            await asyncio.sleep(2.0)
+
     asyncio.create_task(watch_stop_event())
+    asyncio.create_task(watch_kill_flag())
     asyncio.create_task(write_external_watchdog_heartbeat())
-    asyncio.create_task(telegram_command_loop(blackboard, on_kill=stop_event.set))
+    asyncio.create_task(discord_command_loop(blackboard))
+
+    from web.dashboard_server import bootstrap_dashboard
+    from utils.bot_ready import PHASE_CLOUDFLARE_READY, mark_engine_ready, write_bot_ready
+    from utils.discord_notifier import _notifier_from_config
+
+    # Dashboard + Cloudflare en parallèle du cold start (réduit le timeout !start)
+    dashboard_task = asyncio.create_task(bootstrap_dashboard(blackboard, launch_cloudflare=True))
 
     boot_ok = await cold_start(blackboard)
     if not boot_ok:
+        dashboard_task.cancel()
         logger.critical("COLD START echoue - arret du systeme")
         await emergency_shutdown(blackboard, reason="BOOT_FAILED", notify=False, close_positions=False)
         stop_event.set()
@@ -184,6 +209,31 @@ async def async_main(blackboard: BlackBoard, stop_event: threading.Event) -> Non
     if blackboard.kill_event.is_set():
         stop_event.set()
         return
+
+    public_url = None
+    try:
+        public_url = await dashboard_task
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning(f"Bootstrap dashboard echoue: {exc}")
+
+    if public_url and "trycloudflare.com" in public_url:
+        write_bot_ready(public_url, phase=PHASE_CLOUDFLARE_READY)
+        mark_engine_ready(public_url)
+        notifier = _notifier_from_config()
+        await notifier.notify_system_start(
+            mode="LIVE" if LIVE_MODE else "PAPER",
+            symbol=SYMBOL,
+            threshold=EXECUTION_THRESHOLD,
+            cloudflare_url=public_url,
+        )
+        logger.info(f"Boot strict OK — Cloudflare: {public_url}")
+    else:
+        logger.warning(
+            "URL Cloudflare non obtenue apres cold start — "
+            "verifier cloudflared et CLOUDFLARED_PATH dans config"
+        )
 
     await run_engine(blackboard)
 

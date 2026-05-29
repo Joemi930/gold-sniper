@@ -9,15 +9,23 @@ from typing import Any, Awaitable, Callable
 
 from aiohttp import web
 
-from config import CLOUDFLARE_ENABLED, CLOUDFLARED_PATH, DASHBOARD_ENABLED, DASHBOARD_PORT
+from config import (
+    CLOUDFLARE_ENABLED,
+    CLOUDFLARE_TUNNEL_TIMEOUT,
+    CLOUDFLARED_PATH,
+    DASHBOARD_ENABLED,
+    DASHBOARD_PORT,
+)
 from core.blackboard import BLACKBOARD
 from utils.logger import get_logger
-from utils.telegram_notifier import _notifier_from_config
+from utils.discord_notifier import _notifier_from_config
 
 
 HTML_PATH = Path(__file__).parent / "dashboard.html"
 CLOUDFLARE_URL_RE = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
 _cloudflare_process = None
+_dashboard_runner = None
+_dashboard_public_url: str | None = None
 
 
 def create_dashboard_app(blackboard=BLACKBOARD) -> web.Application:
@@ -97,7 +105,7 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
 
 async def start_dashboard_server(
     blackboard=BLACKBOARD,
-    telegram_notifier=None,
+    discord_notifier=None,
     launch_cloudflare: bool | None = None,
     process_factory: Callable[..., Awaitable[Any]] | None = None,
 ) -> dict[str, Any]:
@@ -117,19 +125,51 @@ async def start_dashboard_server(
     public_url = None
     should_launch_cloudflare = CLOUDFLARE_ENABLED if launch_cloudflare is None else launch_cloudflare
     if should_launch_cloudflare:
-        notifier = telegram_notifier or _notifier_from_config()
         public_url = await start_cloudflare_tunnel(
             DASHBOARD_PORT,
-            telegram_notifier=notifier,
             process_factory=process_factory,
         )
+
+    global _dashboard_runner, _dashboard_public_url
+    _dashboard_runner = runner
+    _dashboard_public_url = public_url
 
     return {"enabled": True, "local_url": local_url, "public_url": public_url, "runner": runner}
 
 
+def is_dashboard_running() -> bool:
+    return _dashboard_runner is not None
+
+
+def get_dashboard_session() -> dict[str, Any]:
+    return {"runner": _dashboard_runner, "public_url": _dashboard_public_url}
+
+
+async def bootstrap_dashboard(blackboard, launch_cloudflare: bool = True) -> str | None:
+    """Démarre dashboard + tunnel (une seule fois). Retourne l'URL publique si obtenue."""
+    if is_dashboard_running():
+        return _dashboard_public_url
+
+    info = await start_dashboard_server(
+        blackboard=blackboard,
+        launch_cloudflare=launch_cloudflare,
+    )
+    public_url = info.get("public_url")
+    if public_url:
+        await blackboard.write("meta.cloudflare_url", public_url)
+        async with blackboard._lock:
+            blackboard._data.setdefault("meta", {})["dashboard_started"] = True
+    return public_url
+
+
 async def dashboard_loop(blackboard) -> None:
-    info = await start_dashboard_server(blackboard=blackboard)
-    runner = info.get("runner")
+    """Maintient le dashboard ; ne relance pas si déjà démarré via bootstrap_dashboard."""
+    global _dashboard_runner, _dashboard_public_url
+    runner = _dashboard_runner
+    if runner is None:
+        await bootstrap_dashboard(blackboard, launch_cloudflare=True)
+        runner = _dashboard_runner
+
     try:
         while not blackboard.kill_event.is_set():
             await asyncio.sleep(1.0)
@@ -137,16 +177,19 @@ async def dashboard_loop(blackboard) -> None:
         await stop_cloudflare_tunnel()
         if runner:
             await runner.cleanup()
+        _dashboard_runner = None
+        _dashboard_public_url = None
 
 
-async def start_cloudflare_tunnel(
-    port: int = DASHBOARD_PORT,
-    telegram_notifier=None,
-    process_factory: Callable[..., Awaitable[Any]] | None = None,
-    timeout_seconds: float = 30.0,
-) -> str | None:
+async def _spawn_cloudflare_process(
+    port: int,
+    process_factory: Callable[..., Awaitable[Any]] | None,
+) -> Any | None:
     logger = get_logger()
     executable = str(CLOUDFLARED_PATH)
+    if not Path(executable).exists():
+        logger.warning(f"cloudflared introuvable: {executable}")
+        return None
     factory = process_factory or asyncio.create_subprocess_exec
     try:
         global _cloudflare_process
@@ -160,6 +203,7 @@ async def start_cloudflare_tunnel(
             creationflags=0x08000000,
         )
         _cloudflare_process = proc
+        return proc
     except FileNotFoundError:
         logger.warning(f"cloudflared introuvable: {executable}")
         return None
@@ -167,40 +211,81 @@ async def start_cloudflare_tunnel(
         logger.warning(f"Cloudflare Tunnel impossible a lancer: {exc}")
         return None
 
-    url = await _wait_for_cloudflare_url(proc, timeout_seconds=timeout_seconds)
-    if url:
-        logger.info(f"Cloudflare Tunnel actif: {url}")
-        if telegram_notifier:
-            await telegram_notifier.send(
-                "DASHBOARD GOLD SNIPER EN LIGNE\n"
-                f"{url}\n"
-                "Acces mobile actif via Cloudflare Tunnel.",
-                parse_mode=None,
-            )
-    else:
-        logger.warning("Cloudflare Tunnel lance mais URL publique non detectee.")
-    return url
+
+async def start_cloudflare_tunnel(
+    port: int = DASHBOARD_PORT,
+    process_factory: Callable[..., Awaitable[Any]] | None = None,
+    timeout_seconds: float | None = None,
+) -> str | None:
+    logger = get_logger()
+    if timeout_seconds is None:
+        timeout_seconds = CLOUDFLARE_TUNNEL_TIMEOUT
+
+    from utils.cloudflared_manager import cleanup_before_tunnel
+
+    await asyncio.to_thread(cleanup_before_tunnel, port, 1.0)
+
+    for attempt in range(1, 4):
+        if attempt > 1:
+            logger.warning("Cloudflare: nouvelle tentative tunnel (%s/3)", attempt)
+            await stop_cloudflare_tunnel()
+            await asyncio.to_thread(cleanup_before_tunnel, port, 2.0)
+
+        proc = await _spawn_cloudflare_process(port, process_factory)
+        if proc is None:
+            continue
+
+        url = await _wait_for_cloudflare_url(proc, timeout_seconds=timeout_seconds)
+        if url:
+            logger.info(f"Cloudflare Tunnel actif: {url}")
+            try:
+                from utils.bot_ready import PHASE_CLOUDFLARE_READY, write_bot_ready
+
+                write_bot_ready(url, phase=PHASE_CLOUDFLARE_READY)
+            except Exception as exc:
+                logger.warning(f"Ecriture bot_ready.json impossible: {exc}")
+            return url
+
+        logger.warning(
+            "Cloudflare tentative %s: URL publique non detectee en %ss",
+            attempt,
+            int(timeout_seconds),
+        )
+
+    try:
+        from utils.bot_ready import PHASE_CLOUDFLARE_FAILED, write_bot_ready
+
+        write_bot_ready(None, phase=PHASE_CLOUDFLARE_FAILED)
+    except Exception:
+        pass
+    return None
 
 
 async def stop_cloudflare_tunnel() -> None:
     global _cloudflare_process
     proc = _cloudflare_process
     _cloudflare_process = None
-    if not proc or getattr(proc, "returncode", None) is not None:
-        return
-    terminate = getattr(proc, "terminate", None)
-    if terminate is None:
-        return
-    terminate()
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=5.0)
-    except Exception:
-        kill = getattr(proc, "kill", None)
-        if kill:
-            kill()
+    if proc and getattr(proc, "returncode", None) is None:
+        terminate = getattr(proc, "terminate", None)
+        if terminate:
+            terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            except Exception:
+                kill = getattr(proc, "kill", None)
+                if kill:
+                    kill()
+    from utils.cloudflared_manager import stop_cloudflared_processes
+
+    await asyncio.to_thread(stop_cloudflared_processes, DASHBOARD_PORT, True)
 
 
-async def _wait_for_cloudflare_url(proc, timeout_seconds: float = 30.0) -> str | None:
+async def _wait_for_cloudflare_url(
+    proc,
+    timeout_seconds: float | None = None,
+) -> str | None:
+    if timeout_seconds is None:
+        timeout_seconds = CLOUDFLARE_TUNNEL_TIMEOUT
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     streams = [stream for stream in (getattr(proc, "stderr", None), getattr(proc, "stdout", None)) if stream]
     while streams and asyncio.get_running_loop().time() < deadline:

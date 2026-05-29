@@ -24,6 +24,8 @@ from config import (
     LIVE_MODE,
     CANDLE_HISTORY,
     MT5_MAX_CALLS_PER_SECOND,
+    DISCORD_ENABLED,
+    DISCORD_TOKEN,
     TELEGRAM_ENABLED,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
@@ -408,8 +410,10 @@ class BlackBoard:
                 "last_known_tick": None,
             },
 
-            # -- NOTIFICATIONS TELEGRAM [R9] --------------------------------------
+            # -- NOTIFICATIONS DISCORD --------------------------------------------
             "notifications": {
+                "discord_enabled": DISCORD_ENABLED,
+                "discord_token": DISCORD_TOKEN,
                 "telegram_enabled": TELEGRAM_ENABLED,
                 "telegram_bot_token": TELEGRAM_BOT_TOKEN,
                 "telegram_chat_id": TELEGRAM_CHAT_ID,

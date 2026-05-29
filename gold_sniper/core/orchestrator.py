@@ -31,7 +31,7 @@ from core.diamond_detector import alert_diamond_setup, evaluate_diamond_setup
 from core.strategy_dictionary import check_diamond_conditions, select_active_strategy
 from agents.base_agent import AgentResult
 from utils.logger import get_logger
-from utils.telegram_notifier import send_telegram_notification
+from utils.discord_notifier import send_discord_notification, _notifier_from_config
 from config import MAX_TRADES_PER_DAY, DRAWDOWN_LIMIT, EVENT_DRIVEN_TIMEOUT, RISK_PCT_PER_TRADE
 
 # ── Decision Logger (Script 02) — import conditionnel pour ne pas bloquer ──────
@@ -353,7 +353,7 @@ async def run_orchestrator(agent_results: list, blackboard: Optional[BlackBoard]
 
     # Alerte Telegram si setup exceptionnel refusé pour limite atteinte
     if decision == "EXCEPTIONAL_ALERT":
-        await send_telegram_notification(
+        await send_discord_notification(
             board,
             f"⚡ *SETUP EXCEPTIONNEL DÉTECTÉ* ⚡\n"
             f"Score : `{session_score:.1f}/100` | Direction : `{direction}`\n"
@@ -443,7 +443,7 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
                     blackboard._data["agents"]["risk_manager"]["daily_loss_pct"] = 0.0
                     blackboard._data["agents"]["risk_manager"]["veto"] = False
                 logger.info("🌅 Reset journalier — Compteurs remis à zéro")
-                await send_telegram_notification(
+                await send_discord_notification(
                     blackboard, "🌅 *Nouvelle journée de trading* — Compteurs réinitialisés"
                 )
 
@@ -473,7 +473,7 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
                             blackboard._data["agents"]["risk_manager"]["reason"] = (
                                 f"DRAWDOWN_HALT — perte {total_loss:.2f}$ > limite {max_loss:.2f}$"
                             )
-                        await send_telegram_notification(
+                        await send_discord_notification(
                             blackboard,
                             f"🚨 *DAILY DRAWDOWN DÉCLENCHÉ !*\n"
                             f"💸 Perte : `{total_loss:.2f} USD` | Limite : `{max_loss:.2f} USD`\n"

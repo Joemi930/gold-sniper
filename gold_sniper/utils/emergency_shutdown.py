@@ -5,7 +5,7 @@ import MetaTrader5 as mt5
 
 from config import MAGIC_NUMBER, MAX_SLIPPAGE_POINTS, SYMBOL
 from utils.logger import get_logger
-from utils.telegram_notifier import send_telegram_notification
+from utils.discord_notifier import send_discord_notification
 
 
 SHUTDOWN_CONFIRMATION = "Gold Sniper arrêté proprement."
@@ -102,7 +102,7 @@ async def emergency_shutdown(
     blackboard.trigger_kill()
 
     if notify:
-        await send_telegram_notification(blackboard, SHUTDOWN_CONFIRMATION)
+        await send_discord_notification(blackboard, SHUTDOWN_CONFIRMATION)
 
     logger.critical(
         "Arrêt propre terminé: "

@@ -5,7 +5,7 @@ from agents.base_agent import AgentResult
 from config import FRIDAY_RISK_REDUCTION_HOUR, FRIDAY_TRADING_HALT_HOUR, TZ_LOCAL
 from core.blackboard import BlackBoard
 from utils.logger import get_logger
-from utils.telegram_notifier import send_telegram_notification
+from utils.discord_notifier import send_discord_notification
 
 
 LOCAL_SESSIONS = {
@@ -91,9 +91,9 @@ async def notify_friday_mode_change(blackboard: BlackBoard, previous_mode: str |
     if current_mode == previous_mode or current_mode == "NORMAL":
         return
     if current_mode == "REDUCED":
-        await send_telegram_notification(blackboard, "🟡 Friday Mode — Risque réduit à 0.5%")
+        await send_discord_notification(blackboard, "🟡 Friday Mode — Risque réduit à 0.5%")
     elif current_mode == "HALT":
-        await send_telegram_notification(blackboard, "🔴 Friday Mode — Trading coupé")
+        await send_discord_notification(blackboard, "🔴 Friday Mode — Trading coupé")
 
 
 def check_session_context(utc_time: datetime) -> dict:

@@ -21,7 +21,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 from utils.logger import get_logger
-from utils.telegram_notifier import send_telegram_notification
+from utils.discord_notifier import send_discord_notification
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -66,7 +66,7 @@ class DriveSync:
         await asyncio.to_thread(_append_error_log, line)
         self.logger.warning(f"Google Drive sync echoue: {exc}")
         if blackboard is not None:
-            await send_telegram_notification(blackboard, FAILURE_ALERT)
+            await send_discord_notification(blackboard, FAILURE_ALERT)
 
     def _sync_once_sync(self) -> dict[str, Any]:
         service = self.service_factory() if self.service_factory else self._build_service()

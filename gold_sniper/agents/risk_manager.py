@@ -11,15 +11,15 @@ from config import (
     PAPER_MODE_RECOVERY_PCT,
     PAPER_SIMULATED_EQUITY,
 )
-from utils.telegram_notifier import TelegramNotifier
+from utils.discord_notifier import DiscordNotifier
 
 
 class RiskManager(BaseAgent):
     """Surveille l'equity curve et publie un veto absolu si nécessaire."""
 
-    def __init__(self, blackboard, telegram: TelegramNotifier | None = None):
+    def __init__(self, blackboard, discord: DiscordNotifier | None = None):
         super().__init__(blackboard, name="risk_manager")
-        self.telegram = telegram
+        self.discord = discord
         self.initial_equity = PAPER_SIMULATED_EQUITY
         self.daily_start_equity = PAPER_SIMULATED_EQUITY
         self.consecutive_losses = 0
@@ -91,8 +91,8 @@ class RiskManager(BaseAgent):
             self.pause_until = now + timedelta(hours=CONSECUTIVE_LOSS_PAUSE_HOURS)
             pause_active = True
             reason = f"PAUSE_2H — {self.consecutive_losses} pertes consécutives"
-            if self.telegram:
-                await self.telegram.notify_consecutive_losses(self.consecutive_losses)
+            if self.discord:
+                await self.discord.notify_consecutive_losses(self.consecutive_losses)
             await self._generate_diagnostic_report()
 
         if pause_active:
@@ -215,15 +215,15 @@ class RiskManager(BaseAgent):
             self.blackboard._data.setdefault("daily_stats", {})["drawdown_halt"] = veto
 
     async def _notify_risk_once(self, key: str, alert_type: str, details: str) -> None:
-        """Envoie une alerte Telegram une seule fois par état."""
-        if not self.telegram:
+        """Envoie une alerte Discord une seule fois par état."""
+        if not self.discord:
             return
         if key == "paper" and self._paper_alert_sent:
             return
         if key == "veto" and self._veto_alert_sent:
             return
 
-        await self.telegram.notify_risk_alert(alert_type, details)
+        await self.discord.notify_risk_alert(alert_type, details=details, mention_user=True)
         if key == "paper":
             self._paper_alert_sent = True
         elif key == "veto":
@@ -231,7 +231,7 @@ class RiskManager(BaseAgent):
 
     async def _generate_diagnostic_report(self) -> None:
         """Envoie un rapport de diagnostic apres plusieurs pertes."""
-        if not self.telegram:
+        if not self.discord:
             return
         if self._diagnostic_alert_sent:
             return
@@ -270,7 +270,7 @@ class RiskManager(BaseAgent):
                 )
         lines.append("")
         lines.append("Verifier les agents avec precision < 60%.")
-        await self.telegram.notify_risk_alert("DIAGNOSTIC APRES PERTES", "\n".join(lines))
+        await self.discord.notify_risk_alert("DIAGNOSTIC APRES PERTES", details="\n".join(lines), mention_user=True)
         self._diagnostic_alert_sent = True
 
     def _identify_wrong_agent(self, trades: list[dict], agent_acc: dict[str, Any]) -> str:

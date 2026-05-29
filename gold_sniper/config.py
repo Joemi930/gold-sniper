@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# GOLD SNIPER v1.0 — CONFIGURATION GLOBALE
+# GOLD SNIPER v3.1 — CONFIGURATION GLOBALE
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # Ce fichier est la SEULE source de vérité pour les paramètres du système.
@@ -31,6 +31,11 @@ MT5_LOGIN     = MT5_ACCOUNT  # Alias V3 pour compatibilite avec les futurs scrip
 MT5_PASSWORD  = os.getenv("MT5_PASSWORD", "")
 MT5_SERVER    = os.getenv("MT5_SERVER", "JustMarkets-Demo3")
 MT5_PATH      = os.getenv("MT5_PATH", "") or None
+MT5_TERMINAL_PATH = os.getenv(
+    "MT5_TERMINAL_PATH",
+    r"C:\Program Files\MetaTrader 5\terminal64.exe",
+)
+MT5_BOOT_WAIT_SECONDS = int(os.getenv("MT5_BOOT_WAIT_SECONDS", "90"))
 MT5_SYMBOL    = os.getenv("MT5_SYMBOL", "XAUUSD")
 
 # Symbole unique — un seul front à la fois (R13 rejeté)
@@ -160,10 +165,29 @@ SL_BUFFER_POINTS      = 2     # Marge de sécurité (en points) sous/au-dessus d
 # 13. NOTIFICATIONS TELEGRAM [R9]
 # ─────────────────────────────────────────────────────────────────────────────
 
-TELEGRAM_TOKEN     = os.getenv("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
-TELEGRAM_ENABLED   = bool(TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
-TELEGRAM_BOT_TOKEN = TELEGRAM_TOKEN  # Alias rétrocompatible
+# Rollback Telegram (désactivé — migré vers Discord)
+# TELEGRAM_TOKEN     = os.getenv("TELEGRAM_TOKEN", "")
+# TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_TOKEN     = ""
+TELEGRAM_CHAT_ID   = ""
+TELEGRAM_ENABLED   = False
+TELEGRAM_BOT_TOKEN = ""
+
+# ── Discord (remplace Telegram) ──────────────────────────
+DISCORD_TOKEN            = os.getenv("DISCORD_TOKEN", "")
+DISCORD_GUILD_ID         = int(os.getenv("DISCORD_GUILD_ID", "0") or "0")
+DISCORD_USER_ID          = int(os.getenv("DISCORD_USER_ID", "0") or "0")
+DISCORD_ALERTS_CHANNEL   = int(os.getenv("DISCORD_ALERTS_CHANNEL_ID", "0") or "0")
+DISCORD_COMMANDS_CHANNEL = int(os.getenv("DISCORD_COMMANDS_CHANNEL_ID", "0") or "0")
+DISCORD_REPORTS_CHANNEL  = int(os.getenv("DISCORD_REPORTS_CHANNEL_ID", "0") or "0")
+DISCORD_LOGS_CHANNEL     = int(os.getenv("DISCORD_LOGS_CHANNEL_ID", "0") or "0")
+DISCORD_ENABLED          = bool(DISCORD_TOKEN and DISCORD_ALERTS_CHANNEL)
+
+# IPC Discord (pc_manager <-> main)
+DISCORD_INBOX_PATH       = "data/discord_inbox.jsonl"
+BOT_READY_PATH           = "data/bot_ready.json"
+KILL_FLAG_PATH           = "kill_flag.txt"
+WATCHDOG_STATE_PATH      = "data/watchdog_state.json"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 14. PAPER TRADING [R10]
@@ -199,6 +223,11 @@ WATCHDOG_TIMEOUT_WARNING    = 15     # Secondes avant alerte watchdog
 WATCHDOG_TIMEOUT_CRITICAL   = 30     # Secondes avant kill + restart
 EVENT_DRIVEN_TIMEOUT        = 5.0    # Fallback A4 si aucun agent ne publie
 
+# Surveillance reseau (WiFi / coupure Internet)
+NETWORK_CHECK_HOST          = os.getenv("NETWORK_CHECK_HOST", "1.1.1.1")
+NETWORK_CHECK_INTERVAL      = int(os.getenv("NETWORK_CHECK_INTERVAL", "15"))
+NETWORK_OFFLINE_VETO_SECONDS = int(os.getenv("NETWORK_OFFLINE_VETO_SECONDS", "30"))
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 18. DIAMANT 5★ — SETUP D'EXCEPTION
 # ─────────────────────────────────────────────────────────────────────────────
@@ -233,3 +262,9 @@ CLOUDFLARED_PATH = os.getenv(
     "CLOUDFLARED_PATH",
     r"C:\Users\tetej\AppData\Local\Programs\cloudflared\cloudflared.exe",
 )
+PYTHON_BIN = os.getenv(
+    "PYTHON_BIN",
+    r"C:\Users\tetej\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe",
+)
+CLOUDFLARE_TUNNEL_TIMEOUT = float(os.getenv("CLOUDFLARE_TUNNEL_TIMEOUT", "120"))
+BOOT_READY_TIMEOUT = float(os.getenv("BOOT_READY_TIMEOUT", "180"))

@@ -32,7 +32,7 @@ from config import (
 )
 from execution.risk_calculator import RiskCalculator
 from utils.spread_monitor import SpreadMonitor
-from utils.telegram_notifier import send_telegram_notification
+from utils.discord_notifier import send_discord_notification, _notifier_from_config
 
 
 class TradeManager(BaseAgent):
@@ -188,7 +188,7 @@ class TradeManager(BaseAgent):
             retcode = getattr(result, 'retcode', 'UNKNOWN')
             comment = getattr(result, 'comment', '')
             self.logger.error(f"❌ Échec ordre {action} — Code: {retcode} | {comment} | Erreur: {error}")
-            await send_telegram_notification(
+            await send_discord_notification(
                 self.blackboard,
                 f"❌ *ORDRE REJETÉ* — {action} {MT5_SYMBOL}\nCode: `{retcode}`\nErreur: `{error}`"
             )
@@ -238,7 +238,7 @@ class TradeManager(BaseAgent):
 
         # Notification Telegram d'entrée
         rr_ratio = abs(broker_tp - result.price) / abs(result.price - sl) if abs(result.price - sl) > 0 else 0
-        await send_telegram_notification(
+        await send_discord_notification(
             self.blackboard,
             f"🎯 *TRADE OUVERT* — {action} {MT5_SYMBOL}\n"
             f"🔹 Ticket: `{result.order}`\n"
@@ -335,7 +335,7 @@ class TradeManager(BaseAgent):
                             self.logger.trade(
                                 f"Partial Close TP1 {PARTIAL_CLOSE_PERCENT}% ({half_volume} lots) sur {ticket}"
                             )
-                            await send_telegram_notification(
+                            await send_discord_notification(
                                 self.blackboard,
                                 f"📊 *CLÔTURE PARTIELLE TP1* — {trade['type']} {MT5_SYMBOL}\n"
                                 f"🔹 Ticket: `{ticket}` | {PARTIAL_CLOSE_PERCENT}% = `{half_volume}` lots\n"
@@ -460,7 +460,7 @@ class TradeManager(BaseAgent):
                 paper["simulated_equity"] = paper.get("simulated_equity", 0) + pnl
 
         emoji = "✅" if pnl >= 0 else "❌"
-        await send_telegram_notification(
+        await send_discord_notification(
             self.blackboard,
             f"{emoji} *TRADE CLÔTURÉ* — {direction} {MT5_SYMBOL}\n"
             f"🔹 Ticket: `{ticket}` | PnL: `{pnl:+.2f} USD`\n"

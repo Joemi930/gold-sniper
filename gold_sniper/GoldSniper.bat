@@ -3,7 +3,19 @@ setlocal
 
 cd /d "%~dp0"
 
-powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0scripts\start_mt5_minimized.ps1" -WindowMode Hidden -WaitSeconds 60
+REM Ne pas lancer watchdog/main si pile deja active (sauf apres !kill)
+set "_GUARD_PY="
+where pythonw.exe >nul 2>&1 && set "_GUARD_PY=pythonw.exe"
+if not defined _GUARD_PY where pyw.exe >nul 2>&1 && set "_GUARD_PY=pyw.exe"
+if not defined _GUARD_PY where python.exe >nul 2>&1 && set "_GUARD_PY=python.exe"
+if defined _GUARD_PY (
+    %_GUARD_PY% "%~dp0scripts\guard_launch.py" bot >nul 2>&1
+    if errorlevel 1 (
+        exit /b 0
+    )
+)
+
+powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0scripts\start_mt5_minimized.ps1" -WaitSeconds 90
 
 where pythonw.exe > nul 2>&1
 if %errorlevel% equ 0 (

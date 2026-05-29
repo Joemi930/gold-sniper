@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# GOLD SNIPER V3.0 — MOTEUR ASYNCHRONE (ENGINE)
+# GOLD SNIPER V3.1 — MOTEUR ASYNCHRONE (ENGINE)
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # Ossature de la boucle événementielle asyncio.
@@ -13,7 +13,7 @@ from typing import Callable, Coroutine
 
 from core.blackboard import BlackBoard
 from utils.logger import get_logger
-from utils.telegram_notifier import _notifier_from_config, send_telegram_notification
+from utils.discord_notifier import _notifier_from_config, send_discord_notification
 from utils.report_scheduler import report_scheduler_loop
 from utils.drive_sync import drive_sync_loop
 from web.dashboard_server import dashboard_loop
@@ -38,6 +38,7 @@ from execution.adaptive_weights import AdaptiveWeightEngine
 from execution.trade_manager import TradeManager
 from core.recovery_manager import recovery_persistence_loop
 from utils.mt5_watchdog import MT5Watchdog
+from utils.network_watchdog import NetworkWatchdog
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. WRAPPER DE SUPERVISION DES COROUTINES
@@ -86,25 +87,21 @@ async def supervised_task(
 # 2. TÂCHES SERVICES
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def telegram_sender_loop(blackboard: BlackBoard) -> None:
-    """
-    Boucle de notification Telegram.
-    Draine la queue de notifications du Blackboard et les envoie.
-    """
+async def discord_sender_loop(blackboard: BlackBoard) -> None:
+    """Draine la queue de notifications du Blackboard et les envoie sur Discord."""
     logger = get_logger()
-    logger.info("▶️  Telegram Sender démarré")
+    logger.info("▶️  Discord Sender démarré")
     while not blackboard.kill_event.is_set():
         try:
             notifs = blackboard.read_sync("notifications")
             queue = notifs.get("queue", []) if notifs else []
             if queue:
-                # Prendre le premier message de la queue
                 message = queue.pop(0)
                 async with blackboard._lock:
                     blackboard._data["notifications"]["queue"] = queue
-                await send_telegram_notification(blackboard, message)
+                await send_discord_notification(blackboard, message)
         except Exception as e:
-            logger.warning(f"⚠️ Telegram sender erreur : {e}")
+            logger.warning(f"⚠️ Discord sender erreur : {e}")
         await asyncio.sleep(1.0)
 
 async def account_info_fetcher(blackboard: BlackBoard) -> None:
@@ -184,7 +181,7 @@ async def adaptive_weights_loop(blackboard: BlackBoard) -> None:
 async def run_engine(blackboard: BlackBoard) -> None:
     logger = get_logger()
     logger.info("=" * 60)
-    logger.info("🚀 GOLD SNIPER V3.0 — Lancement du Moteur Asynchrone Complet")
+    logger.info("🚀 GOLD SNIPER V3.1 — Lancement du Moteur Asynchrone Complet")
     logger.info("=" * 60)
 
     # Initialisation des classes
@@ -193,13 +190,14 @@ async def run_engine(blackboard: BlackBoard) -> None:
     a3 = AgentLiquidite(blackboard)
     a4 = AgentFibonacci(blackboard)
     a5 = AgentMicroscope(blackboard)
-    a6 = AgentSentinelle(blackboard, telegram=_notifier_from_config())
+    a6 = AgentSentinelle(blackboard, discord=_notifier_from_config())
     a7 = AgentSessions(blackboard)
     macro_monitor = MacroMonitor(blackboard)
     regime_detector = RegimeDetector(blackboard)
-    risk_manager = RiskManager(blackboard, telegram=_notifier_from_config())
+    risk_manager = RiskManager(blackboard, discord=_notifier_from_config())
     trade_manager = TradeManager(blackboard)
     mt5_watchdog = MT5Watchdog(blackboard)
+    network_watchdog = NetworkWatchdog(blackboard)
 
     # ─────────────────────────────────────────────────────────────────────────
     # DÉMARRAGE DES COROUTINES (Pipeline V2 Event-Driven)
@@ -238,11 +236,12 @@ async def run_engine(blackboard: BlackBoard) -> None:
         # --- SERVICES ANNEXES ---
         supervised_task("account_info_fetcher", account_info_fetcher, blackboard),
         supervised_task("mt5_watchdog", lambda blackboard: mt5_watchdog.run(), blackboard),
+        supervised_task("network_watchdog", lambda blackboard: network_watchdog.run(), blackboard),
         supervised_task("report_scheduler", report_scheduler_loop, blackboard),
         supervised_task("drive_sync", drive_sync_loop, blackboard),
         supervised_task("dashboard_web", dashboard_loop, blackboard),
         supervised_task("recovery_persistence", recovery_persistence_loop, blackboard),
-        supervised_task("telegram_sender", telegram_sender_loop, blackboard),
+        supervised_task("discord_sender", discord_sender_loop, blackboard),
     ]
 
     try:

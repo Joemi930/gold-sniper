@@ -23,7 +23,7 @@ import MetaTrader5 as mt5
 
 from config import MAX_SLIPPAGE_POINTS, RECOVERY_FILE_PATH, RECOVERY_DEBOUNCE_SECONDS, MAGIC_NUMBER, SYMBOL
 from utils.logger import get_logger
-from utils.telegram_notifier import send_telegram_notification
+from utils.discord_notifier import send_discord_notification
 
 logger = get_logger()
 
@@ -134,7 +134,7 @@ async def _close_if_gap_breached(position, blackboard) -> bool:
             f"GAP DETECTE au cold start - ticket {position.ticket} ferme en urgence "
             f"prix={current_price:.2f} SL={sl:.2f}"
         )
-        await send_telegram_notification(
+        await send_discord_notification(
             blackboard,
             "⚠️ GAP DÉTECTÉ — Position fermée en urgence",
         )
@@ -143,7 +143,7 @@ async def _close_if_gap_breached(position, blackboard) -> bool:
 
     retcode = getattr(close_result, "retcode", "UNKNOWN")
     logger.error(f"Recovery GAP: fermeture echouee ticket {position.ticket} retcode={retcode}.")
-    await send_telegram_notification(
+    await send_discord_notification(
         blackboard,
         f"⚠️ GAP DÉTECTÉ — fermeture urgence échouée ticket {position.ticket} ({retcode})",
     )

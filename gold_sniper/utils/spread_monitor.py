@@ -20,7 +20,7 @@ from config import (
 from core.blackboard import BLACKBOARD, BlackBoard
 from utils.decision_logger import log_execution_block
 from utils.logger import get_logger
-from utils.telegram_notifier import send_telegram_notification
+from utils.discord_notifier import send_discord_notification
 
 
 logger = get_logger()
@@ -251,7 +251,7 @@ class SpreadMonitor:
             except ValueError:
                 pass
 
-        await send_telegram_notification(
+        await send_discord_notification(
             self.blackboard,
             (
                 "ALERTE SPREAD ELEVE\n"

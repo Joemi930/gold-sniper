@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from utils.logger import get_logger
-from utils.telegram_notifier import send_telegram_notification
+from utils.discord_notifier import send_discord_notification
 
 
 DB_PATH = Path("data/memory.db")
@@ -389,7 +389,7 @@ async def memory_learning_loop(
     """Record closed trades, update agent accuracy, and pause after 5 cumulative losses."""
     logger = get_logger()
     memory = db or MemoryDB()
-    notify = notifier or send_telegram_notification
+    notify = notifier or send_discord_notification
     processed_keys: set[str] = set()
     await memory.init()
     logger.info("Memory DB loop demarree")

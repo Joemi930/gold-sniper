@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import schedule
 
 from utils.logger import get_logger
-from utils.telegram_notifier import TelegramNotifier, _notifier_from_config
+from utils.discord_notifier import DiscordNotifier, _notifier_from_config
 
 
 UTC_PLUS_1 = ZoneInfo("Africa/Kinshasa")
@@ -88,12 +88,22 @@ def build_report(blackboard, report_type: str, now: datetime | None = None) -> s
 async def send_scheduled_report(
     blackboard,
     report_type: str,
-    notifier: TelegramNotifier | None = None,
+    notifier: DiscordNotifier | None = None,
 ) -> str:
     notifier = notifier or _notifier_from_config()
     text = build_report(blackboard, report_type)
     report_path = save_report_file(text, report_type)
-    await notifier.send(text, parse_mode=None)
+    channel = "reports"
+    if report_type == "weekly":
+        await notifier.send_embed(
+            title="Rapport hebdomadaire",
+            description=text[:4096],
+            color=0xD4A843,
+            fields=[],
+            channel=channel,
+        )
+    else:
+        await notifier.send(text, channel=channel)
     await blackboard.update_dict("orchestrator", {
         "last_scheduled_report": report_type,
         "last_scheduled_report_at": datetime.now(timezone.utc).isoformat(),
@@ -113,7 +123,7 @@ def save_report_file(text: str, report_type: str, now: datetime | None = None) -
 def install_report_jobs(
     scheduler,
     blackboard,
-    notifier: TelegramNotifier | None = None,
+    notifier: DiscordNotifier | None = None,
     job_factory: Callable[[str], Callable[[], None]] | None = None,
 ) -> None:
     job_factory = job_factory or _async_job_factory(blackboard, notifier)
@@ -122,7 +132,7 @@ def install_report_jobs(
     scheduler.every().friday.at("21:00", SCHEDULE_TZ).do(_monthly_guard(job_factory("monthly")))
 
 
-async def report_scheduler_loop(blackboard, notifier: TelegramNotifier | None = None) -> None:
+async def report_scheduler_loop(blackboard, notifier: DiscordNotifier | None = None) -> None:
     logger = get_logger()
     scheduler = schedule.Scheduler()
     install_report_jobs(scheduler, blackboard, notifier)
@@ -140,13 +150,13 @@ async def report_scheduler_loop(blackboard, notifier: TelegramNotifier | None = 
 def schedule_test_report(
     scheduler,
     blackboard,
-    notifier: TelegramNotifier,
+    notifier: DiscordNotifier,
     at_time: str,
 ) -> None:
     scheduler.every().day.at(at_time, SCHEDULE_TZ).do(_async_job_factory(blackboard, notifier)("test"))
 
 
-def _async_job_factory(blackboard, notifier: TelegramNotifier | None = None) -> Callable[[str], Callable[[], None]]:
+def _async_job_factory(blackboard, notifier: DiscordNotifier | None = None) -> Callable[[str], Callable[[], None]]:
     def build(report_type: str) -> Callable[[], None]:
         def run() -> None:
             asyncio.create_task(send_scheduled_report(blackboard, report_type, notifier))

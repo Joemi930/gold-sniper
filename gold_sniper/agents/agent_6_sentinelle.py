@@ -5,7 +5,7 @@ from typing import Any
 from agents.base_agent import AgentResult
 from core.blackboard import BlackBoard
 from utils.logger import get_logger
-from utils.telegram_notifier import send_telegram_notification
+from utils.discord_notifier import send_discord_notification
 
 try:
     import aiohttp
@@ -220,12 +220,12 @@ class AgentSentinelle:
     def __init__(
         self,
         blackboard: BlackBoard,
-        telegram=None,
+        discord=None,
         finnhub_token: str | None = None,
         fmp_token: str | None = None,
     ):
         self.bb = blackboard
-        self.telegram = telegram
+        self.discord = discord
         self.logger = get_logger()
         self.name = "agent_6"
         self.finnhub_token = finnhub_token if finnhub_token is not None else FINNHUB_TOKEN
@@ -437,10 +437,10 @@ class AgentSentinelle:
                 self._sent_result_alerts.add(event_key)
 
     async def _notify_news_alert(self, event: dict, minutes_to: int, gold_impact: str) -> None:
-        if self.telegram and hasattr(self.telegram, "notify_news_alert"):
-            await self.telegram.notify_news_alert(event["name"], event["impact"], minutes_to, gold_impact)
+        if self.discord and hasattr(self.discord, "notify_news_alert"):
+            await self.discord.notify_news_alert(event["name"], event["impact"], minutes_to, gold_impact)
             return
-        await send_telegram_notification(
+        await send_discord_notification(
             self.bb,
             (
                 f"*NEWS ALERT* - {event['name']}\n"
@@ -451,10 +451,10 @@ class AgentSentinelle:
 
     async def _notify_news_result(self, event: dict, actual: str, forecast: str) -> None:
         gold_impact = self._actual_vs_forecast_gold_impact(event, actual, forecast)
-        if self.telegram and hasattr(self.telegram, "notify_news_result"):
-            await self.telegram.notify_news_result(event["name"], actual, forecast, gold_impact)
+        if self.discord and hasattr(self.discord, "notify_news_result"):
+            await self.discord.notify_news_result(event["name"], actual, forecast, gold_impact)
             return
-        await send_telegram_notification(
+        await send_discord_notification(
             self.bb,
             (
                 f"*NEWS RESULT* - {event['name']}\n"
@@ -542,11 +542,11 @@ class AgentSentinelle:
         )
 
     async def _notify_feed_down_once(self) -> None:
-        """Notifie Telegram si la source calendrier tombe."""
-        if not self.telegram:
+        """Notifie Discord si la source calendrier tombe."""
+        if not self.discord:
             return
         try:
-            await self.telegram.notify_news_feed_down()
+            await self.discord.notify_news_feed_down()
         except Exception:
             pass
 
