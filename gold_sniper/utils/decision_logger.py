@@ -1,13 +1,14 @@
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from config import LOG_BACKUP_COUNT, LOG_MAX_BYTES
 
 LOG_DIR = Path("logs")
-DECISION_LOG = LOG_DIR / "decision_log.jsonl"
+DECISION_LOG_RETENTION_DAYS = 7
+DECISION_LOG = LOG_DIR / f"decision_log_{datetime.now(timezone.utc).date().isoformat()}.jsonl"
 MISSED_OPPORTUNITIES = LOG_DIR / "missed_opportunities.jsonl"
 
 LOG_DIR.mkdir(exist_ok=True)
@@ -43,10 +44,36 @@ def rotate_jsonl_if_needed(
     path.replace(Path(f"{path}.1"))
 
 
+def _decision_log_path(now: datetime | None = None) -> Path:
+    current = now or datetime.now(timezone.utc)
+    return LOG_DIR / f"decision_log_{current.date().isoformat()}.jsonl"
+
+
+def _prune_old_decision_logs(keep_last: int = DECISION_LOG_RETENTION_DAYS) -> None:
+    logs = sorted(LOG_DIR.glob("decision_log_*.jsonl"))
+    for old_path in logs[:-keep_last]:
+        try:
+            old_path.unlink()
+        except OSError:
+            pass
+
+
+def _decision_log_paths_for_read() -> list[Path]:
+    paths = sorted(LOG_DIR.glob("decision_log_*.jsonl"))
+    legacy = LOG_DIR / "decision_log.jsonl"
+    if legacy.exists():
+        paths.append(legacy)
+    return list(dict.fromkeys(paths))
+
+
 def _append_jsonl(path: Path, entry: dict) -> None:
-    rotate_jsonl_if_needed(path)
+    is_daily_decision_log = path.name.startswith("decision_log_")
+    if not is_daily_decision_log:
+        rotate_jsonl_if_needed(path)
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False, default=_json_default) + "\n")
+    if is_daily_decision_log:
+        _prune_old_decision_logs()
 
 
 def _agent_to_dict(result: Any) -> dict:
@@ -84,7 +111,7 @@ async def log_decision_cycle(orchestrator_result: dict, agent_results: list) -> 
     }
 
     async with _write_lock:
-        _append_jsonl(DECISION_LOG, entry)
+        _append_jsonl(_decision_log_path(), entry)
 
 
 async def update_trade_result(timestamp: str, pnl: float, won: bool, exit_reason: str) -> None:
@@ -92,27 +119,33 @@ async def update_trade_result(timestamp: str, pnl: float, won: bool, exit_reason
     Met à jour le résultat d'un trade dans le Decision Log après fermeture.
     La recherche se fait par timestamp exact de l'entrée JSONL.
     """
-    if not DECISION_LOG.exists():
+    paths = _decision_log_paths_for_read()
+    if not paths:
         return
 
     async with _write_lock:
-        lines = []
-        with open(DECISION_LOG, "r", encoding="utf-8") as handle:
-            for line in handle:
-                if not line.strip():
-                    continue
-                entry = json.loads(line)
-                if entry.get("ts") == timestamp:
-                    entry["trade_result"] = {
-                        "pnl": pnl,
-                        "won": won,
-                        "exit_reason": exit_reason,
-                        "closed_at": datetime.utcnow().isoformat(),
-                    }
-                lines.append(json.dumps(entry, ensure_ascii=False, default=_json_default))
+        for path in paths:
+            lines = []
+            matched = False
+            with open(path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    entry = json.loads(line)
+                    if entry.get("ts") == timestamp:
+                        entry["trade_result"] = {
+                            "pnl": pnl,
+                            "won": won,
+                            "exit_reason": exit_reason,
+                            "closed_at": datetime.utcnow().isoformat(),
+                        }
+                        matched = True
+                    lines.append(json.dumps(entry, ensure_ascii=False, default=_json_default))
 
-        with open(DECISION_LOG, "w", encoding="utf-8") as handle:
-            handle.write("\n".join(lines) + ("\n" if lines else ""))
+            if matched:
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("\n".join(lines) + ("\n" if lines else ""))
+                return
 
 
 async def log_missed_opportunity(
@@ -152,7 +185,7 @@ async def log_execution_block(reason: str, signal_data: dict | None = None, deta
     }
 
     async with _write_lock:
-        _append_jsonl(DECISION_LOG, entry)
+        _append_jsonl(_decision_log_path(), entry)
 
 
 def get_agent_performance_stats(min_trades: int = 50) -> dict | None:
@@ -160,33 +193,35 @@ def get_agent_performance_stats(min_trades: int = 50) -> dict | None:
     Analyse le Decision Log pour estimer la précision historique des agents.
     Retourne None si le nombre de trades clôturés est insuffisant.
     """
-    if not DECISION_LOG.exists():
+    paths = _decision_log_paths_for_read()
+    if not paths:
         return None
 
     stats = {f"agent_{i}": {"correct": 0, "total": 0} for i in range(1, 6)}
     trade_count = 0
 
-    with open(DECISION_LOG, "r", encoding="utf-8") as handle:
-        for line in handle:
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            result = entry.get("trade_result")
-            if not result:
-                continue
-
-            trade_count += 1
-            won = bool(result.get("won", False))
-
-            for agent_id, agent_data in entry.get("agents", {}).items():
-                if agent_id not in stats:
+    for path in paths:
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
                     continue
-                score = float(agent_data.get("score", 0))
-                stats[agent_id]["total"] += 1
-                if (score >= 70 and won) or (score < 50 and not won):
-                    stats[agent_id]["correct"] += 1
+
+                result = entry.get("trade_result")
+                if not result:
+                    continue
+
+                trade_count += 1
+                won = bool(result.get("won", False))
+
+                for agent_id, agent_data in entry.get("agents", {}).items():
+                    if agent_id not in stats:
+                        continue
+                    score = float(agent_data.get("score", 0))
+                    stats[agent_id]["total"] += 1
+                    if (score >= 70 and won) or (score < 50 and not won):
+                        stats[agent_id]["correct"] += 1
 
     if trade_count < min_trades:
         return None

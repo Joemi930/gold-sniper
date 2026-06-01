@@ -150,6 +150,18 @@ def _force_kill(pid: int) -> None:
                 capture_output=True,
                 timeout=10,
             )
+            deadline = time.monotonic() + 5.0
+            while _pid_alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.2)
+            if _pid_alive(pid):
+                try:
+                    import psutil
+
+                    proc = psutil.Process(pid)
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except Exception as exc:  # noqa: BLE001 - best-effort duplicate cleanup
+                    logger.warning("kill fallback impossible PID %s: %s", pid, exc)
         else:
             import signal
 
@@ -158,10 +170,22 @@ def _force_kill(pid: int) -> None:
         pass
 
 
+def _ancestor_pids(pid: int | None) -> set[int]:
+    if not pid:
+        return set()
+    try:
+        import psutil
+
+        return {parent.pid for parent in psutil.Process(pid).parents()}
+    except Exception:  # noqa: BLE001 - optional process introspection guard
+        return set()
+
+
 def terminate_duplicate_managers(keep_pid: int | None = None) -> list[int]:
     killed: list[int] = []
+    protected = {keep_pid, *_ancestor_pids(keep_pid)}
     for pid in find_pids("pc_manager.py"):
-        if keep_pid and pid == keep_pid:
+        if pid in protected:
             continue
         _force_kill(pid)
         killed.append(pid)

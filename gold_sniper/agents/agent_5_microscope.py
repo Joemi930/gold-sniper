@@ -4,7 +4,9 @@ from enum import Enum
 from typing import Optional, Sequence
 
 from agents.base_agent import AgentResult
+from config import AGENT_DASHBOARD_PULSE_SEC
 from core.blackboard import BLACKBOARD, BlackBoard
+from utils.agent_dashboard_helpers import idle_result
 from utils.logger import get_logger
 
 
@@ -423,7 +425,7 @@ async def _publish_agent_5_result(blackboard: BlackBoard, result: AgentResult) -
             "hard_filter_pass": result.hard_filter_pass,
         },
     )
-    await blackboard.write_agent_result("agent_5", result)
+    await blackboard.publish_agent_dashboard("agent_5", result, min_interval_sec=0)
 
 
 class AgentMicroscope:
@@ -469,6 +471,16 @@ class AgentMicroscope:
 
             if not self.active or not self.current_poi:
                 await self.bb.update_dict(f"agents.{self.name}", {"state": "SLEEPING"})
+                await self.bb.publish_agent_dashboard(
+                    "agent_5",
+                    idle_result(
+                        "agent_5",
+                        reason="IDLE_SLEEPING",
+                        payload={"phase": AMDPhase.IDLE.value},
+                    ),
+                    min_interval_sec=AGENT_DASHBOARD_PULSE_SEC,
+                    trigger_orchestrator=False,
+                )
                 continue
 
             try:
@@ -479,12 +491,28 @@ class AgentMicroscope:
                 direction = agent1_result.direction if agent1_result else self.bb.get_agent("agent_1").get("direction")
 
                 if not candles_1m or not tick or not direction:
+                    await self.bb.publish_agent_dashboard(
+                        "agent_5",
+                        idle_result("agent_5", reason="WAITING_TICK_DATA"),
+                        min_interval_sec=AGENT_DASHBOARD_PULSE_SEC,
+                        trigger_orchestrator=False,
+                    )
                     continue
 
                 current_price = (float(tick["bid"]) + float(tick["ask"])) / 2
                 if not _price_in_zone(current_price, self.current_poi):
                     self.active = False
                     await self.bb.update_dict(f"agents.{self.name}", {"state": "SLEEPING"})
+                    await self.bb.publish_agent_dashboard(
+                        "agent_5",
+                        idle_result(
+                            "agent_5",
+                            reason="IDLE_PRICE_OUTSIDE_POI",
+                            payload={"phase": AMDPhase.IDLE.value},
+                        ),
+                        min_interval_sec=AGENT_DASHBOARD_PULSE_SEC,
+                        trigger_orchestrator=False,
+                    )
                     continue
 
                 self.amd_state, signal = detect_amd_sequence(candles_1m, direction, self.current_poi, atr_14, self.amd_state)
@@ -499,6 +527,21 @@ class AgentMicroscope:
                     if result.hard_filter_pass:
                         self.active = False
                         await self.bb.update_dict(f"agents.{self.name}", {"state": "SIGNAL_SENT"})
+                else:
+                    prev = self.bb.read_sync("agent_results.agent_5")
+                    pulse_score = float(prev.score) if prev else 0.0
+                    await self.bb.publish_agent_dashboard(
+                        "agent_5",
+                        idle_result(
+                            "agent_5",
+                            reason="ACTIVE_MONITORING",
+                            score=pulse_score,
+                            direction=direction,
+                            payload={"phase": self.amd_state.phase.value},
+                        ),
+                        min_interval_sec=AGENT_DASHBOARD_PULSE_SEC,
+                        trigger_orchestrator=False,
+                    )
             except Exception as exc:
                 self.logger.error(f"Erreur _tick_monitoring_loop Agent 5: {exc}")
                 await asyncio.sleep(2)

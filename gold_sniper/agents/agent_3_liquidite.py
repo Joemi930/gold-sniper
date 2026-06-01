@@ -6,6 +6,7 @@ import numpy as np
 
 from agents.base_agent import AgentResult
 from core.blackboard import BlackBoard
+from utils.agent_dashboard_helpers import idle_result
 from utils.logger import get_logger
 
 
@@ -372,18 +373,32 @@ class AgentLiquidite:
                         direction=None,
                         hard_filter_pass=True,
                     )
-                    await self.bb.write_agent_result("agent_3", result)
+                    await self.bb.publish_agent_dashboard(
+                        "agent_3", result, min_interval_sec=0, trigger_orchestrator=False
+                    )
                     await self.bb.update_dict(f"agents.{self.name}", {"equal_highs": [], "equal_lows": []})
                     continue
 
                 direction = agent1_result.direction
                 if not direction:
+                    await self.bb.publish_agent_dashboard(
+                        "agent_3",
+                        idle_result("agent_3", reason="WAITING_NO_DIRECTION", score=30),
+                        min_interval_sec=0,
+                        trigger_orchestrator=False,
+                    )
                     continue
 
                 candles_15m = list(self.bb.read_sync("market_data.candles.15m") or [])
                 candles_1m = list(self.bb.read_sync("market_data.candles.1m") or [])
                 atr_14 = self.bb.read_sync("market_data.atr_14")
                 if len(candles_15m) < 10 or not atr_14:
+                    await self.bb.publish_agent_dashboard(
+                        "agent_3",
+                        idle_result("agent_3", reason="WAITING_INSUFFICIENT_DATA", score=30),
+                        min_interval_sec=0,
+                        trigger_orchestrator=False,
+                    )
                     await asyncio.sleep(2)
                     continue
 
@@ -394,7 +409,11 @@ class AgentLiquidite:
 
                 from agents.agent_1_meteo import detect_swings
 
-                swings = detect_swings(high, low, close, n=3, atr_14=atr_14)
+                loop = asyncio.get_running_loop()
+                swings = await loop.run_in_executor(
+                    None,
+                    lambda: detect_swings(high, low, close, n=3, atr_14=atr_14),
+                )
                 eq_levels = detect_equal_levels(swings["swing_highs"], swings["swing_lows"], high, low, atr_14)
                 eqh_level = eq_levels["eqh"][0]["level"] if eq_levels["eqh"] else 0.0
                 eql_level = eq_levels["eql"][0]["level"] if eq_levels["eql"] else 0.0
@@ -430,10 +449,25 @@ class AgentLiquidite:
                         "hard_filter_pass": result.hard_filter_pass,
                     },
                 )
-                await self.bb.write_agent_result("agent_3", result)
+                await self.bb.publish_agent_dashboard(
+                    "agent_3", result, min_interval_sec=0
+                )
 
             except Exception as exc:
                 self.logger.error(f"Erreur dans Agent 3 (Liquidite V2): {exc}")
+                from config import AGENT_DASHBOARD_PULSE_SEC
+
+                await self.bb.publish_agent_dashboard(
+                    "agent_3",
+                    idle_result(
+                        "agent_3",
+                        reason=f"ERROR: {exc}",
+                        score=30,
+                        hard_filter_pass=False,
+                    ),
+                    min_interval_sec=AGENT_DASHBOARD_PULSE_SEC,
+                    trigger_orchestrator=False,
+                )
                 await asyncio.sleep(5)
 
 

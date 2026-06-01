@@ -95,6 +95,12 @@ async def candle_builder_loop(blackboard: BlackBoard) -> None:
                         async with blackboard._lock:
                             history = blackboard._data["market_data"]["candles"][tf]
                             history.append(active_candle)
+
+                        event_name = f"new_candle_{tf}"
+                        if event_name in blackboard._events:
+                            blackboard._events[event_name].set()
+                        if tf == "1m":
+                            await blackboard.notify_candle_close(tf, active_candle)
                         
                         # Log pour confirmer la clôture
                         logger.debug(f"[{tf}] Clôture bougie {active_candle['time'].strftime('%H:%M')} -> Close: {active_candle['close']}")

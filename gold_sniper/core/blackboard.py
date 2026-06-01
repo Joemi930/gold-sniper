@@ -59,6 +59,8 @@ class BlackBoard:
         # [R1] Event global pour le Kill Switch -- verifie avant chaque order_send
         self._kill_event = asyncio.Event()
         self._agent_update_event = asyncio.Event()
+        self._candle_close_event = asyncio.Event()
+        self._critical_orchestrator_event = asyncio.Event()
 
         # [DASHBOARD] Event declenche a chaque write_agent_result() OU update_market().
         # Le WebSocket l'attend au lieu de dormir 500ms -> latence < 5ms.
@@ -71,6 +73,19 @@ class BlackBoard:
             "published_at": None,
             "published_at_perf": None,
         }
+        self._candle_close_sequence = 0
+        self._latest_candle_close: dict[str, Any] = {
+            "sequence": 0,
+            "timeframe": None,
+            "candle_time": None,
+            "closed_at": None,
+        }
+        self._latest_critical_orchestrator_trigger: dict[str, Any] = {
+            "source": None,
+            "reason": None,
+            "triggered_at": None,
+        }
+        self._agent_dashboard_last_publish: dict[str, float] = {}
 
         # Timestamp de creation
         now = datetime.now(tz=timezone.utc)
@@ -537,6 +552,16 @@ class BlackBoard:
         """
         return self._dashboard_update_event
 
+    @property
+    def candle_close_event(self) -> asyncio.Event:
+        """Event declenche uniquement a la cloture d'une bougie 1m."""
+        return self._candle_close_event
+
+    @property
+    def critical_orchestrator_event(self) -> asyncio.Event:
+        """Event voie rapide pour les veto agent_6 et risk_manager."""
+        return self._critical_orchestrator_event
+
     def trigger_kill(self) -> None:
         """Active le Kill Switch. Irreversible sans redemarrage."""
         self._kill_event.set()
@@ -595,10 +620,22 @@ class BlackBoard:
 
     async def update_agent(self, agent_key: str, data: dict) -> None:
         """Mise a jour atomique et thread-safe d'un agent."""
+        critical_trigger: tuple[str, str] | None = None
         async with self._lock:
             if agent_key in self._data["agents"]:
+                was_veto = bool(self._data["agents"][agent_key].get("veto", False))
                 self._data["agents"][agent_key].update(data)
                 self._data["agents"][agent_key]["last_updated"] = datetime.utcnow()
+                is_veto = bool(self._data["agents"][agent_key].get("veto", False))
+                if agent_key in {"agent_6", "risk_manager"} and is_veto and not was_veto:
+                    critical_trigger = (
+                        agent_key,
+                        str(self._data["agents"][agent_key].get("reason", "")),
+                    )
+
+        if critical_trigger is not None:
+            source, reason = critical_trigger
+            self.notify_critical_orchestrator_trigger(source, reason)
 
     async def update_market(self, data: dict) -> None:
         """Mise a jour des donnees marche globales."""
@@ -630,7 +667,7 @@ class BlackBoard:
     # V2 EVENT BUS METHODS
     # -------------------------------------------------------------------------
 
-    async def write_agent_result(self, agent_id: str, result) -> None:
+    async def write_agent_result(self, agent_id: str, result, *, trigger_orchestrator: bool = True) -> None:
         """
         Appele par chaque agent quand il a fini son calcul.
         Publie le resultat ET notifie tous les abonnes instantanement.
@@ -643,24 +680,115 @@ class BlackBoard:
             # Propager la direction de l'Agent 1 a tout le systeme
             if agent_id == "agent_1" and result.direction:
                 self._data["meta"]["current_direction"] = result.direction
-            self._agent_update_sequence += 1
-            self._latest_agent_update = {
-                "sequence": self._agent_update_sequence,
-                "agent_id": agent_id,
-                "published_at": published_at,
-                "published_at_perf": published_at_perf,
-            }
+            if trigger_orchestrator:
+                self._agent_update_sequence += 1
+                self._latest_agent_update = {
+                    "sequence": self._agent_update_sequence,
+                    "agent_id": agent_id,
+                    "published_at": published_at,
+                    "published_at_perf": published_at_perf,
+                }
 
         # Declencher les evenements SANS le lock (evite les deadlocks)
         event_name = f"{agent_id}_ready"
         if event_name in self._events:
             self._events[event_name].set()
-        self._agent_update_event.set()
+        if trigger_orchestrator:
+            self._agent_update_event.set()
+        if agent_id == "agent_6" and bool(getattr(result, "veto", False)):
+            self.notify_critical_orchestrator_trigger(agent_id, str(getattr(result, "reason", "")))
         self._dashboard_update_event.set()   # [DASHBOARD] Push immediat < 5ms
 
         # Notifier les callbacks abonnes
         for callback in self._subscribers.get(event_name, []):
             asyncio.create_task(callback(result))
+
+    async def publish_agent_dashboard(
+        self,
+        agent_id: str,
+        result,
+        *,
+        min_interval_sec: float = 0.0,
+        trigger_orchestrator: bool = True,
+    ) -> bool:
+        """
+        Publie un resultat agent et declenche dashboard_update_event.
+
+        min_interval_sec > 0 : throttle (ex. Agent 5 boucle tick rapide).
+        min_interval_sec == 0 : publication a chaque appel (fin de cycle agents 1-4).
+        trigger_orchestrator=False : pulse dashboard uniquement (IDLE/WAITING).
+        """
+        if min_interval_sec > 0:
+            last = self._agent_dashboard_last_publish.get(agent_id, 0.0)
+            if (time.monotonic() - last) < min_interval_sec:
+                return False
+        await self.write_agent_result(
+            agent_id,
+            result,
+            trigger_orchestrator=trigger_orchestrator,
+        )
+        self._agent_dashboard_last_publish[agent_id] = time.monotonic()
+        return True
+
+    async def notify_candle_close(self, timeframe: str, candle: dict[str, Any]) -> None:
+        """Publie la cloture d'une bougie. Seule la 1m cadence l'orchestrateur."""
+        if timeframe != "1m":
+            return
+
+        closed_at = datetime.now(tz=timezone.utc)
+        async with self._lock:
+            self._candle_close_sequence += 1
+            self._latest_candle_close = {
+                "sequence": self._candle_close_sequence,
+                "timeframe": timeframe,
+                "candle_time": candle.get("time"),
+                "closed_at": closed_at,
+            }
+
+        self._candle_close_event.set()
+
+    async def wait_for_candle_close(self, last_sequence: int = 0) -> dict[str, Any]:
+        """
+        Attend la prochaine cloture de bougie 1m.
+        Retourne les metadonnees de cloture, sans polling.
+        """
+        while not self.kill_event.is_set():
+            async with self._lock:
+                latest = dict(self._latest_candle_close)
+                if latest["sequence"] > last_sequence:
+                    latest["trigger"] = "candle_close"
+                    return latest
+                self._candle_close_event.clear()
+
+            await self._candle_close_event.wait()
+
+        return {"trigger": "kill"}
+
+    def notify_critical_orchestrator_trigger(self, source: str, reason: str = "") -> None:
+        """Declenche une decision immediate pour les veto critiques."""
+        self._latest_critical_orchestrator_trigger = {
+            "source": source,
+            "reason": reason,
+            "triggered_at": datetime.now(tz=timezone.utc),
+        }
+        self._critical_orchestrator_event.set()
+
+    async def wait_for_critical_orchestrator_trigger(self) -> dict[str, Any]:
+        """Attend un veto agent_6 ou risk_manager devant court-circuiter la bougie."""
+        while not self.kill_event.is_set():
+            latest = dict(self._latest_critical_orchestrator_trigger)
+            if self._critical_orchestrator_event.is_set() and latest.get("source"):
+                self._critical_orchestrator_event.clear()
+                latest["trigger"] = "critical_veto"
+                return latest
+            self._critical_orchestrator_event.clear()
+            await self._critical_orchestrator_event.wait()
+            latest = dict(self._latest_critical_orchestrator_trigger)
+            if latest.get("source"):
+                latest["trigger"] = "critical_veto"
+                return latest
+
+        return {"trigger": "kill"}
 
     async def wait_for_agent_update(self, last_sequence: int = 0,
                                     timeout: float = 5.0) -> Optional[dict[str, Any]]:

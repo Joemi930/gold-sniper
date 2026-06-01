@@ -3,6 +3,7 @@ import numpy as np
 
 from core.blackboard import BlackBoard
 from agents.base_agent import AgentResult
+from utils.agent_dashboard_helpers import idle_result
 from utils.logger import get_logger
 
 def calculate_ote_zones(swing_low_price: float, swing_high_price: float, direction: str) -> dict:
@@ -226,24 +227,40 @@ class AgentFibonacci:
                 agent1_result = self.bb.read_sync("agent_results.agent_1")
                 
                 if not agent1_result or not agent2_result or agent2_result.score == 0:
-                    await self.bb.write_agent_result("agent_4", AgentResult(
-                        agent_id="agent_4", score=25,
+                    waiting = AgentResult(
+                        agent_id="agent_4",
+                        score=25,
                         reason="WAITING_ON_AGENT2_FAIL",
-                        direction=None, hard_filter_pass=False
-                    ))
-                    # Retrocompat UI
+                        direction=None,
+                        hard_filter_pass=False,
+                    )
+                    await self.bb.publish_agent_dashboard(
+                        "agent_4", waiting, min_interval_sec=0, trigger_orchestrator=False
+                    )
                     await self.bb.update_dict(f"agents.{self.name}", {"price_in_ote": False})
                     continue
-                
+
                 direction = agent1_result.direction
                 if not direction:
+                    await self.bb.publish_agent_dashboard(
+                        "agent_4",
+                        idle_result("agent_4", reason="WAITING_NO_DIRECTION", score=25),
+                        min_interval_sec=0,
+                        trigger_orchestrator=False,
+                    )
                     continue
-                
+
                 candles_15m = list(self.bb.read_sync("market_data.candles.15m") or [])
                 atr_14 = self.bb.read_sync("market_data.atr_14")
                 current_tick = self.bb.read_sync("market_data.current_tick")
                 
                 if len(candles_15m) < 10 or not atr_14 or not current_tick:
+                    await self.bb.publish_agent_dashboard(
+                        "agent_4",
+                        idle_result("agent_4", reason="WAITING_INSUFFICIENT_DATA", score=25),
+                        min_interval_sec=0,
+                        trigger_orchestrator=False,
+                    )
                     await asyncio.sleep(2)
                     continue
                 
@@ -255,6 +272,12 @@ class AgentFibonacci:
                 swings = detect_swings(high, low, close, n=3, atr_14=atr_14)
                 
                 if not swings["swing_highs"] or not swings["swing_lows"]:
+                    await self.bb.publish_agent_dashboard(
+                        "agent_4",
+                        idle_result("agent_4", reason="WAITING_NO_SWINGS", score=25),
+                        min_interval_sec=0,
+                        trigger_orchestrator=False,
+                    )
                     continue
                 
                 last_high = swings["swing_highs"][-1]["price"]
@@ -295,8 +318,23 @@ class AgentFibonacci:
                     },
                 )
                 
-                await self.bb.write_agent_result("agent_4", result)
-                
+                await self.bb.publish_agent_dashboard(
+                    "agent_4", result, min_interval_sec=0
+                )
+
             except Exception as e:
                 self.logger.error(f"❌ Erreur dans Agent 4 (Fibonacci V2) : {e}")
+                from config import AGENT_DASHBOARD_PULSE_SEC
+
+                await self.bb.publish_agent_dashboard(
+                    "agent_4",
+                    idle_result(
+                        "agent_4",
+                        reason=f"ERROR: {e}",
+                        score=25,
+                        hard_filter_pass=False,
+                    ),
+                    min_interval_sec=AGENT_DASHBOARD_PULSE_SEC,
+                    trigger_orchestrator=False,
+                )
                 await asyncio.sleep(5)

@@ -5,6 +5,7 @@ import numpy as np
 
 from agents.base_agent import AgentResult
 from core.blackboard import BlackBoard
+from utils.agent_dashboard_helpers import idle_result
 from utils.logger import get_logger
 
 
@@ -543,7 +544,9 @@ class AgentCartographe:
                         direction=None,
                         hard_filter_pass=False,
                     )
-                    await self.bb.write_agent_result("agent_2", result)
+                    await self.bb.publish_agent_dashboard(
+                        "agent_2", result, min_interval_sec=0, trigger_orchestrator=False
+                    )
                     await self.bb.update_dict(f"agents.{self.name}", {"order_blocks": []})
                     continue
 
@@ -553,6 +556,12 @@ class AgentCartographe:
                 current_tick = self.bb.read_sync("market_data.current_tick")
 
                 if len(candles_15m) < 10 or not atr_14 or not current_tick:
+                    await self.bb.publish_agent_dashboard(
+                        "agent_2",
+                        idle_result("agent_2", reason="WAITING_INSUFFICIENT_DATA"),
+                        min_interval_sec=0,
+                        trigger_orchestrator=False,
+                    )
                     await asyncio.sleep(2)
                     continue
 
@@ -568,24 +577,31 @@ class AgentCartographe:
 
                 from agents.agent_1_meteo import detect_swings
 
-                swings = detect_swings(high, low, close, n=3, atr_14=atr_14)
+                loop = asyncio.get_running_loop()
+                swings = await loop.run_in_executor(
+                    None,
+                    lambda: detect_swings(high, low, close, n=3, atr_14=atr_14),
+                )
                 agent1_meta = agent1_result.payload or {}
                 htf_bias = agent1_meta.get("structure_4h") or direction
                 liquidity_pools = dict(self.bb.get_all().get("market_analysis", {}).get("liquidity_pools", {}) or {})
 
                 fvgs = detect_fvg(high, low, atr_14, direction)
-                obs = detect_order_blocks(
-                    high,
-                    low,
-                    open_,
-                    close,
-                    swings["swing_highs"],
-                    swings["swing_lows"],
-                    atr_14,
-                    direction,
-                    htf_bias=htf_bias,
-                    liquidity_pools=liquidity_pools,
-                    volume=volume,
+                obs = await loop.run_in_executor(
+                    None,
+                    lambda: detect_order_blocks(
+                        high,
+                        low,
+                        open_,
+                        close,
+                        swings["swing_highs"],
+                        swings["swing_lows"],
+                        atr_14,
+                        direction,
+                        htf_bias=htf_bias,
+                        liquidity_pools=liquidity_pools,
+                        volume=volume,
+                    ),
                 )
 
                 ohlcv = _arrays_to_ohlcv(open_, high, low, close, volume)
@@ -600,7 +616,9 @@ class AgentCartographe:
                 current_price = (bid + ask) / 2 if bid > 0 and ask > 0 else float(close[-1])
 
                 result = score_agent_2(best_ob, best_fvg, current_price, atr_14, self.bb)
-                await self.bb.write_agent_result("agent_2", result)
+                await self.bb.publish_agent_dashboard(
+                    "agent_2", result, min_interval_sec=0
+                )
 
                 payload = result.payload or {}
                 await self.bb.update_agent(
@@ -628,6 +646,14 @@ class AgentCartographe:
 
             except Exception as exc:
                 self.logger.error(f"Erreur dans Agent 2 (Cartographe V2): {exc}")
+                from config import AGENT_DASHBOARD_PULSE_SEC
+
+                await self.bb.publish_agent_dashboard(
+                    "agent_2",
+                    idle_result("agent_2", reason=f"ERROR: {exc}", hard_filter_pass=False),
+                    min_interval_sec=AGENT_DASHBOARD_PULSE_SEC,
+                    trigger_orchestrator=False,
+                )
                 await asyncio.sleep(5)
 
 

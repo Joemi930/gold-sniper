@@ -301,7 +301,11 @@ class AgentSentinelle:
         """Publie l'etat Sentinelle dans le Blackboard."""
         while not self.bb.kill_event.is_set():
             state = await self.check_and_update_blackboard()
-            await self.bb.write_agent_result("agent_6", self._state_to_result(state))
+            await self.bb.write_agent_result(
+                "agent_6",
+                self._state_to_result(state),
+                trigger_orchestrator=bool(state["veto"]),
+            )
             await asyncio.sleep(5)
 
     async def refresh_events(self, force: bool = False, now: datetime | None = None) -> list:

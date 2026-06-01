@@ -22,7 +22,6 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 import asyncio
-import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -75,6 +74,26 @@ def _apply_saved_calibrated_weights() -> None:
 
 
 _apply_saved_calibrated_weights()
+
+
+async def _wait_for_decision_trigger(blackboard: BlackBoard, last_candle_sequence: int) -> dict:
+    """Attend une cloture 1m, sauf veto critique agent_6/risk_manager."""
+    candle_task = asyncio.create_task(
+        blackboard.wait_for_candle_close(last_sequence=last_candle_sequence)
+    )
+    critical_task = asyncio.create_task(
+        blackboard.wait_for_critical_orchestrator_trigger()
+    )
+    tasks = {candle_task, critical_task}
+    try:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        return next(iter(done)).result()
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
 
 
 def _resolve_active_weights(board: BlackBoard, strategy) -> tuple[dict[str, float], bool]:
@@ -413,17 +432,26 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
     last_rejection_reason = ""
     last_reset_day        = datetime.now(timezone.utc).day
     equity_day_start      = 0.0
-    last_agent_sequence   = 0
-    latency_samples: list[float] = []
+    last_candle_sequence  = 0
 
     while not blackboard.kill_event.is_set():
         try:
-            update_info = await blackboard.wait_for_agent_update(
-                last_sequence=last_agent_sequence,
-                timeout=EVENT_DRIVEN_TIMEOUT,
-            )
-            if update_info is not None:
-                last_agent_sequence = int(update_info.get("sequence") or last_agent_sequence)
+            try:
+                trigger_info = await asyncio.wait_for(
+                    _wait_for_decision_trigger(blackboard, last_candle_sequence),
+                    timeout=90.0,
+                )
+            except asyncio.TimeoutError:
+                trigger_info = {
+                    "trigger": "timeout",
+                    "reason": "candle_builder_timeout_90s",
+                }
+                logger.warning("Orchestrateur: fallback timeout 90s sans cloture bougie 1m")
+
+            if trigger_info.get("trigger") == "candle_close":
+                last_candle_sequence = int(
+                    trigger_info.get("sequence") or last_candle_sequence
+                )
 
             now = datetime.now(timezone.utc)
 
@@ -495,28 +523,13 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
             # ── Décision V2 ──────────────────────────────────────────────────
             decision = await run_orchestrator(agent_results, blackboard)
 
-            if update_info and update_info.get("published_at_perf") is not None:
-                latency_ms = (time.perf_counter() - update_info["published_at_perf"]) * 1000
-                latency_samples.append(latency_ms)
-                latency_samples = latency_samples[-50:]
-                last_ten = latency_samples[-10:]
-                avg_latency = sum(last_ten) / len(last_ten)
-                min_latency = min(last_ten)
-                max_latency = max(last_ten)
-                await blackboard.update_dict("orchestrator", {
-                    "last_agent_event": update_info.get("agent_id"),
-                    "last_agent_event_sequence": last_agent_sequence,
-                    "last_latency_ms": round(latency_ms, 3),
-                    "latency_avg_ms": round(avg_latency, 3),
-                    "latency_min_ms": round(min_latency, 3),
-                    "latency_max_ms": round(max_latency, 3),
-                    "latency_samples": [round(sample, 3) for sample in last_ten],
-                })
-                if len(last_ten) == 10 and avg_latency > 50.0:
-                    logger.warning(
-                        f"Latence orchestrateur elevee : avg={avg_latency:.1f}ms "
-                        f"min={min_latency:.1f}ms max={max_latency:.1f}ms"
-                    )
+            await blackboard.update_dict("orchestrator", {
+                "last_trigger": trigger_info.get("trigger"),
+                "last_candle_sequence": last_candle_sequence,
+                "last_candle_time": trigger_info.get("candle_time"),
+                "last_critical_source": trigger_info.get("source"),
+                "last_trigger_reason": trigger_info.get("reason"),
+            })
 
             # ── Mise à jour Blackboard pour l'UI ─────────────────────────────
             await blackboard.update_dict("orchestrator", {

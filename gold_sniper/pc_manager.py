@@ -53,6 +53,8 @@ WATCHDOG_HEARTBEAT = ROOT_DIR / "watchdog_heartbeat.tmp"
 KILL_FLAG = ROOT_DIR / "kill_flag.txt"
 BOT_READY = ROOT_DIR / "data" / "bot_ready.json"
 WATCHDOG_STATE = ROOT_DIR / "data" / "watchdog_state.json"
+PC_MANAGER_PID = ROOT_DIR / "data" / "pc_manager.pid"
+WATCHDOG_RECOVERY = ROOT_DIR / "data" / "watchdog_recovery.json"
 DISCORD_INBOX = ROOT_DIR / "data" / "discord_inbox.jsonl"
 MANAGER_LOCK = ROOT_DIR / "data" / "pc_manager.lock"
 VBS_LAUNCHER = ROOT_DIR / "LancerGoldSniper.vbs"
@@ -190,6 +192,8 @@ def _acquire_single_instance() -> None:
         fd = os.open(str(MANAGER_LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         os.write(fd, str(my_pid).encode("utf-8"))
         os.close(fd)
+    PC_MANAGER_PID.parent.mkdir(parents=True, exist_ok=True)
+    PC_MANAGER_PID.write_text(str(my_pid), encoding="utf-8")
 
     def _release() -> None:
         try:
@@ -198,6 +202,11 @@ def _acquire_single_instance() -> None:
                 and MANAGER_LOCK.read_text(encoding="utf-8").strip() == str(os.getpid())
             ):
                 MANAGER_LOCK.unlink(missing_ok=True)
+            if (
+                PC_MANAGER_PID.exists()
+                and PC_MANAGER_PID.read_text(encoding="utf-8").strip() == str(os.getpid())
+            ):
+                PC_MANAGER_PID.unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -545,6 +554,35 @@ def _run_lifecycle(cmd: str) -> str:
     return ""
 
 
+def _watchdog_recovery_loop() -> None:
+    while True:
+        time.sleep(10.0)
+        if not WATCHDOG_RECOVERY.exists():
+            continue
+        try:
+            payload = json.loads(WATCHDOG_RECOVERY.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            WATCHDOG_RECOVERY.unlink(missing_ok=True)
+            continue
+
+        if payload.get("action") != "restart_requested":
+            WATCHDOG_RECOVERY.unlink(missing_ok=True)
+            continue
+
+        attempt = payload.get("attempt", "?")
+        reason = payload.get("reason", "heartbeat_lost")
+        logging.warning(
+            "Watchdog recovery request: attempt=%s reason=%s",
+            attempt,
+            reason,
+        )
+        notify_boot(f"♻️ Watchdog a demandé un restart propre — tentative {attempt}")
+        try:
+            _perform_restart()
+        finally:
+            WATCHDOG_RECOVERY.unlink(missing_ok=True)
+
+
 def _pc_status_text() -> str:
     from utils.system_metrics import format_ram_cpu
 
@@ -723,6 +761,7 @@ def main() -> None:
         sys.exit(1)
     _terminate_duplicate_pc_managers()
     _acquire_single_instance()
+    threading.Thread(target=_watchdog_recovery_loop, daemon=True).start()
     logging.info("PC Manager démarré sur %s (PID %s)", PC_NAME, os.getpid())
     threading.Timer(8.0, lambda: threading.Thread(target=_boot_policy, daemon=True).start()).start()
     bot = PCManagerBot()
