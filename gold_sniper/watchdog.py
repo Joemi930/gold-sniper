@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -7,7 +8,6 @@ import shlex
 import subprocess
 import sys
 import time
-import urllib.request
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -62,27 +62,42 @@ def setup_logging() -> None:
     )
 
 
-def notify_discord(message: str) -> None:
-    """Notification Discord d'urgence via REST (pas de gateway)."""
-    token = os.getenv("DISCORD_TOKEN", "")
-    channel_id = os.getenv("DISCORD_ALERTS_CHANNEL_ID", "")
-    if not token or not channel_id:
-        return
+async def _notify_discord_async(message: str) -> bool:
+    """Notification Discord d'urgence via le notifier SSL-patched."""
+    from utils.discord_notifier import DiscordNotifier
 
-    payload = json.dumps({"content": message[:2000]}).encode("utf-8")
-    request = urllib.request.Request(
-        f"https://discord.com/api/v10/channels/{channel_id}/messages",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bot {token}",
-        },
-        method="POST",
-    )
+    notifier = DiscordNotifier()
     try:
-        urllib.request.urlopen(request, timeout=5)
+        return await notifier.send(message[:2000], channel="alerts")
     except Exception as exc:
         logging.warning(f"Discord watchdog indisponible: {exc}")
+        return False
+    finally:
+        await notifier.stop()
+
+
+def notify_discord(message: str) -> bool:
+    """Notification Discord d'urgence via REST SSL-patched (pas de gateway)."""
+    try:
+        asyncio_running = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio_running = None
+
+    if asyncio_running and asyncio_running.is_running():
+        logging.warning("Discord watchdog indisponible: boucle asyncio deja active")
+        return False
+
+    try:
+        ok = asyncio.run(_notify_discord_async(message))
+    except Exception as exc:
+        logging.warning(f"Discord watchdog indisponible: {exc}")
+        return False
+    if not ok:
+        logging.warning(
+            "Discord watchdog indisponible: envoi refuse. Verifier DISCORD_TOKEN "
+            "regenere et DISCORD_ALERTS_CHANNEL_ID."
+        )
+    return ok
 
 
 notify_telegram = notify_discord  # alias legacy interne
