@@ -124,3 +124,9 @@ gold_sniper/data/trade_journals/
 gold_sniper/data/replay_runs/*/trade_journal.jsonl
 
 .claude/settings.local.json
+
+# P1 Replay App — temp and generated outputs
+.tmp/
+reports/replay/
+!reports/replay/.gitkeep
+gold_sniper/replay_app/__pycache__/
