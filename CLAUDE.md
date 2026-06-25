@@ -93,17 +93,24 @@ Required but currently missing: M30 and D1 timeframes.
 cd gold_sniper
 powershell -ExecutionPolicy Bypass -File scripts\install_deps.ps1
 # Or: python -m pip install -r requirements.txt
+pip install rich  # Required for the Replay Control Center TUI
 
-# Run all tests
-python -m pytest gold_sniper/tests/ -x
+# ── Replay Control Center V3.2 (recommended entry point) ─────
+# Interactive terminal menu
+python -m gold_sniper.replay_app.Gold_Sniper_Replay
 
-# Run a specific test file
-python -m pytest gold_sniper/tests/test_p3_trade_lifecycle_two_legs.py -x
+# CLI mode (no menu)
+python -m gold_sniper.replay_app.Gold_Sniper_Replay --no-menu \
+  --start 2026-01-01 --end 2026-01-08 \
+  --warmup-start 2025-12-25 --run-id my_replay --initial-equity 100.0
 
-# Quick syntax validation (no MT5 needed)
-python -m py_compile gold_sniper/config.py gold_sniper/core/blackboard.py gold_sniper/execution/trade_manager.py
+# Generate synthetic test data (no MT5 needed)
+python -m gold_sniper.replay_app.Gold_Sniper_Replay --generate-synthetic
 
-# Run a replay (offline backtest)
+# Check data availability
+python -m gold_sniper.replay_app.Gold_Sniper_Replay --check-data
+
+# ── Legacy replay CLI ────────────────────────────────────────
 python -m gold_sniper.replay.run_replay \
   --run-id smoke_test \
   --start 2026-01-01T00:00:00Z \
@@ -111,6 +118,17 @@ python -m gold_sniper.replay.run_replay \
   --warmup-start 2025-12-01T00:00:00Z \
   --initial-equity 100.0
 
+# ── Testing ──────────────────────────────────────────────────
+# Run all tests
+python -m unittest discover gold_sniper/tests -q
+
+# Run a specific test file
+python -m unittest gold_sniper.tests.test_p3_trade_lifecycle_two_legs -v
+
+# Quick syntax validation (no MT5 needed)
+python -m py_compile gold_sniper/config.py gold_sniper/core/blackboard.py gold_sniper/execution/trade_manager.py
+
+# ── Data tools ───────────────────────────────────────────────
 # Import MT5 historical data (read-only APIs only)
 python tools/data_import/import_mt5_history.py --help
 
