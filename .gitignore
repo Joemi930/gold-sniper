@@ -1,0 +1,126 @@
+logs/
+tools/dev_archive/
+
+# Secrets and local environment
+.env
+*.env
+*.secret
+*secret*
+*token*
+*credential*
+*password*
+*apikey*
+gold_sniper/data/credentials.json
+gold_sniper/data/drive_token.json
+gold_sniper/data/*.lock
+gold_sniper/data/*.pid
+gold_sniper/data/*_state.json
+gold_sniper/data/discord_inbox*
+gold_sniper/data/lifecycle*
+gold_sniper/data/pc_presence_msg_*.json
+Rapport_Expert_Order_Blocks_Kasper.md
+
+# Python/runtime caches
+__pycache__/
+.pytest_cache/
+*.pyc
+*.py[cod]
+*.pyo
+.coverage
+htmlcov/
+
+# Logs, replay artifacts, and generated events
+*.log
+*.tmp
+*.jsonl
+artifacts/
+events/
+gold_sniper/logs/
+gold_sniper/data/replay_runs/
+gold_sniper/data/historical/
+gold_sniper/data/news/
+memory.db
+*.sqlite
+*.sqlite3
+
+# Local IDE/system files
+.DS_Store
+.vscode/
+.idea/
+.serena/
+.mcp.json
+
+# Frontend dependencies/build output
+node_modules/
+gold_sniper/web_app/node_modules/
+build/
+gold_sniper/build/
+dist/
+gold_sniper/web_app/dist/
+
+# Legacy local cleanup/report artifacts not part of the clean snapshot
+.mailmap
+P1_44_CLEAN_*
+P1_45_PERF_PARTIAL_ARTIFACTS.md
+RAPPORT_P1_44_*.md
+RAPPORT_P1_45_*.md
+RAPPORT_P1_46_*.md
+*.patch
+
+# P1-clean — local recovery and generated artifacts
+P1_PREFLIGHT_RECOVERY/
+
+# P1-clean — frontend generated artifacts
+node_modules/
+gold_sniper/web_app/node_modules/
+gold_sniper/web_app/dist/
+
+# P1-clean — runtime/cache artifacts
+cache_forexfactory.xml
+gold_sniper/cache_forexfactory.xml
+crash_log.txt
+watchdog_heartbeat.tmp
+kill_flag.txt
+recovery.json
+.claude/
+1H/
+30m/
+5m/
+
+# P1-clean — replay generated outputs
+gold_sniper/data/replay_runs/*
+!gold_sniper/data/replay_runs/.gitkeep
+gold_sniper/replay/outputs/
+gold_sniper/replay/results/
+gold_sniper/replay/runs/
+gold_sniper/replay/logs/
+gold_sniper/replay/decision_logs/
+gold_sniper/replay/trade_logs/
+gold_sniper/replay/summary.json
+gold_sniper/replay/*.csv
+gold_sniper/replay/*.jsonl
+gold_sniper/replay/*.parquet
+
+# P1-clean — local reports
+reports/replay/
+reports/local/
+reports/*.csv
+reports/*.jsonl
+reports/*.parquet
+reports/*.log
+calendar-event-list.csv
+
+# P2-B generated data/news artifacts
+gold_sniper/data/manifests/
+gold_sniper/data/historical/news/generated/
+gold_sniper/data/validation_reports/
+gold_sniper/data/historical/XAUUSD/1H/
+gold_sniper/data/historical/XAUUSD/30m/
+gold_sniper/data/historical/XAUUSD/5m/
+gold_sniper/data/historical/XAUUSD/*/XAUUSD_*_2026-01-01_2026-06-18.csv
+
+# P2-C generated trade journals
+gold_sniper/data/trade_journals/
+gold_sniper/data/replay_runs/*/trade_journal.jsonl
+
+.claude/settings.local.json

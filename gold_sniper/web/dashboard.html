@@ -1,0 +1,1246 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gold Sniper V3.2 · Operations Center</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+:root{
+  --bg0:#020812;--bg1:#050f1e;--bg2:#081529;--bg3:#0d1f38;
+  --gold:#f4b53f;--gold2:#ffd580;--gold-dim:rgba(244,181,63,.15);
+  --green:#00ff8a;--green-dim:rgba(0,255,138,.12);
+  --red:#ff3d6a;--red-dim:rgba(255,61,106,.12);
+  --blue:#00d4ff;--blue-dim:rgba(0,212,255,.10);
+  --purple:#a855f7;--purple-dim:rgba(168,85,247,.12);
+  --text:#c8d8f0;--text2:#607090;--text3:#344060;
+  --border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.12);
+  --font-display:'Orbitron',monospace;
+  --font-data:'Share Tech Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg0);color:var(--text);font-family:var(--font-data)}
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* ─── HEADER ─── */
+#header{
+  position:fixed;top:0;left:0;right:0;height:48px;z-index:100;
+  background:linear-gradient(180deg,rgba(2,8,18,.98),rgba(5,15,30,.95));
+  border-bottom:1px solid var(--border2);
+  display:flex;align-items:center;padding:0 16px;gap:20px;
+}
+.hdr-logo{font-family:var(--font-display);font-size:14px;font-weight:900;color:var(--gold);letter-spacing:3px;white-space:nowrap}
+.hdr-sep{width:1px;height:24px;background:var(--border2);flex-shrink:0}
+.hdr-price{font-size:22px;font-weight:700;font-family:var(--font-display);color:var(--gold);min-width:90px;transition:color .3s}
+.hdr-price.up{color:var(--green)}
+.hdr-price.dn{color:var(--red)}
+.hdr-badge{padding:3px 10px;border-radius:3px;font-size:11px;letter-spacing:1px;border:1px solid;font-family:var(--font-display)}
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.hdr-time{font-size:13px;color:var(--text2)}
+.conn-dot{width:7px;height:7px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red);transition:all .3s}
+.conn-dot.live{background:var(--green);box-shadow:0 0 8px var(--green);animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ─── MAIN LAYOUT ─── */
+#app{
+  position:fixed;top:48px;left:0;right:0;bottom:40px;
+  display:grid;
+  grid-template-columns:220px 1fr 260px;
+  overflow:hidden;
+}
+
+/* ─── LEFT : AGENTS PANEL ─── */
+#panel-agents{
+  background:var(--bg1);
+  border-right:1px solid var(--border);
+  overflow-y:auto;overflow-x:hidden;
+  padding:12px 8px;
+  display:flex;flex-direction:column;gap:6px;
+}
+.section-label{
+  font-size:9px;letter-spacing:2.5px;color:var(--text3);
+  text-transform:uppercase;padding:4px 6px 6px;
+  font-family:var(--font-display);
+}
+
+/* ─── AGENT CARD ─── */
+.agent-card{
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:10px 10px 8px;
+  cursor:pointer;
+  transition:border-color .3s, background .3s;
+  position:relative;overflow:hidden;
+}
+.agent-card::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(ellipse at 50% 0%,var(--glow-color,rgba(0,0,0,0)) 0%,transparent 70%);
+  opacity:0;transition:opacity .5s;pointer-events:none;
+}
+.agent-card.active::before{opacity:1}
+.agent-card.active{border-color:var(--agent-color,var(--border2))}
+.agent-card:hover{background:var(--bg3)}
+
+.agent-top{display:flex;align-items:center;gap:8px}
+.agent-avatar{
+  width:42px;height:42px;border-radius:50%;
+  border:2px solid var(--agent-color,var(--border2));
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;position:relative;
+  background:var(--bg3);
+  box-shadow:0 0 0 0 var(--agent-color,transparent);
+  transition:box-shadow .4s;
+}
+.agent-card.active .agent-avatar{box-shadow:0 0 12px var(--agent-color,transparent)}
+.agent-avatar svg{width:22px;height:22px}
+.agent-pulse{
+  position:absolute;inset:-4px;border-radius:50%;
+  border:1px solid var(--agent-color,transparent);
+  opacity:0;animation:none;
+}
+.agent-card.active .agent-pulse{animation:pulse-ring 1.8s infinite}
+@keyframes pulse-ring{
+  0%{transform:scale(1);opacity:.6}
+  100%{transform:scale(1.4);opacity:0}
+}
+
+.agent-info{flex:1;min-width:0}
+.agent-name{font-family:var(--font-display);font-size:9px;font-weight:700;letter-spacing:1.5px;color:var(--text2);text-transform:uppercase}
+.agent-role{font-size:10px;color:var(--text3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agent-score-row{display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+.agent-bar-bg{flex:1;height:3px;background:var(--bg0);border-radius:2px;margin-right:8px;overflow:hidden}
+.agent-bar-fill{height:100%;border-radius:2px;transition:width .8s cubic-bezier(.4,0,.2,1)}
+.agent-score-val{font-size:12px;font-family:var(--font-display);font-weight:700;min-width:32px;text-align:right}
+.agent-status{font-size:9px;letter-spacing:1px;padding:1px 6px;border-radius:2px;margin-top:4px;display:inline-block}
+
+/* ─── CHART ZONE ─── */
+#panel-chart{
+  display:flex;flex-direction:column;
+  background:var(--bg0);
+  position:relative;overflow:hidden;
+}
+#chart-toolbar{
+  background:var(--bg1);
+  border-bottom:1px solid var(--border);
+  padding:0 12px;height:34px;
+  display:flex;align-items:center;gap:8px;
+  flex-shrink:0;
+}
+.tf-btn{
+  font-size:10px;font-family:var(--font-display);font-weight:700;
+  padding:3px 10px;border:1px solid var(--border2);
+  background:transparent;color:var(--text2);
+  border-radius:3px;cursor:pointer;letter-spacing:1px;
+  transition:all .15s;
+}
+.tf-btn:hover,.tf-btn.active{background:var(--gold);color:var(--bg0);border-color:var(--gold)}
+.chart-meta{margin-left:auto;font-size:10px;color:var(--text3);letter-spacing:.5px}
+
+/* LAYER TOGGLES */
+.layer-toggles{
+  display:flex;gap:4px;align-items:center;
+  border-left:1px solid var(--border);padding-left:10px;margin-left:4px;
+}
+.ltog{
+  font-size:9px;padding:2px 7px;border-radius:2px;
+  border:1px solid var(--border);cursor:pointer;
+  color:var(--text3);letter-spacing:.5px;
+  transition:all .15s;
+}
+.ltog.on{border-color:var(--ltog-color);color:var(--ltog-color)}
+
+#chart-wrapper{flex:1;position:relative;overflow:hidden}
+#chart-container{width:100%;height:100%}
+
+/* ZONE OVERLAYS (positionnées sur le chart) */
+#zones-overlay{
+  position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:5;
+}
+.zone-rect{
+  position:absolute;border:1px solid;
+  font-size:8px;font-family:var(--font-display);letter-spacing:.5px;
+  padding:1px 4px;overflow:hidden;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.04),0 0 10px rgba(168,85,247,.08);
+}
+.zone-label{
+  position:absolute;right:3px;top:2px;
+  white-space:nowrap;font-size:9px;font-family:var(--font-data);opacity:.95;
+  text-shadow:0 1px 2px #020812;
+}
+.kz-bg{
+  position:absolute;top:0;bottom:0;pointer-events:none;
+}
+
+/* OHLC Tooltip */
+#ohlc-tooltip{
+  position:absolute;top:10px;left:70px;
+  background:rgba(5,15,30,.92);
+  border:1px solid var(--border2);border-radius:4px;
+  padding:6px 10px;font-size:11px;pointer-events:none;
+  display:none;z-index:10;
+}
+.ohlc-row{display:grid;grid-template-columns:auto 1fr;gap:4px 10px}
+.ohlc-key{color:var(--text3)}
+.ohlc-val{font-weight:700;text-align:right}
+
+/* ─── RIGHT : ORCHESTRATOR + METRICS ─── */
+#panel-right{
+  background:var(--bg1);border-left:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+
+/* ORCHESTRATOR BRAIN */
+#orch-section{
+  padding:12px;border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+#brain-canvas-wrap{
+  position:relative;height:140px;
+  display:flex;align-items:center;justify-content:center;
+}
+#brain-canvas{width:100%;height:140px}
+
+.orch-score{
+  text-align:center;margin-top:6px;
+}
+.orch-score-num{
+  font-family:var(--font-display);font-size:36px;font-weight:900;
+  transition:color .4s;
+}
+.orch-score-label{font-size:9px;color:var(--text3);letter-spacing:2px;margin-top:2px}
+.orch-decision{
+  text-align:center;margin-top:8px;
+  font-family:var(--font-display);font-size:11px;letter-spacing:2px;
+  padding:5px 12px;border-radius:3px;border:1px solid;display:inline-block;
+  width:100%;transition:all .3s;
+}
+
+/* METRICS */
+.metrics-scroll{flex:1;overflow-y:auto;padding:0 12px}
+.metric-row{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:6px 0;border-bottom:1px solid var(--border);
+  font-size:11px;
+}
+.metric-key{color:var(--text2)}
+.metric-val{font-weight:700;font-family:var(--font-display);font-size:10px}
+.metric-val.up{color:var(--green)}
+.metric-val.dn{color:var(--red)}
+.metric-val.gold{color:var(--gold)}
+
+/* DECISION LOG */
+#log-section{
+  flex-shrink:0;height:160px;border-top:1px solid var(--border);
+  overflow:hidden;display:flex;flex-direction:column;
+}
+.log-header{
+  padding:6px 12px;border-bottom:1px solid var(--border);
+  font-size:9px;letter-spacing:2px;color:var(--text3);
+  font-family:var(--font-display);flex-shrink:0;
+}
+#log-feed{
+  flex:1;overflow-y:auto;padding:4px 0;
+}
+.log-entry{
+  padding:3px 12px;font-size:10px;display:flex;gap:8px;align-items:baseline;
+  transition:background .2s;
+}
+.log-entry:hover{background:var(--bg2)}
+.log-time{color:var(--text3);min-width:42px;flex-shrink:0}
+.log-decision{font-family:var(--font-display);font-size:9px;font-weight:700;min-width:60px}
+.log-detail{color:var(--text3);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ─── BOTTOM STATUSBAR ─── */
+#statusbar{
+  position:fixed;bottom:0;left:0;right:0;height:40px;
+  background:var(--bg1);border-top:1px solid var(--border2);
+  display:flex;align-items:center;padding:0 16px;gap:20px;
+  font-size:11px;overflow:hidden;
+}
+.stat-item{display:flex;align-items:center;gap:6px}
+.stat-label{color:var(--text3);font-size:10px}
+.stat-val{font-family:var(--font-display);font-size:11px;font-weight:700}
+.stat-sep{width:1px;height:18px;background:var(--border)}
+
+/* ─── ANIMATIONS ─── */
+@keyframes scan{
+  0%{transform:translateY(-100%)}100%{transform:translateY(100%)}
+}
+@keyframes flicker{
+  0%,100%{opacity:1}50%{opacity:.85}95%{opacity:.92}
+}
+.scan-line{
+  position:absolute;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(244,181,63,.15),transparent);
+  animation:scan 4s linear infinite;pointer-events:none;
+}
+
+/* ─── KILL ZONE LEGEND ─── */
+.kz-legend{
+  display:flex;gap:10px;align-items:center;
+  padding:0 12px;margin-left:8px;
+}
+.kz-dot{width:8px;height:8px;border-radius:1px;flex-shrink:0}
+.kz-lbl{font-size:9px;color:var(--text3);letter-spacing:.5px}
+
+/* Progress ring SVG */
+.progress-ring circle{
+  fill:none;stroke-linecap:round;
+  transition:stroke-dashoffset .8s cubic-bezier(.4,0,.2,1), stroke .4s;
+}
+
+@media (max-width:900px){
+  html,body{
+    height:auto;min-height:100%;overflow-x:hidden;overflow-y:auto;
+  }
+  #header{
+    position:sticky;height:auto;min-height:58px;flex-wrap:wrap;
+    padding:8px 10px;gap:8px;align-content:center;
+  }
+  .hdr-logo{font-size:12px;letter-spacing:2px;min-width:100%}
+  .hdr-sep{display:none}
+  .hdr-price{font-size:20px;min-width:82px}
+  .hdr-badge{font-size:9px;padding:3px 7px}
+  .hdr-right{margin-left:0;width:100%;justify-content:space-between;gap:8px}
+  .hdr-time{font-size:11px}
+
+  #app{
+    position:static;display:grid;grid-template-columns:1fr;
+    grid-template-rows:auto auto auto;min-height:auto;overflow:visible;
+  }
+  #panel-chart{
+    order:1;height:calc(100dvh - 118px);min-height:420px;
+    border-bottom:1px solid var(--border2);
+  }
+  #chart-toolbar{
+    height:auto;min-height:42px;padding:6px 8px;gap:6px;overflow:visible;
+    align-items:center;flex-wrap:wrap;
+  }
+  #chart-toolbar .hdr-sep{display:none}
+  .tf-btn{min-width:42px;padding:6px 9px;font-size:10px}
+  .layer-toggles{
+    flex:1 0 100%;min-width:0;overflow-x:auto;border-left:0;
+    padding-left:0;margin-left:0;
+  }
+  .ltog{flex:1;min-width:42px;text-align:center;padding:5px 6px;font-size:9px}
+  .chart-meta{display:none}
+  #ohlc-tooltip{left:8px;top:48px;max-width:calc(100vw - 16px)}
+
+  #panel-agents{
+    order:2;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(172px,42vw);
+    overflow-x:auto;overflow-y:hidden;padding:10px 8px;border-right:0;
+    border-bottom:1px solid var(--border);gap:8px;
+  }
+  #panel-agents .section-label{
+    position:sticky;left:0;z-index:2;align-self:stretch;display:flex;align-items:center;
+    width:92px;background:var(--bg1);padding:0 8px;white-space:normal;
+  }
+  .agent-card{min-height:116px;padding:9px}
+  .agent-avatar{width:38px;height:38px}
+  .agent-role{white-space:normal;line-height:1.2}
+
+  #panel-right{
+    order:3;border-left:0;min-height:0;overflow:visible;
+  }
+  #orch-section{padding:10px 12px}
+  #brain-canvas-wrap{height:112px}
+  #brain-canvas{height:112px}
+  .orch-score-num{font-size:32px}
+  .metrics-scroll{
+    flex:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:0 12px;max-height:none;overflow:visible;padding:0 12px 8px;
+  }
+  .metric-row{min-width:0}
+  .metric-key,.metric-val{overflow:hidden;text-overflow:ellipsis}
+  #log-section{height:150px}
+
+  #statusbar{
+    position:sticky;height:auto;min-height:42px;bottom:0;z-index:90;
+    flex-wrap:wrap;padding:8px 10px;gap:8px 12px;overflow:visible;
+  }
+  .stat-item{min-width:max-content}
+  .stat-sep{display:none}
+}
+
+@media (max-width:520px){
+  #header{padding:7px 8px}
+  .hdr-price{font-size:18px}
+  .hdr-badge{max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #panel-chart{height:calc(100dvh - 126px);min-height:360px}
+  #panel-agents{grid-auto-columns:minmax(158px,74vw)}
+  .agent-name{font-size:8px}
+  .agent-score-val{font-size:11px}
+  .metrics-scroll{grid-template-columns:1fr}
+  .log-detail{white-space:normal}
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══ -->
+<header id="header">
+  <div class="hdr-logo">⬡ GOLD SNIPER</div>
+  <div class="hdr-sep"></div>
+  <div class="hdr-price" id="hdr-price">—</div>
+  <div id="hdr-spread" style="font-size:10px;color:var(--text3)">spr —</div>
+  <div class="hdr-sep"></div>
+  <div id="hdr-session" class="hdr-badge" style="color:var(--blue);border-color:var(--blue);background:var(--blue-dim)">—</div>
+  <div id="hdr-regime" class="hdr-badge" style="color:var(--purple);border-color:var(--purple);background:var(--purple-dim)">—</div>
+  <div class="hdr-right">
+    <div id="hdr-pnl" style="font-family:var(--font-display);font-size:12px;font-weight:700">P&amp;L —</div>
+    <div class="hdr-sep"></div>
+    <div id="hdr-time" class="hdr-time">--:--:-- UTC</div>
+    <div class="conn-dot" id="conn-dot"></div>
+    <div id="conn-label" style="font-size:10px;color:var(--text2)">OFFLINE</div>
+  </div>
+</header>
+
+<!-- ═══ APP ═══ -->
+<div id="app">
+
+  <!-- LEFT : AGENTS -->
+  <div id="panel-agents">
+    <div class="section-label">▸ Agents Opérationnels</div>
+    <!-- Agents injectés par JS -->
+  </div>
+
+  <!-- CENTER : CHART -->
+  <div id="panel-chart">
+    <div id="chart-toolbar">
+      <button class="tf-btn active" onclick="setTF('1m')">1M</button>
+      <button class="tf-btn" onclick="setTF('5m')">5M</button>
+      <button class="tf-btn" onclick="setTF('15m')">15M</button>
+      <div class="hdr-sep"></div>
+      <div class="layer-toggles">
+        <div class="ltog on" data-layer="ob" style="--ltog-color:#00ff8a" onclick="toggleLayer('ob',this)">OB</div>
+        <div class="ltog on" data-layer="fvg" style="--ltog-color:#f4b53f" onclick="toggleLayer('fvg',this)">FVG</div>
+        <div class="ltog on" data-layer="liq" style="--ltog-color:#f4b53f" onclick="toggleLayer('liq',this)">LIQ</div>
+        <div class="ltog on" data-layer="fib" style="--ltog-color:#f4b53f" onclick="toggleLayer('fib',this)">FIB</div>
+        <div class="ltog on" data-layer="choch" style="--ltog-color:#00ff8a" onclick="toggleLayer('choch',this)">CHoCH</div>
+        <div class="ltog on" data-layer="kz" style="--ltog-color:#00d4ff" onclick="toggleLayer('kz',this)">KZ</div>
+        <div class="ltog on" data-layer="vp" style="--ltog-color:#ff3d6a" onclick="toggleLayer('vp',this)">VP</div>
+      </div>
+      <div class="kz-legend">
+        <div class="kz-dot" style="background:rgba(0,212,255,.5)"></div><div class="kz-lbl">LDN</div>
+        <div class="kz-dot" style="background:rgba(255,61,106,.4)"></div><div class="kz-lbl">NY</div>
+        <div class="kz-dot" style="background:rgba(168,85,247,.4)"></div><div class="kz-lbl">OVL</div>
+      </div>
+      <div class="chart-meta" id="chart-meta">XAUUSD · — bougies</div>
+    </div>
+    <div id="chart-wrapper">
+      <div id="chart-container"></div>
+      <div id="zones-overlay"></div>
+      <div class="scan-line"></div>
+      <div id="ohlc-tooltip">
+        <div class="ohlc-row">
+          <span class="ohlc-key">O</span><span class="ohlc-val" id="tt-o">—</span>
+          <span class="ohlc-key">H</span><span class="ohlc-val" id="tt-h" style="color:var(--green)">—</span>
+          <span class="ohlc-key">L</span><span class="ohlc-val" id="tt-l" style="color:var(--red)">—</span>
+          <span class="ohlc-key">C</span><span class="ohlc-val" id="tt-c">—</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT : ORCHESTRATOR + METRICS -->
+  <div id="panel-right">
+    <div id="orch-section">
+      <div class="section-label">▸ Orchestrateur V3</div>
+      <div id="brain-canvas-wrap">
+        <canvas id="brain-canvas"></canvas>
+      </div>
+      <div class="orch-score">
+        <div class="orch-score-num" id="orch-score-num" style="color:var(--gold)">—</div>
+        <div class="orch-score-label">SCORE DE CONFIANCE / 100</div>
+      </div>
+      <div style="text-align:center;margin-top:6px">
+        <div class="orch-decision" id="orch-decision">INITIALISATION</div>
+      </div>
+      <div style="font-size:9px;color:var(--text3);text-align:center;margin-top:6px;letter-spacing:1px" id="orch-strategy">—</div>
+    </div>
+
+    <div class="metrics-scroll">
+      <div class="section-label" style="padding-top:10px">▸ Métriques</div>
+      <div class="metric-row"><span class="metric-key">Direction</span><span class="metric-val" id="m-dir">—</span></div>
+      <div class="metric-row"><span class="metric-key">DXY Bias</span><span class="metric-val gold" id="m-dxy">—</span></div>
+      <div class="metric-row"><span class="metric-key">Pearson r</span><span class="metric-val" id="m-pearson">—</span></div>
+      <div class="metric-row"><span class="metric-key">Spread</span><span class="metric-val" id="m-spread">—</span></div>
+      <div class="metric-row"><span class="metric-key">Trades / Jour</span><span class="metric-val gold" id="m-trades">—</span></div>
+      <div class="metric-row"><span class="metric-key">Winrate</span><span class="metric-val" id="m-winrate">—</span></div>
+      <div class="metric-row"><span class="metric-key">P&amp;L Journée</span><span class="metric-val" id="m-pnl">—</span></div>
+      <div class="metric-row"><span class="metric-key">Equity</span><span class="metric-val gold" id="m-equity">—</span></div>
+    </div>
+
+    <div id="log-section">
+      <div class="log-header">▸ Journal des Décisions</div>
+      <div id="log-feed"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- STATUSBAR -->
+<div id="statusbar">
+  <div class="stat-item"><div class="stat-label">SIGNAL</div><div class="stat-val" id="sb-signal" style="color:var(--gold)">—</div></div>
+  <div class="stat-sep"></div>
+  <div class="stat-item"><div class="stat-label">RISK</div><div class="stat-val" id="sb-risk" style="color:var(--text)">1%</div></div>
+  <div class="stat-sep"></div>
+  <div class="stat-item"><div class="stat-label">LATENCE</div><div class="stat-val" id="sb-latency" style="color:var(--green)">—</div></div>
+  <div class="stat-sep"></div>
+  <div class="stat-item"><div class="stat-label">TOTAL TRADES</div><div class="stat-val" id="sb-total">—</div></div>
+  <div class="stat-sep"></div>
+  <div class="stat-item" style="margin-left:auto">
+    <div class="stat-label">GOLD SNIPER V3.2</div>
+    <div class="stat-val" style="color:var(--gold);font-size:9px">OPERATIONS CENTER</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     JAVASCRIPT
+══════════════════════════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+/* ── CONFIG ─────────────────────────────────────────────────────────────── */
+const WS_URL      = `${location.protocol==='https:'?'wss:':'ws:'}//${location.hostname}:8765/ws`;
+const API_CANDLES = `${location.protocol}//${location.hostname}:8765/api/candles`;
+
+/* ── AGENTS META ─────────────────────────────────────────────────────────── */
+const AGENTS_META = [
+  { id:'agent_1', name:'Météo',       role:'Structure & Biais HTF',   color:'#3b82f6', glowHex:'59,130,246', icon:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v1M12 21v1M4.22 4.22l.7.7M18.36 18.36l.7.7M2 12h1M21 12h1M4.92 19.07l.7-.7M18.36 5.64l.7-.7"/><circle cx="12" cy="12" r="4"/></svg>` },
+  { id:'agent_2', name:'Cartographe', role:'Order Blocks & FVG',      color:'#8b5cf6', glowHex:'139,92,246',  icon:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7l6-4 6 4 6-4v14l-6 4-6-4-6 4V7z"/><path d="M9 3v14M15 7v14"/></svg>` },
+  { id:'agent_3', name:'Liquidité',   role:'Sweeps & Pièges',         color:'#10b981', glowHex:'16,185,129',  icon:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M8 12q2-4 4-4t4 4-4 4-4-4z"/></svg>` },
+  { id:'agent_4', name:'Fibonacci',   role:'Zone OTE & Premium/Disc', color:'#f59e0b', glowHex:'245,158,11',  icon:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h3v3H3zM6 17h4v4H6z"/></svg>` },
+  { id:'agent_5', name:'Microscope',  role:'CHoCH & AMD 1M',          color:'#ef4444', glowHex:'239,68,68',   icon:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>` },
+  { id:'agent_6', name:'Sentinelle',  role:'News & Macro',            color:'#06b6d4', glowHex:'6,182,212',   icon:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>` },
+  { id:'agent_7', name:'Chronos',     role:'Sessions & Kill Zones',   color:'#84cc16', glowHex:'132,204,22',  icon:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>` },
+];
+
+/* ── STATE ───────────────────────────────────────────────────────────────── */
+let chart, candleSeries, volumeSeries;
+let ws, wsRetry=0, wsRetryTimer=null;
+let lastPrice=0, lastCandles=[];
+let agentScores={};
+let visualLayers={};
+let layerVis={ob:true,fvg:true,liq:true,fib:true,choch:true,kz:true,vp:true};
+let brainAnim;
+
+/* ── INIT AGENTS ─────────────────────────────────────────────────────────── */
+function buildAgentPanel(){
+  const panel=document.getElementById('panel-agents');
+  const frag=document.createDocumentFragment();
+  AGENTS_META.forEach(a=>{
+    const el=document.createElement('div');
+    el.className='agent-card';
+    el.id=`card-${a.id}`;
+    el.style.setProperty('--agent-color',a.color);
+    el.style.setProperty('--glow-color',`rgba(${a.glowHex},.12)`);
+    el.innerHTML=`
+      <div class="agent-top">
+        <div class="agent-avatar" id="av-${a.id}" style="border-color:${a.color}40;color:${a.color}">
+          <div class="agent-pulse" style="border-color:${a.color}"></div>
+          ${a.icon}
+        </div>
+        <div class="agent-info">
+          <div class="agent-name" style="color:${a.color}">${a.name}</div>
+          <div class="agent-role">${a.role}</div>
+        </div>
+        <svg width="36" height="36" viewBox="0 0 36 36" id="ring-${a.id}">
+          <circle cx="18" cy="18" r="14" stroke="${a.color}22" stroke-width="2.5"/>
+          <circle cx="18" cy="18" r="14" stroke="${a.color}" stroke-width="2.5"
+            stroke-dasharray="87.96" stroke-dashoffset="87.96"
+            transform="rotate(-90 18 18)"
+            id="ring-fill-${a.id}" style="transition:stroke-dashoffset .8s ease"/>
+        </svg>
+      </div>
+      <div class="agent-score-row">
+        <div class="agent-bar-bg"><div class="agent-bar-fill" id="bar-${a.id}" style="width:0%;background:${a.color}"></div></div>
+        <div class="agent-score-val" id="score-${a.id}" style="color:${a.color}">0</div>
+      </div>
+      <div id="status-${a.id}" class="agent-status" style="color:${a.color}40;border:1px solid ${a.color}30;font-size:9px;font-family:var(--font-display)">INIT</div>
+    `;
+    frag.appendChild(el);
+  });
+  panel.appendChild(frag);
+}
+
+function updateAgentCard(agentId, score, direction, reason, hf){
+  const meta=AGENTS_META.find(a=>a.id===agentId);
+  if(!meta) return;
+  const card=document.getElementById(`card-${agentId}`);
+  const barEl=document.getElementById(`bar-${agentId}`);
+  const scoreEl=document.getElementById(`score-${agentId}`);
+  const statusEl=document.getElementById(`status-${agentId}`);
+  const ringFill=document.getElementById(`ring-fill-${agentId}`);
+  if(!card) return;
+
+  const pct=Math.min(Math.max(score,0),100);
+  const color=pct>=75?meta.color:pct>=50?'#f4b53f':'#ff3d6a';
+
+  if(barEl){barEl.style.width=pct+'%';barEl.style.background=color}
+  if(scoreEl){scoreEl.textContent=pct.toFixed(0);scoreEl.style.color=color}
+  if(ringFill){
+    const circ=87.96;
+    ringFill.style.strokeDashoffset=(circ*(1-pct/100)).toFixed(2);
+    ringFill.setAttribute('stroke',color);
+  }
+
+  const active=pct>50&&hf;
+  card.classList.toggle('active',active);
+  card.style.setProperty('--agent-color',color);
+
+  if(statusEl){
+    const dir=direction==='LONG'?'▲ LONG':direction==='SHORT'?'▼ SHORT':hf===false?'❌ HARD FILTER':'· WAIT';
+    const dirColor=direction==='LONG'?'var(--green)':direction==='SHORT'?'var(--red)':hf===false?'var(--red)':'var(--text3)';
+    statusEl.style.color=dirColor;
+    statusEl.style.borderColor=dirColor.replace('var','var').replace(')',')').replace('(',', .3)');
+    statusEl.textContent=dir;
+  }
+}
+
+/* ── CHART INIT ──────────────────────────────────────────────────────────── */
+function initChart(){
+  const container=document.getElementById('chart-container');
+  chart=LightweightCharts.createChart(container,{
+    width:container.clientWidth,height:container.clientHeight,
+    layout:{background:{type:'solid',color:'#020812'},textColor:'#607090',fontSize:11,fontFamily:'Share Tech Mono,monospace'},
+    grid:{vertLines:{color:'rgba(255,255,255,.03)'},horzLines:{color:'rgba(255,255,255,.03)'}},
+    crosshair:{mode:LightweightCharts.CrosshairMode.Normal,vertLine:{color:'#607090',width:1,style:3},horzLine:{color:'#607090',width:1,style:3}},
+    rightPriceScale:{borderColor:'#0d1f38',textColor:'#607090',scaleMargins:{top:.1,bottom:.2}},
+    timeScale:{borderColor:'#0d1f38',timeVisible:true,secondsVisible:false,
+      tickMarkFormatter:(t)=>{const d=new Date(t*1e3);return`${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`}},
+  });
+
+  candleSeries=chart.addCandlestickSeries({
+    upColor:'#00ff8a',downColor:'#ff3d6a',borderUpColor:'#00ff8a',borderDownColor:'#ff3d6a',wickUpColor:'#00c96b',wickDownColor:'#cc3055',
+    autoscaleInfoProvider:(original)=>{
+      const res=original();
+      if(!res||!res.priceRange)return res;
+      let min=res.priceRange.minValue;
+      let max=res.priceRange.maxValue;
+      Object.values(visualLayers||{}).forEach(layers=>{
+        if(!Array.isArray(layers))return;
+        layers.forEach(layer=>{
+          ['price_top','price_bottom','price'].forEach(k=>{
+            const v=Number(layer[k]);
+            if(Number.isFinite(v)&&v>0){min=Math.min(min,v);max=Math.max(max,v)}
+          });
+        });
+      });
+      const pad=Math.max((max-min)*0.04,0.5);
+      return {priceRange:{minValue:min-pad,maxValue:max+pad}};
+    },
+  });
+
+  volumeSeries=chart.addHistogramSeries({
+    priceScaleId:'vol',priceFormat:{type:'volume'},
+  });
+  chart.priceScale('vol').applyOptions({scaleMargins:{top:.85,bottom:0}});
+
+  /* Crosshair tooltip */
+  chart.subscribeCrosshairMove(param=>{
+    const tt=document.getElementById('ohlc-tooltip');
+    if(!param.time||!param.seriesData.has(candleSeries)){tt.style.display='none';return}
+    const c=param.seriesData.get(candleSeries);
+    if(!c)return;
+    document.getElementById('tt-o').textContent=c.open.toFixed(2);
+    document.getElementById('tt-h').textContent=c.high.toFixed(2);
+    document.getElementById('tt-l').textContent=c.low.toFixed(2);
+    const cc=document.getElementById('tt-c');
+    cc.textContent=c.close.toFixed(2);
+    cc.style.color=c.close>=c.open?'var(--green)':'var(--red)';
+    tt.style.display='block';
+  });
+
+  /* Resize */
+  const ro=new ResizeObserver(()=>{
+    chart.applyOptions({width:container.clientWidth,height:container.clientHeight});
+    requestAnimationFrame(renderZoneOverlays);
+  });
+  ro.observe(container);
+
+  /* Subscribe to price scale + time scale changes to re-render overlays */
+  chart.timeScale().subscribeVisibleTimeRangeChange(()=>requestAnimationFrame(renderZoneOverlays));
+  const rightScale=chart.priceScale('right');
+  if(rightScale&&typeof rightScale.subscribeVisiblePriceRangeChange==='function'){
+    rightScale.subscribeVisiblePriceRangeChange(()=>requestAnimationFrame(renderZoneOverlays));
+  }
+
+  loadInitialCandles();
+}
+
+/* ── LOAD CANDLES ────────────────────────────────────────────────────────── */
+async function loadInitialCandles(){
+  try{
+    const r=await fetch(API_CANDLES);
+    const d=await r.json();
+    const cs=d.candles||[];
+    if(cs.length){
+      candleSeries.setData(cs);
+      volumeSeries.setData(cs.map(c=>({time:c.time,value:c.volume||0,color:c.close>=c.open?'rgba(0,255,138,.12)':'rgba(255,61,106,.12)'})));
+      chart.timeScale().scrollToRealTime();
+      document.getElementById('chart-meta').textContent=`XAUUSD 1M · ${cs.length} bougies`;
+      lastCandles=cs;
+    }
+  }catch(e){console.warn('Candles fetch error:',e)}
+}
+
+function updateCandle(c){
+  if(!c||!c.time) return;
+  candleSeries.update(c);
+  volumeSeries.update({time:c.time,value:c.volume||0,color:c.close>=c.open?'rgba(0,255,138,.12)':'rgba(255,61,106,.12)'});
+
+  const hp=document.getElementById('hdr-price');
+  const isUp=c.close>lastPrice;
+  hp.textContent=c.close.toFixed(2);
+  hp.className='hdr-price '+(isUp?'up':'dn');
+  lastPrice=c.close;
+}
+
+/* ── ZONE OVERLAYS ───────────────────────────────────────────────────────── */
+/*
+  We render all visual layer zones as absolutely-positioned divs over the chart.
+  Each frame we recalculate pixel coordinates from price+time → pixel.
+  This approach is 100% compatible with all TradingView LC versions.
+*/
+
+let pendingZoneRender=false;
+function scheduleZoneRender(){
+  if(!pendingZoneRender){
+    pendingZoneRender=true;
+    requestAnimationFrame(()=>{pendingZoneRender=false;renderZoneOverlays()});
+  }
+}
+
+function priceToY(price){
+  if(!candleSeries)return null;
+  return candleSeries.priceToCoordinate(price);
+}
+function timeToX(t){
+  if(!chart)return null;
+  return chart.timeScale().timeToCoordinate(t);
+}
+function chartWidth(){return document.getElementById('chart-container').clientWidth}
+function chartHeight(){return document.getElementById('chart-container').clientHeight}
+function visibleFill(color,minAlpha=.16){
+  return String(color||'').replace(/rgba\(([^,]+),([^,]+),([^,]+),([^)]+)\)/,(m,r,g,b,a)=>{
+    const alpha=Math.max(parseFloat(a)||0,minAlpha);
+    return `rgba(${r},${g},${b},${alpha})`;
+  })||color;
+}
+
+function renderZoneOverlays(){
+  const overlay=document.getElementById('zones-overlay');
+  overlay.innerHTML='';
+  if(!chart||!candleSeries) return;
+  const W=chartWidth(), H=chartHeight();
+  const now=Math.floor(Date.now()/1e3);
+  const farFuture=now+7*86400;
+
+  /* ── KILL ZONES (time backgrounds) ──────────────────────────────────── */
+  if(layerVis.kz){
+    const today=new Date();
+    const day=today.getUTCDate();
+    const mo=today.getUTCMonth();
+    const yr=today.getUTCFullYear();
+
+    const kzDefs=[
+      {h0:7,h1:10,color:'rgba(0,212,255,.06)',label:'LDN'},
+      {h0:12,h1:15,color:'rgba(255,61,106,.05)',label:'NY'},
+      {h0:12,h1:16,color:'rgba(168,85,247,.04)',label:'OVL'},
+    ];
+    kzDefs.forEach(kz=>{
+      const t0=Date.UTC(yr,mo,day,kz.h0,0,0)/1e3;
+      const t1=Date.UTC(yr,mo,day,kz.h1,0,0)/1e3;
+      let x0=timeToX(t0), x1=timeToX(t1);
+      if(x0===null&&x1===null)return;
+      x0=x0??0; x1=x1??W;
+      if(x1<=x0)return;
+      const d=document.createElement('div');
+      d.className='kz-bg';
+      d.style.cssText=`left:${x0}px;width:${x1-x0}px;background:${kz.color};border-left:1px solid ${kz.color.replace(/[\d.]+\)$/,'0.4)')};`;
+      overlay.appendChild(d);
+    });
+  }
+
+  /* ── ORDER BLOCKS & FVG (price rectangles) ───────────────────────────── */
+  const agent2Layers=(visualLayers.agent_2||[]);
+  agent2Layers.forEach(layer=>{
+    if(!layer.price_top||!layer.price_bottom)return;
+    const isOB=layer.label&&layer.label.toLowerCase().includes('ob');
+    const isFVG=layer.label&&layer.label.toLowerCase().includes('fvg');
+    if(isOB&&!layerVis.ob)return;
+    if(isFVG&&!layerVis.fvg)return;
+
+    const y1=priceToY(layer.price_top);
+    const y2=priceToY(layer.price_bottom);
+    if(y1===null||y2===null)return;
+    const x1=layer.time_start?timeToX(layer.time_start):0;
+    const x2=layer.time_end?timeToX(layer.time_end):W+200;
+    const x0=Math.max(x1??0,0);
+    const x9=Math.min(x2??W+200,W+200);
+    if(x9<=x0)return;
+
+    const top=Math.min(y1,y2), h=Math.abs(y2-y1);
+    if(h<1)return;
+
+    const d=document.createElement('div');
+    d.className='zone-rect';
+    d.style.cssText=`top:${top}px;height:${h}px;left:${x0}px;width:${x9-x0}px;background:${visibleFill(layer.color,isFVG ? .18 : .16)};border-color:${layer.border_color};`;
+    const lbl=document.createElement('div');
+    lbl.className='zone-label';
+    lbl.style.color=layer.border_color;
+    lbl.textContent=layer.label||'';
+    d.appendChild(lbl);
+    overlay.appendChild(d);
+  });
+
+  /* ── FIBONACCI OTE ──────────────────────────────────────────────────── */
+  if(layerVis.fib){
+    const fib4=(visualLayers.agent_4||[]);
+    fib4.forEach(layer=>{
+      if(layer.layer_type==='rectangle'){
+        const y1=priceToY(layer.price_top), y2=priceToY(layer.price_bottom);
+        if(y1===null||y2===null)return;
+        const top=Math.min(y1,y2), h=Math.abs(y2-y1);
+        if(h<1)return;
+        const d=document.createElement('div');
+        d.className='zone-rect';
+        d.style.cssText=`top:${top}px;height:${h}px;left:0;width:${W+200}px;background:${visibleFill(layer.color,.16)};border-color:${layer.border_color};border-left:none;border-right:none;`;
+        const lbl=document.createElement('div');
+        lbl.className='zone-label';
+        lbl.style.color=layer.border_color;
+        lbl.textContent=layer.label||'';
+        d.appendChild(lbl);
+        overlay.appendChild(d);
+      }
+      if(layer.layer_type==='hline'){
+        const y=priceToY(layer.price);
+        if(y===null)return;
+        drawHLine(overlay,y,W,layer.color,layer.style,layer.width,layer.label);
+      }
+    });
+  }
+
+  /* ── LIQUIDITÉ EQH/EQL ───────────────────────────────────────────────── */
+  if(layerVis.liq){
+    const liq3=(visualLayers.agent_3||[]).filter(l=>l.layer_type==='hline');
+    liq3.forEach(layer=>{
+      const y=priceToY(layer.price);
+      if(y===null)return;
+      drawHLine(overlay,y,W,layer.color,layer.style,layer.width,layer.label);
+    });
+    /* Asian Range */
+    const asian=(visualLayers.agent_3||[]).filter(l=>l.layer_type==='rectangle');
+    asian.forEach(layer=>{
+      const y1=priceToY(layer.price_top), y2=priceToY(layer.price_bottom);
+      if(y1===null||y2===null)return;
+      const top=Math.min(y1,y2), h=Math.abs(y2-y1);
+      if(h<1)return;
+      const x1=layer.time_start?timeToX(layer.time_start):0;
+      const x2=layer.time_end?timeToX(layer.time_end):W;
+      const x0=Math.max(x1??0,0), x9=Math.min(x2??W,W);
+      if(x9<=x0)return;
+      const d=document.createElement('div');
+      d.className='zone-rect';
+      d.style.cssText=`top:${top}px;height:${h}px;left:${x0}px;width:${x9-x0}px;background:${visibleFill(layer.color,.14)};border-color:${layer.border_color};`;
+      overlay.appendChild(d);
+    });
+  }
+
+  /* ── VOLUME PROFILE ──────────────────────────────────────────────────── */
+  if(layerVis.vp){
+    const vp7=(visualLayers.agent_7||[]).filter(l=>l.layer_type==='hline');
+    vp7.forEach(layer=>{
+      const y=priceToY(layer.price);
+      if(y===null)return;
+      const isPOC=layer.label&&layer.label.includes('POC');
+      drawHLine(overlay,y,W,layer.color,layer.style,isPOC?2:1,layer.label);
+    });
+  }
+
+  /* ── CHoCH MARKERS ───────────────────────────────────────────────────── */
+  if(layerVis.choch){
+    const a5=(visualLayers.agent_5||[]).filter(l=>l.layer_type==='hline');
+    a5.forEach(layer=>{
+      const y=priceToY(layer.price);
+      if(y===null)return;
+      drawHLine(overlay,y,W,layer.color,'solid',2,layer.label);
+    });
+    const a5markers=(visualLayers.agent_5||[]).filter(l=>l.layer_type==='marker');
+    a5markers.forEach(m=>{
+      const x=timeToX(m.time), y=priceToY(m.price);
+      if(x===null||y===null)return;
+      const dot=document.createElement('div');
+      dot.style.cssText=`position:absolute;width:10px;height:10px;border-radius:50%;background:${m.color};left:${x-5}px;top:${y-5}px;box-shadow:0 0 6px ${m.color};`;
+      overlay.appendChild(dot);
+    });
+  }
+}
+
+function drawHLine(overlay,y,W,color,style,width,label){
+  const line=document.createElement('div');
+  const dash=style==='dashed'?'8px 4px':style==='dotted'?'2px 4px':null;
+  line.style.cssText=`position:absolute;left:0;top:${y}px;width:${W}px;height:${width||1}px;background:${dash?'transparent':color};${dash?`border-top:${width||1}px dashed ${color};`:''};`;
+  if(label){
+    const lbl=document.createElement('span');
+    lbl.style.cssText=`position:absolute;right:4px;top:-10px;font-size:9px;color:${color};font-family:var(--font-data);white-space:nowrap;`;
+    lbl.textContent=label;
+    line.appendChild(lbl);
+  }
+  overlay.appendChild(line);
+}
+
+/* ── ORCHESTRATOR BRAIN CANVAS ───────────────────────────────────────────── */
+function initBrainCanvas(){
+  const cvs=document.getElementById('brain-canvas');
+  const wrap=document.getElementById('brain-canvas-wrap');
+  const W=wrap.clientWidth, H=140;
+  cvs.width=W; cvs.height=H;
+  const ctx=cvs.getContext('2d');
+  let frame=0;
+
+  const cx=W/2, cy=H/2;
+  const agentPositions=AGENTS_META.map((_,i)=>{
+    const angle=(i/7)*Math.PI*2-Math.PI/2;
+    const r=52;
+    return{x:cx+Math.cos(angle)*r, y:cy+Math.sin(angle)*r};
+  });
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    frame++;
+
+    /* Draw connections */
+    AGENTS_META.forEach((a,i)=>{
+      const pos=agentPositions[i];
+      const score=agentScores[a.id]||0;
+      const alpha=0.06+(score/100)*0.25;
+
+      ctx.beginPath();
+      ctx.strokeStyle=`rgba(${a.glowHex},${alpha})`;
+      ctx.lineWidth=0.5+(score/100)*1.5;
+      ctx.moveTo(pos.x,pos.y);
+      ctx.lineTo(cx,cy);
+      ctx.stroke();
+
+      /* Animated particle along the line */
+      const t=((frame*1.5+i*20)%120)/120;
+      const px=pos.x+(cx-pos.x)*t;
+      const py=pos.y+(cy-pos.y)*t;
+      ctx.beginPath();
+      ctx.arc(px,py,1.5+(score/100)*1,0,Math.PI*2);
+      ctx.fillStyle=a.color;
+      ctx.globalAlpha=score>50?0.8:0.2;
+      ctx.fill();
+      ctx.globalAlpha=1;
+    });
+
+    /* Agent nodes */
+    AGENTS_META.forEach((a,i)=>{
+      const pos=agentPositions[i];
+      const score=agentScores[a.id]||0;
+      const r=5+(score/100)*4;
+      const pulse=1+0.08*Math.sin(frame*0.05+i);
+
+      ctx.beginPath();
+      ctx.arc(pos.x,pos.y,r*pulse,0,Math.PI*2);
+      ctx.fillStyle=a.color+'22';
+      ctx.strokeStyle=a.color+(score>50?'cc':'44');
+      ctx.lineWidth=1;
+      ctx.fill();
+      ctx.stroke();
+    });
+
+    /* Central orchestrator node */
+    const globalScore=Object.values(agentScores).reduce((a,b)=>a+b,0)/7;
+    const gcolor=globalScore>=85?'#00ff8a':globalScore>=70?'#f4b53f':'#ff3d6a';
+    const glow=8+4*Math.sin(frame*0.04);
+
+    ctx.beginPath();
+    ctx.arc(cx,cy,glow,0,Math.PI*2);
+    ctx.fillStyle=gcolor+'15';
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(cx,cy,6,0,Math.PI*2);
+    ctx.fillStyle=gcolor+'33';
+    ctx.strokeStyle=gcolor;
+    ctx.lineWidth=1.5;
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle='#fff';
+    ctx.font='bold 6px "Share Tech Mono"';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText('AI',cx,cy);
+
+    brainAnim=requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+/* ── ORCHESTRATOR UI ─────────────────────────────────────────────────────── */
+function updateOrchestrator(orch){
+  if(!orch)return;
+  const score=orch.final_score||0;
+  const decision=orch.decision||'WAIT';
+  const strategy=orch.strategy||'—';
+
+  const numEl=document.getElementById('orch-score-num');
+  const decEl=document.getElementById('orch-decision');
+  const strEl=document.getElementById('orch-strategy');
+
+  const color=score>=85?'#00ff8a':score>=70?'#f4b53f':'#ff3d6a';
+  if(numEl){numEl.textContent=score.toFixed(1);numEl.style.color=color}
+
+  const DMAP={
+    EXECUTE:{text:'✅ EXECUTE',bg:'rgba(0,255,138,.08)',color:'#00ff8a',border:'#00ff8a'},
+    WATCH:{text:'👁 WATCH',bg:'rgba(244,181,63,.08)',color:'#f4b53f',border:'#f4b53f'},
+    REJECT:{text:'— REJECT',bg:'rgba(255,255,255,.03)',color:'#344060',border:'#1e3050'},
+    VETOED:{text:'🚫 VETO',bg:'rgba(255,61,106,.12)',color:'#ff3d6a',border:'#ff3d6a'},
+    EXCEPTIONAL_ALERT:{text:'⭐ DIAMOND',bg:'rgba(168,85,247,.12)',color:'#a855f7',border:'#a855f7'},
+    WAIT:{text:'· WAIT',bg:'rgba(255,255,255,.02)',color:'#344060',border:'#1a2840'},
+  };
+  const dm=DMAP[decision]||DMAP.WAIT;
+  if(decEl){
+    decEl.textContent=dm.text;
+    decEl.style.background=dm.bg;
+    decEl.style.color=dm.color;
+    decEl.style.borderColor=dm.border;
+  }
+  if(strEl)strEl.textContent=strategy.replace(/_/g,' ');
+
+  document.getElementById('sb-signal').textContent=`${score.toFixed(0)}/100`;
+  document.getElementById('sb-signal').style.color=color;
+}
+
+/* ── METRICS ─────────────────────────────────────────────────────────────── */
+function updateMetrics(market,perf,orch){
+  if(!market||!perf)return;
+  const set=(id,val,cls)=>{const el=document.getElementById(id);if(el){el.textContent=val;if(cls)el.className='metric-val '+cls}};
+
+  const dir=orch&&orch.direction;
+  set('m-dir',dir==='LONG'?'▲ LONG':dir==='SHORT'?'▼ SHORT':'— N/A',dir==='LONG'?'up':dir==='SHORT'?'dn':'');
+  set('m-dxy',market.dxy_bias||'—','gold');
+  const pr=market.pearson_dxy_gold;set('m-pearson',pr!=null?pr.toFixed(3):'—',pr!=null&&pr<-0.5?'up':pr!=null&&pr>0.3?'dn':'');
+  const spread=market.spread_points;
+  set('m-spread',spread!=null?`${Number(spread).toFixed(1)} pts`:'—',spread>35?'dn':'');
+  set('m-trades',perf.total_trades||0,'gold');
+  const wr=perf.winrate;set('m-winrate',wr!=null?`${wr.toFixed(0)}%`:'—',wr!=null&&wr>=55?'up':wr!=null&&wr<45?'dn':'');
+  const pnl=perf.daily_pnl||0;
+  set('m-pnl',`${pnl>=0?'+':''}${pnl.toFixed(2)}$`,pnl>=0?'up':'dn');
+  const eq=perf.equity;set('m-equity',eq!=null?`${eq.toFixed(2)}$`:'—','gold');
+
+  const pnlHdr=document.getElementById('hdr-pnl');
+  if(pnlHdr){pnlHdr.textContent=`P&L ${pnl>=0?'+':''}${pnl.toFixed(2)}$`;pnlHdr.style.color=pnl>=0?'var(--green)':'var(--red)'}
+
+  document.getElementById('sb-total').textContent=perf.total_trades||0;
+  if(market.spread_points!=null)document.getElementById('hdr-spread').textContent=`spr ${Number(market.spread_points).toFixed(1)}`;
+
+  const ses=market.session||'—';
+  const sesEl=document.getElementById('hdr-session');
+  if(sesEl)sesEl.textContent=ses;
+  const reg=market.regime||'—';
+  const regEl=document.getElementById('hdr-regime');
+  if(regEl)regEl.textContent=reg;
+}
+
+/* ── DECISION LOG ────────────────────────────────────────────────────────── */
+function addLogEntry(decision,score,strategy){
+  if(!decision||decision==='REJECT'||decision==='WAIT')return;
+  const feed=document.getElementById('log-feed');
+  const now=new Date();
+  const ts=`${String(now.getUTCHours()).padStart(2,'0')}:${String(now.getUTCMinutes()).padStart(2,'0')}`;
+  const colors={EXECUTE:'var(--green)',VETOED:'var(--red)',WATCH:'var(--gold)',EXCEPTIONAL_ALERT:'var(--purple)'};
+  const c=colors[decision]||'var(--text3)';
+  const div=document.createElement('div');
+  div.className='log-entry';
+  div.innerHTML=`<span class="log-time">${ts}</span><span class="log-decision" style="color:${c}">${decision}</span><span class="log-detail">${score.toFixed(1)} · ${(strategy||'').replace(/_/g,' ')}</span>`;
+  feed.insertBefore(div,feed.firstChild);
+  while(feed.children.length>50)feed.removeChild(feed.lastChild);
+}
+
+/* ── LAYER TOGGLES ───────────────────────────────────────────────────────── */
+function toggleLayer(key,el){
+  layerVis[key]=!layerVis[key];
+  el.classList.toggle('on',layerVis[key]);
+  scheduleZoneRender();
+}
+
+/* ── WEBSOCKET ───────────────────────────────────────────────────────────── */
+function connectWS(){
+  if(ws){try{ws.close()}catch(e){}}
+  ws=new WebSocket(WS_URL);
+
+  ws.onopen=()=>{
+    wsRetry=0;
+    clearTimeout(wsRetryTimer);
+    const dot=document.getElementById('conn-dot');
+    const lbl=document.getElementById('conn-label');
+    dot.className='conn-dot live';
+    lbl.textContent='ONLINE';
+    lbl.style.color='var(--green)';
+    document.getElementById('sb-latency').textContent='-- ms';
+  };
+
+  ws.onmessage=({data})=>{
+    try{
+      const msg=JSON.parse(data);
+      if(msg.ts){
+        const latencyMs=Math.max(0,Date.now()-msg.ts*1000);
+        document.getElementById('sb-latency').textContent=`${latencyMs} ms`;
+      }
+      if(msg.type==='full_state') processState(msg.data);
+    }catch(e){}
+  };
+
+  ws.onclose=ws.onerror=()=>{
+    const dot=document.getElementById('conn-dot');
+    const lbl=document.getElementById('conn-label');
+    dot.className='conn-dot';
+    lbl.textContent='RECONNEXION…';
+    lbl.style.color='var(--gold)';
+    wsRetry++;
+    const delay=Math.min(1000*2**wsRetry,30000);
+    wsRetryTimer=setTimeout(connectWS,delay);
+  };
+}
+
+function processState(data){
+  const market=data.market||{};
+  const agents=data.agents||{};
+  const orch=data.orchestrator||{};
+  const perf=data.performance||{};
+
+  /* Candles */
+  const candles=data.candles_1m||[];
+  if(candles.length) updateCandle(candles[candles.length-1]);
+
+  /* Visual layers */
+  if(data.visual_layers){
+    visualLayers=data.visual_layers;
+    if(candleSeries)candleSeries.applyOptions({});
+    scheduleZoneRender();
+  }
+
+  /* Agents */
+  AGENTS_META.forEach(a=>{
+    const d=agents[a.id]||{};
+    const score=d.score||0;
+    agentScores[a.id]=score;
+    updateAgentCard(a.id,score,d.direction,d.reason,d.hard_filter_pass);
+  });
+
+  updateOrchestrator(orch);
+  updateMetrics(market,perf,orch);
+  addLogEntry(orch.decision,orch.final_score||0,orch.strategy);
+}
+
+/* ── TIMEFRAME (placeholder) ─────────────────────────────────────────────── */
+function setTF(tf){
+  document.querySelectorAll('.tf-btn').forEach(b=>b.classList.toggle('active',b.textContent===tf.toUpperCase()));
+}
+
+/* ── CLOCK ───────────────────────────────────────────────────────────────── */
+function startClock(){
+  setInterval(()=>{
+    const n=new Date();
+    const h=String(n.getUTCHours()).padStart(2,'0');
+    const m=String(n.getUTCMinutes()).padStart(2,'0');
+    const s=String(n.getUTCSeconds()).padStart(2,'0');
+    document.getElementById('hdr-time').textContent=`${h}:${m}:${s} UTC`;
+  },1000);
+}
+
+/* ── MOCK DATA (for offline preview / dev) ───────────────────────────────── */
+function injectMockData(){
+  const mock={
+    market:{current_price:3418.55,spread_points:22,regime:'TRENDING',session:'LONDON',dxy_bias:'BEARISH',pearson_dxy_gold:-0.72},
+    agents:{
+      agent_1:{score:88,direction:'LONG',hard_filter_pass:true,reason:'MTF_ALIGNED_LONG'},
+      agent_2:{score:82,direction:'LONG',hard_filter_pass:true,reason:'FRESH_OB_87pts'},
+      agent_3:{score:75,direction:'LONG',hard_filter_pass:true,reason:'SWEEP_SSL_CONFIRMED'},
+      agent_4:{score:91,direction:'LONG',hard_filter_pass:true,reason:'IN_OTE_ZONE 94%'},
+      agent_5:{score:87,direction:'LONG',hard_filter_pass:true,reason:'AMD_COMPLETE_CHoCH'},
+      agent_6:{score:100,direction:null,hard_filter_pass:true,reason:'CLEAR'},
+      agent_7:{score:100,direction:null,hard_filter_pass:true,reason:'LONDON_OPEN'},
+    },
+    orchestrator:{final_score:87.4,decision:'EXECUTE',direction:'LONG',strategy:'LONDON_OPEN_SWEEP_REVERSAL'},
+    performance:{total_trades:12,winrate:66.7,daily_pnl:47.80,equity:1047.80},
+    visual_layers:{
+      agent_2:[
+        {layer_type:'rectangle',id:'ob1',time_start:1700000000,time_end:null,price_top:3415.00,price_bottom:3411.20,color:'rgba(16,185,129,.15)',border_color:'rgba(16,185,129,.7)',label:'OB Bull 87pts'},
+        {layer_type:'rectangle',id:'fvg1',time_start:1700001000,time_end:null,price_top:3420.50,price_bottom:3418.80,color:'rgba(250,204,21,.06)',border_color:'rgba(250,204,21,.3)',label:'FVG'},
+      ],
+      agent_3:[
+        {layer_type:'hline',id:'eqh1',time_start:1699990000,price:3425.00,color:'rgba(250,204,21,.8)',style:'dashed',width:1,label:'BSL 3425.00'},
+        {layer_type:'hline',id:'eql1',time_start:1699990000,price:3408.50,color:'rgba(250,204,21,.8)',style:'dashed',width:1,label:'SSL 3408.50'},
+      ],
+      agent_4:[
+        {layer_type:'rectangle',id:'ote',time_start:1699980000,time_end:null,price_top:3420.00,price_bottom:3411.50,color:'rgba(245,158,11,.10)',border_color:'rgba(245,158,11,.5)',label:'OTE Zone'},
+        {layer_type:'hline',id:'sweet',time_start:1699980000,price:3415.30,color:'rgba(245,158,11,.9)',style:'dashed',width:2,label:'70.5% Sweet Spot'},
+        {layer_type:'hline',id:'eq',time_start:1699980000,price:3422.00,color:'rgba(148,163,184,.5)',style:'dashed',width:1,label:'EQ 50%'},
+      ],
+      agent_5:[
+        {layer_type:'hline',id:'choch',time_start:1700003000,price:3416.80,color:'rgba(0,255,138,.9)',style:'solid',width:2,label:'CHoCH ▲ @ 3416.80'},
+        {layer_type:'marker',id:'sw',time:1700002500,price:3412.10,color:'rgba(59,130,246,1)',shape:'circle',label:'Sweep 1M'},
+      ],
+      agent_7:[
+        {layer_type:'hline',id:'poc',time_start:1699900000,price:3416.00,color:'rgba(255,61,106,.85)',style:'solid',width:2,label:'POC 3416.00'},
+        {layer_type:'hline',id:'vah',time_start:1699900000,price:3424.50,color:'rgba(0,255,138,.6)',style:'dashed',width:1,label:'VAH 3424.50'},
+        {layer_type:'hline',id:'val',time_start:1699900000,price:3409.00,color:'rgba(255,61,106,.6)',style:'dashed',width:1,label:'VAL 3409.00'},
+      ],
+    },
+    candles_1m:[],
+  };
+
+  /* Generate mock candles */
+  const now=Math.floor(Date.now()/1e3);
+  let price=3400;
+  for(let i=200;i>=0;i--){
+    const t=now-i*60;
+    const o=price+(Math.random()-.5)*2;
+    const h=o+Math.random()*3;
+    const l=o-Math.random()*3;
+    const c=l+(h-l)*Math.random();
+    price=c;
+    mock.candles_1m.push({time:t,open:o,high:h,low:l,close:c,volume:Math.random()*500+100});
+  }
+
+  processState(mock);
+  /* Simulate live ticks */
+  let lp=mock.candles_1m[mock.candles_1m.length-1].close;
+  setInterval(()=>{
+    const t=Math.floor(Date.now()/1e3);
+    lp+=((Math.random()-.5)*0.8);
+    updateCandle({time:Math.floor(t/60)*60,open:lp-0.3,high:lp+0.8,low:lp-0.8,close:lp,volume:200});
+    scheduleZoneRender();
+  },1500);
+}
+
+/* ── BOOT ────────────────────────────────────────────────────────────────── */
+window.addEventListener('DOMContentLoaded',()=>{
+  buildAgentPanel();
+  initChart();
+  initBrainCanvas();
+  startClock();
+  connectWS();
+
+  /* Si pas de connexion WS après 2s, injecter mock data pour la démo */
+  setTimeout(()=>{
+    if(!ws||ws.readyState!==WebSocket.OPEN){
+      injectMockData();
+    }
+  },2000);
+});
+</script>
+</body>
+</html>
