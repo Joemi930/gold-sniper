@@ -2,208 +2,142 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project identity
+## Current phase: P1-clean
 
-Gold Sniper — XAUUSD trading engine, SMC/ICT/Kasper model. **P1-clean phase: offline, replay-only, shadow-only.** No live trading, no paper trading, no broker execution. The goal is a unified Kasper-driven XAUUSD engine that detects only premium setups, decides with full Kasper logic, manages real risk, logs every decision, and proves statistical edge on long replay.
+The repo is in **P1-clean** — replay/shadow only. The next goal is P1 — Gold Sniper Trading & Optimisation: building a terminal replay control center for fast, clean backtesting (see `P1_GOLD_SNIPER_TRADING_AND_OPTIMISATION.md`).
 
-**Repo**: [Joemi930/gold-sniper](https://github.com/Joemi930/gold-sniper)
-**Current branch**: `P1-kasper-brain-core`
-**Active phase**: P2.2 — Scenario Identity & Side Consistency Audit
-**Role**: Maçon (Codex) — developer executor. Build, fix, test, verify, report. Don't invent doctrine.
+**Hard prohibitions during P1-clean:**
+- Never set `LIVE_MODE=1` or `ALLOW_BROKER_WRITES=1`
+- Never call `mt5.order_send()` outside `execution/broker_gateway.py` → `execution/execution_guard.py`
+- Never forced-ENTER, never lower thresholds tactically, never make `POI_REACTION` tradable
+- Never leak future candles into the decision engine during replay
+- Never call broker-write MT5 APIs from agents, strategy, replay, or data import code
 
-## Permanent rules (doctrine over mechanics)
+## Architecture overview
 
-1. **No new autonomous strategy modules.** Every market concept enters the unified pipeline only as hard veto, soft score, POI quality signal, liquidity state, session/news/risk gate, micro confirmation feature, or explanatory field.
-2. **Legacy modules under `gold_sniper/strategies/` are frozen.** Do not extend them.
-3. **Never force `ENTER`, `enter_eligible=True`, or positive `risk_multiplier`.**
-4. **`POI_REACTION` is not tradable.** Do not make it tradable.
-5. **Never modify `risk_allocator`, `hard_veto_registry`, risk mapping, or thresholds without explicit proof and authorization.**
-6. **No broker wire, no `LIVE_MODE`, no `order_send`, no paper execution.** `MetaTrader5` imports must stay confined to `gold_sniper/execution/`.
-7. **Never commit generated artifacts** — `summary.json`, `decisions.jsonl`, `events.jsonl`, `trade_journal.jsonl`, validation reports, large CSVs, secrets, `.env`.
-8. **Workflow**: understand → modify minimally → test → verify → report. Don't fix what isn't broken.
-9. **Don't cheat on doctrine to make tests green or curves pretty.** Fix mechanics, not thresholds.
+Gold Sniper is a Python/asyncio XAUUSD trading engine following SMC/ICT/Kasper methodology. It has **two parallel pipelines** — the live runtime (legacy, disabled) and the replay/shadow Kasper pipeline (the active, validated path).
 
-## Unified pipeline architecture
+### Replay/shadow Kasper pipeline (the path that works)
 
 ```
-Agents 1..7
-  → EvidenceBuilder (assembles EvidenceBundle, runs post-bundle reconciliation)
-  → KasperScenarioEngine (narrative brain, strategic authority — scenario_id, market_story, grade)
-  → SetupTaxonomy + ScoreCard (secondary confluence, sanity check)
-  → ProfessionalDecisionEngine (execution gate aligned with Kasper)
-  → RiskAllocator (grade → risk % mapping)
-  → SimulatedTradeManager (shadow execution, lifecycle, duplicate gate, daily limiter)
-  → ReplayEngine (historical proof)
-  → PerformanceSummary (statistical proof)
+CSV candles + JSONL news
+  → replay.run_replay / ReplayEngine
+  → ReplayDecisionPipeline (Agents 1–7 replay variants)
+  → EvidenceBuilder → EvidenceBundle
+  → KasperScenarioEngine (sequence verification, scoring, grade A+..D)
+  → ProfessionalDecisionEngine (ENTER_FULL / ENTER_REDUCED / WAIT / REJECT)
+  → RiskAllocator (grade → risk_pct)
+  → SimulatedTradeManager (2-leg lifecycle: TP1 + protected runner → TP2)
+  → trade_journal / summary.json / metrics
 ```
 
-Kasper decides. PDE executes if gates are clean. Risk allocates by grade. TradeManager simulates. No module bypasses Kasper.
+Critical source files for this path:
+- `gold_sniper/replay/run_replay.py` — CLI entry point (`--run-id`, `--start`, `--end`, `--initial-equity`, `--diagnose-*`)
+- `gold_sniper/replay/decision_pipeline.py` — orchestrates replay agents + EvidenceBuilder + PDE + Kasper
+- `gold_sniper/replay/evidence_builder.py` — builds unified `EvidenceBundle` from agent observations
+- `gold_sniper/strategy/kasper_scenario_engine.py` — Kasper sequence gates (HTF bias → liquidity → sweep → displacement → BOS → POI → retest → micro → risk)
+- `gold_sniper/strategy/professional_decision_engine.py` — final ENTER/WAIT/REJECT with hard veto, readiness, scorecard, eligibility
+- `gold_sniper/strategy/contracts.py` — all shared enums/dataclasses: `DecisionAction`, `SetupGrade`, `SetupType`, `TradeSide`, etc.
+- `gold_sniper/strategy/risk_allocator.py` — grade → risk mapping (A_PLUS=1.00%, A=0.75%, B=0.50%, C=0.25%, D=0)
+- `gold_sniper/replay/simulated_trade_manager.py` — 2-leg trade simulation with daily limiter, duplicate gate, fill model
 
-### Key modules
-
-| Directory | Role |
-|---|---|
-| `gold_sniper/strategy/` | Decision core: Kasper engine, PDE, contracts, readiness, risk, taxonomy |
-| `gold_sniper/replay/` | Offline replay: evidence builder, decision pipeline, trade manager, execution model, journal |
-| `gold_sniper/agents/` | Evidence producers (1-7) + POI contracts — produce observations, NOT decisions |
-| `gold_sniper/validation/` | Performance summary, smoke validator, multi-window validation |
-| `gold_sniper/data_pipeline/` | Candle manifests, news JSONL, timeframe aggregation |
-| `gold_sniper/core/` | Blackboard, engine, orchestrator (legacy/frozen — not modified in P1) |
-| `gold_sniper/execution/` | Broker gateway, trade manager (legacy — isolated, not used in replay) |
-| `gold_sniper/strategies/` | Frozen legacy strategies — read-only, not extended |
-| `gold_sniper/context/` | Market context, regime detection, zone lifecycle |
-
-### Critical strategy files
-
-| File | Role |
-|---|---|
-| `strategy/kasper_scenario_engine.py` | Narrative brain — scenario evaluation, market_story, grade, ENTER_ELIGIBLE |
-| `strategy/kasper_contracts.py` | Immutable dataclasses for normalized agent outputs (Kasper lens layer) |
-| `strategy/professional_decision_engine.py` | Execution gate — ENTER_FULL/REDUCED/WATCH/REJECT, aligned with Kasper |
-| `strategy/contracts.py` | Core dataclasses: `EvidenceBundle`, `DecisionResult`, `RiskPlan`, `ScoreCard` |
-| `strategy/risk_allocator.py` | Grade → risk % mapping (A_PLUS=1%, A=0.75%, B=0.50%, C/D=0%) |
-| `strategy/setup_taxonomy.py` | Setup classification and entry thresholds |
-| `strategy/enter_eligibility.py` | Final gate before trade execution |
-| `strategy/hard_veto_registry.py` | Hard blocks (news, session, spread, cooldown) |
-| `strategy/readiness.py` | Multi-section readiness check |
-| `strategy/scorecard.py` | Scoring engine with veto pipeline (secondary, not primary authority) |
-| `strategy/poi_micro_synergy_contract.py` | Post-agent POI/micro alignment |
-| `strategy/liquidity_reconciliation.py` | Post-bundle liquidity evidence reconciliation |
-| `strategy/poi_rejection_contract.py` | POI rejection decomposition (fatal/recoverable/unknown) |
-| `replay/evidence_builder.py` | Assembles agent observations into `EvidenceBundle` |
-| `replay/decision_pipeline.py` | Offline replay decision pipeline |
-| `replay/simulated_trade_manager.py` | Shadow trade lifecycle, duplicate gate, daily limiter |
-| `replay/shadow_live_policy.py` | Replay-only grade→risk%, equity-based sizing config |
-| `replay/replay_engine.py` | Orchestrates replay, persists decisions/events |
-| `replay/run_replay.py` | CLI entry point for offline replays |
-
-### Agents (evidence producers only)
-
-| Agent | Responsibility | Must NOT do |
-|---|---|---|
-| Agent1 (Météo) | HTF bias, structure, BOS/CHoCH, DOL | Never give an entry |
-| Agent2 (Cartographe) | OB, FVG, breakers, POI quality, freshness | Never give an entry; POI alone insufficient |
-| Agent3 (Liquidité) | Sweeps, reintegration, displacement, DOL | Sweep alone insufficient |
-| Agent4 (Timing) | OTE zones, premium/discount, pullback quality | Timing alone insufficient |
-| Agent5 (Microscope) | M1 trigger, micro CHoCH/BOS, retest, RR estimate | Never confirm without Agent1/2/3 |
-| Agent6 (Sentinelle) | High-impact news, USD news, news veto | Never bypass news high impact |
-| Agent7 (Chronos) | Session, killzone, Asia block, Friday halt, cooldown | Never bypass session blocks |
-
-### Grade → Risk mapping (source of truth)
+### Live runtime (legacy, disabled)
 
 ```
-A_PLUS → ENTER_FULL → 1.00% capital
-A      → ENTER_REDUCED → 0.75% capital
-B      → ENTER_REDUCED → 0.50% capital
-C      → WATCH_ONLY / 0%
-D      → REJECT / 0%
+MT5 ticks → mt5_bridge → tick_ingestion → candle_builder → BLACKBOARD
+  → Agents 1–7 (live variants) → orchestrator → trade_signals
+  → TradeManager → BrokerGateway → ExecutionGuard (fail-closed) → order_send
 ```
 
-If a replay cap is applied, it must be explicit: `requested_risk_pct`, `effective_risk_pct`, `risk_cap_applied`, `risk_cap_reason`.
+The live path exists but is **not validated** — it does not yet integrate Kasper/PDE directly. The orchestrator (`core/orchestrator.py`) produces `trade_signals` from agent scores using legacy logic, not the modern strategy pipeline.
 
-### Kasper ENTER formula
+Key live files (do not modify without plan approval):
+- `gold_sniper/core/blackboard.py` — shared state dict (`market_data`, `agent_results`, `trade_signals`, `positions`, `daily_stats`, `meta`)
+- `gold_sniper/execution/broker_gateway.py` — **the only allowed path** for `order_send`
+- `gold_sniper/execution/execution_guard.py` — fail-closed gate before any broker write
+- `gold_sniper/config.py` — **the single source of truth** for all runtime parameters (no constants hardcoded elsewhere)
 
+### Agent roles (same across live and replay)
+
+| Agent | Role | Key outputs |
+|-------|------|-------------|
+| Agent1 (Meteo) | HTF context, bias, structure | Bias (bullish/bearish/neutral), trend |
+| Agent2 (Cartographe) | POI detection: OB, FVG, imbalance | POI zones, tradable/non-tradable |
+| Agent3 (Liquidite) | Liquidity pools, sweep detection | Sweep side/type, liquidity events |
+| Agent4 (Fibonacci) | Structure, BOS/CHoCH, OTE, premium/discount | Structure shifts, scenario hints |
+| Agent5 (Microscope) | Micro confirmation, entry levels | Entry/SL/TP, trigger status, RR |
+| Agent6 (Sentinelle) | News, spread, external conditions | Hard veto, blackout, hostile feed |
+| Agent7 (Chronos) | Sessions, killzones, timing | Session label, Asia/Friday blocks |
+
+### Data flow: replay temporal integrity
+
+Replay injects candles progressively — the engine sees only past + current candle, never the future. Warmup data (typically December for a January evaluation) builds initial context but produces no official trades.
+
+Data structure:
 ```
-ENTER = scenario_valid
-        AND hard_veto_clear
-        AND risk_realistic
-        AND execution_possible
-        AND kasper_side coherent
-        AND RR >= 1.5
-        AND scenario_key + decision_id present
-        AND market_story present
-        AND sequence_pass_fail complete
-```
-
-### Side consistency (absolute rule)
-
-```
-kasper_side == pde_side == signal.side == trade.type
-```
-Mismatch → `REJECT: SIDE_MISMATCH_KASPER_PDE_TRADE`
-
-## Key commands
-
-### Tests
-
-```bash
-# All tests
-python -m unittest discover gold_sniper/tests
-
-# Targeted test file
-python -m unittest gold_sniper.tests.test_kasper_scenario_engine -v
-python -m unittest gold_sniper.tests.test_p2_1_pde_kasper_alignment -v
-python -m unittest gold_sniper.tests.test_p1_1_kasper_authority -v
-
-# Phase regression suite
-python -m unittest gold_sniper.tests.test_p2e_phase17_decision_chain_gates gold_sniper.tests.test_p2e_phase16_liquidity_reconciliation gold_sniper.tests.test_p2e_phase15_liquidity_sweep_candidate gold_sniper.tests.test_p2e_phase14_enter_eligibility_gate_decomposition gold_sniper.tests.test_p2e_phase7a_setup_taxonomy gold_sniper.tests.test_p2e_phase7b_enter_eligibility gold_sniper.tests.test_p2e_phase7c_risk_multiplier gold_sniper.tests.test_p2e_phase7d_readiness_coherence gold_sniper.tests.test_p2e_phase7e_pipeline_contract gold_sniper.tests.test_p2e_phase7f_final_validation gold_sniper.tests.test_p2e_smoke_metrics_contract gold_sniper.tests.test_p2c_performance_summary gold_sniper.tests.test_p2d_readiness
+gold_sniper/data/historical/XAUUSD/
+  1m/    # Source of truth (M1)
+  5m/    # Derived or imported
+  15m/
+  1H/
+  4H/
+  manifest.json
 ```
 
-### Replay
+Required but currently missing: M30 and D1 timeframes.
 
-```bash
-# Run offline replay (1 month default)
-python -m gold_sniper.replay.run_replay --start 2026-05-01 --end 2026-06-05
+## Build, test, and run commands
 
-# With custom run ID
-python -m gold_sniper.replay.run_replay --start 2026-05-01 --end 2026-06-05 --run-id P2_2_SCENARIO_ID_SIDE_1M_V1
+```powershell
+# Install dependencies
+cd gold_sniper
+powershell -ExecutionPolicy Bypass -File scripts\install_deps.ps1
+# Or: python -m pip install -r requirements.txt
+
+# Run all tests
+python -m pytest gold_sniper/tests/ -x
+
+# Run a specific test file
+python -m pytest gold_sniper/tests/test_p3_trade_lifecycle_two_legs.py -x
+
+# Quick syntax validation (no MT5 needed)
+python -m py_compile gold_sniper/config.py gold_sniper/core/blackboard.py gold_sniper/execution/trade_manager.py
+
+# Run a replay (offline backtest)
+python -m gold_sniper.replay.run_replay \
+  --run-id smoke_test \
+  --start 2026-01-01T00:00:00Z \
+  --end 2026-01-08T00:00:00Z \
+  --warmup-start 2025-12-01T00:00:00Z \
+  --initial-equity 100.0
+
+# Import MT5 historical data (read-only APIs only)
+python tools/data_import/import_mt5_history.py --help
+
+# Normalize news calendar CSV → JSONL
+python tools/data_import/normalize_calendar_csv.py --help
 ```
 
-### Security scan (run before every commit)
+## Key conventions
 
-```bash
-git diff --check
-grep -R "order_send\|MetaTrader5\|LIVE_MODE\|ALLOW_BROKER_WRITES\|mt5\.order" -n gold_sniper/strategy gold_sniper/replay gold_sniper/agents gold_sniper/validation gold_sniper/data_pipeline || true
-```
+- **Configuration**: `gold_sniper/config.py` is the single source of truth for ALL runtime constants. Never hardcode values in other modules — import from config.
+- **No secrets in repo**: `.env`, tokens, credentials, `data/memory.db`, logs, caches, and replay run outputs are all gitignored. Use `.env.example` as the template.
+- **Enums in contracts**: All shared types (`DecisionAction`, `SetupGrade`, `SetupType`, etc.) live in `gold_sniper/strategy/contracts.py`. Import from there, don't redefine.
+- **Blackboard pattern**: Live agents read/write through `BLACKBOARD` dict keys. Replay agents return structured observations — they don't touch the live blackboard.
+- **Fail-closed execution**: `ExecutionGuard` must pass before any broker write. If guard state is uncertain, the default is BLOCK.
+- **Test structure**: Tests in `gold_sniper/tests/` follow naming `test_<component>.py`. P1/P2/P3 prefixes indicate validation phase. Many tests call into replay infrastructure — they don't need MT5.
+- **Agent observation pattern**: Each agent produces a typed observation (e.g., `Agent1Observation`). The EvidenceBuilder consumes these. PDE and Kasper consume the EvidenceBundle. Don't bypass this chain.
 
-### Lint / compile check
+## Important divergences to resolve before any live activation
 
-```bash
-python -m py_compile gold_sniper/strategy/*.py gold_sniper/replay/*.py
-```
+These are documented in `architecture.md` §12 and are blockers for live-safe operation:
 
-## Branch strategy
+1. **Protected SL**: Live legacy uses `BE_PLUS_RR = 0.10` (config.py), P3 replay uses `0.5R`. Must be harmonized.
+2. **Live PDE integration**: The live orchestrator does not call `KasperScenarioEngine` or `ProfessionalDecisionEngine` — it uses legacy agent-score aggregation. The path `EvidenceBuilder → Kasper → PDE → RiskAllocator` is only proven in replay.
+3. **Missing M30/D1 data**: Required for full multi-timeframe validation (6-12 month replays blocked without them).
+4. **`C_CONFIRMED` grade**: Used in P3 replay policy but not formalized in `strategy/contracts.py` `SetupGrade` enum. Needs reconciliation.
+5. **News default**: Confirm replay default picks up the most recent normalized calendar JSONL, not an older partial file.
 
-- `master` / `main` — stable base, rarely modified directly
-- `P1-kasper-brain-core` — **current active branch**, Kasper authority + PDE alignment + scenario identity
-- Other `P1-*` and `P2*-*` branches — feature/phase branches
-- Work on the active phase branch; commit with `fix(pX.Y):` prefix
-- Never force-push to shared branches
+## Design authority
 
-## Commit conventions
-
-```bash
-git commit -m "fix(p2.2): brief description of what was fixed"
-# Co-Authored-By: Claude <noreply@anthropic.com>
-```
-
-Push when work is complete and tests pass:
-```bash
-git push origin P1-kasper-brain-core
-```
-
-## Autonomous loop protocol
-
-Work in loops until the phase objective is met:
-```
-PLAN → IMPLEMENT → TEST → REPLAY → AUDIT → FIX → RE-TEST → REPORT LOCAL → NEXT PHASE only if criteria OK
-```
-
-- Don't escalate minor bugs — auto-audit, diagnose, fix, test, re-run.
-- If a P0 doctrinal issue requires higher authority: stop, produce `BLOCKED_REPORT`, don't bypass.
-- Never run 6-month replay until scenario identity and side consistency are proven.
-- Target: 1-2 trades/day, 65%+ winrate, positive expectancy_R, controlled drawdown — but these are performance targets, never an excuse to force trades.
-
-## Reports
-
-- Write phase reports to `docs/P{X}_{Y}_*.md`
-- Never paste full `decisions.jsonl`, `trade_journal`, or `events.jsonl` — give paths + counters + anomalies + 1-3 examples max
-- Reports must include: SHA, branch, commit, push status, working tree clean, replay run_id, tests run, blockers fixed, remaining risks
-
-## What to never delete
-
-`AGENTS.md`, `README.md`, phase docs, tests, `gold_sniper/agents/`, `gold_sniper/strategy/`, `gold_sniper/replay/`, `gold_sniper/context/`, `gold_sniper/validation/`, historical data, `.env.example`
-
-## What to never commit
-
-`.mcp.json`, `.serena/`, `.claude/settings.local.json`, secrets, massive replay artifacts, `.env`, `__pycache__/`, `.pytest_cache/`
+`architecture.md` is the canonical architecture reference — it was produced by a full local audit and consolidates all contracts, doctrines, and known limitations. `P1_GOLD_SNIPER_TRADING_AND_OPTIMISATION.md` is the active P1 implementation specification. When these conflict with code comments or older docs, the architecture doc and P1 spec take precedence.
