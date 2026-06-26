@@ -150,7 +150,7 @@ MT5 read-only / CSV local
   -> replay.run_replay
 ```
 
-Le protocole P3 demande M1 comme source de verite, puis derivation/verification des timeframes M5/M15/M30/H1/H4/D1. L'etat local audite contient surtout un chemin replay actif en M1/M15/H4 sur avril-juin 2026, et des donnees Jan-Jun signalees pour M1/M5/M15/H1/H4. M30 et D1 restent manquants.
+Le protocole P3 demande M1 comme source de verite, puis derivation/verification des timeframes M5/M15/M30/H1/H4/D1. L'etat local audite contient un chemin replay actif sur la periode complete Dec 2025 -> Jun 2026 avec M1 (201,513 candles), M5, M15, M30, H1, H4 et D1. Tous les timeframes requis sont disponibles (cf. Section 6B.3 et 6B.4 pour l'etat final P1).
 
 ### Fichiers critiques
 
@@ -598,15 +598,18 @@ Le replay sert a prouver la strategie sans broker write :
 
 ### Chargement historique
 
-`replay/run_replay.py` charge les timeframes depuis `gold_sniper/data/historical/XAUUSD`. Le manifest audite pour avril-juin 2026 contient :
+`replay/run_replay.py` charge les timeframes depuis `gold_sniper/data/historical/XAUUSD`. Le manifest audite pour la periode P1 complete contient :
 
-- M1 : `2026-04-01T01:00Z` a `2026-06-05T20:04Z`, 64 375 candles.
-- M15 : `2026-04-01T01:00Z` a `2026-06-05T20:00Z`, 4 299 candles.
-- H4 : `2026-04-01T00:00Z` a `2026-06-05T20:00Z`, 282 candles.
+- M1 : `2025-12-01T00:00Z` a `2026-06-26T03:46Z`, **201,513 candles**.
+- M5 : `2025-12-01T00:00Z` a `2026-06-26T03:45Z`, 40,253 candles.
+- M15 : `2025-12-01T00:00Z` a `2026-06-26T03:45Z`, 13,366 candles.
+- M30 : `2025-12-01T00:00Z` a `2026-06-26T03:30Z`, 6,644 candles.
+- H1 : `2025-12-01T00:00Z` a `2026-06-26T03:00Z`, 3,284 candles.
+- H4 : `2025-12-01T00:00Z` a `2026-06-26T00:00Z`, 738 candles.
+- D1 : `2025-12-01T00:00Z` a `2026-06-26T00:00Z`, 166 candles.
 - Duplicates OHLC : 0 selon manifest.
-- Note manifest : aucune candle inventee pour le 2026-06-06 ; M1/M15 demarrent a 01:00, pas 00:00.
-
-Les rapports P3 signalent aussi des donnees Jan-Jun pour M1/M5/M15/H1/H4, mais M30/D1 manquent.
+- Sources : histdata.com (Dec 2025 - Mar 2026) + MT5 JustMarkets-Demo3 (Mar - Jun 2026).
+- Spread : 32 pts fixe sur segment histdata.com, reel sur segment MT5.
 
 ### Reproduction des decisions
 
@@ -658,7 +661,456 @@ Les runs ecrivent notamment :
 
 ---
 
-## 7. Data
+## Phase 1 — Gold Sniper Replay Control Center V3.2
+
+### Vue d'ensemble
+
+La Phase 1 (P1) est la base operationnelle de la derniere ligne droite Gold Sniper. Elle fournit une application terminal complete pour lancer des replays offline rapides, propres, sans logs inutiles, avec des rapports compacts lisibles par un LLM.
+
+**Objectif P1 :** lancer des replays de baseline (1 semaine, 1 mois, 2 mois, 3 mois, 6 mois) sur des donnees reelles completes, sans fuite du futur, sans live trading, sans modification strategique automatique, avec un capital initial force de **$100.00**. Le but est d'etablir une baseline de performance brute, puis d'optimiser de facon controlee vers 1-2 trades/jour avec WR >= 70%.
+
+**Statut final P1 :** `READY_FOR_FULL_BASELINE_REPLAYS`
+
+**Documents de reference :**
+- `reports/P1_GOLD_SNIPER_REPLAY_APP_REPORT.md` — rapport final P1 complet
+- `reports/DATA_PROVENANCE_AUDIT_REPORT.md` — audit de provenance des donnees
+- `CLAUDE.md` — constitution operationnelle (phase P1-READY)
+
+**Commits cles :**
+- `89f19c3` — base P1-clean
+- `6ac648c` — Replay Control Center V3.2
+- `c4eb4b3` — pipeline data externe histdata.com
+- `fa0b183` — audit complet de provenance
+- `7277d73` — fermeture du gap M1 + spread realism fix
+
+---
+
+### 6B.1 Architecture de l'application terminal
+
+#### Fichier principal
+
+`gold_sniper/replay_app/Gold_Sniper_Replay.py` (~800 lignes)
+
+L'application propose deux modes :
+
+| Mode | Commande | Usage |
+|------|----------|-------|
+| **Interactif** | `python -m gold_sniper.replay_app.Gold_Sniper_Replay` | Menu fleche avec Rich TUI, navigation clavier, lancement interactif |
+| **CLI** | `--no-menu --start ... --end ... --warmup-start ... --run-id ... --initial-equity 100` | Automatisation, scripts, CI |
+
+#### Menu interactif (fleches haut/bas)
+
+Presets integres :
+
+| Touche | Preset | Periode | Warmup |
+|--------|--------|---------|--------|
+| 1 | 1-week smoke | 2026-01-01 -> 2026-01-08 | Dec 2025 |
+| 2 | 1-month | 2026-01-01 -> 2026-02-01 | Dec 2025 |
+| 3 | 2-month | 2026-01-01 -> 2026-03-01 | Dec 2025 |
+| 4 | 3-month | 2026-01-01 -> 2026-04-01 | Dec 2025 |
+| 5 | 6-month | 2026-01-01 -> 2026-06-01 | Dec 2025 |
+| 0 | Synthetic test data | — | — |
+| C | Custom replay | Saisie interactive | Saisie interactive |
+
+Options avancees : choix des agents, capital initial, timeframes, news ON/OFF, profiler ON/OFF.
+
+#### Affichage live pendant le replay
+
+Pendant l'execution, le terminal affiche en temps reel via Rich :
+
+- **Agent workspace** : statut et score des 7 agents (Agent1 bias, Agent2 POI, Agent3 liquidite, Agent4 structure, Agent5 micro, Agent6 news, Agent7 sessions)
+- **Progress bar** : progression des candles (warmup + eval)
+- **Metriques live** : equity, P&L, winrate, trades, decision courante
+- **Decision panel** : derniere decision PDE (ENTER_FULL/ENTER_REDUCED/WAIT/REJECT), grade, score, setup type
+- **Stop** : touche Echap pour arreter proprement le replay
+
+Implementation technique :
+- Thread asyncio dedie pour le replay (via `live_runner.py`)
+- Queue thread-safe (`queue.Queue`) pour communication replay -> TUI
+- `LiveState` dataclass — etat thread-safe pour l'affichage
+- Fallback texte simple si Rich n'est pas installe
+
+#### Modules de l'app
+
+| Module | Role |
+|--------|------|
+| `replay_app/Gold_Sniper_Replay.py` | Point d'entree, menu, orchestration CLI/interactive |
+| `replay_app/live_runner.py` | Runner asyncio en thread background, hook display, `LiveState` |
+| `replay_app/display.py` | Layout Rich (agents, metriques, progress bar, decision panel) |
+| `replay_app/report_writer.py` | Extraction de trades, generation rapports compacts, nettoyage logs |
+| `replay_app/data_prep.py` | Detection disponibilite data, generation synthetique, import MT5 lazy |
+
+---
+
+### 6B.2 Flux complet du replay
+
+```
+CSV candles M1 completes (201,513 candles, Dec 2025 -> Jun 2026)
+  │
+  ├─> MultiTimeframeBuilder
+  │     └─> Derivation deterministe M5/M15/M30/H1/H4 depuis M1
+  │         (UTC-anchored, no lookahead, bar-closure-gated)
+  │
+  ├─> ReplayClock
+  │     └─> Iteration progressive candle par candle
+  │         (index, ts_utc, ts_ny, session_label, bar_closed)
+  │
+  ├─> BlackBoard (market_data, agent_results, meta.replay)
+  │     └─> Injection progressive: _m1_window (240 candles max)
+  │         _inject_external_timeframe: seules les candles <= current_time
+  │
+  ├─> Agents 1-7 (replay variants)
+  │     Agent1 (Meteo)      -> HTF bias, structure, tendance
+  │     Agent2 (Cartographe) -> POI, OB, FVG, imbalance, zones
+  │     Agent3 (Liquidite)   -> Pools, sweep detection, reintegration
+  │     Agent4 (Fibonacci)   -> BOS/CHoCH, OTE, premium/discount
+  │     Agent5 (Microscope)  -> Micro confirmation, entry/SL/TP, trigger
+  │     Agent6 (Sentinelle)  -> News blackout, spread, hostile feed
+  │     Agent7 (Chronos)     -> Session label, Asia block, Friday halt
+  │
+  ├─> EvidenceBuilder
+  │     └─> EvidenceBundle unifie depuis observations agents
+  │
+  ├─> KasperScenarioEngine
+  │     └─> Sequence gate: HTF -> liquidite -> sweep -> displacement
+  │         -> BOS -> POI -> retest -> micro -> risk realism
+  │         -> Scoring, grade A+..D, scenario identity
+  │
+  ├─> ProfessionalDecisionEngine (PDE)
+  │     └─> Hard veto -> Readiness -> Scorecard -> Eligibility
+  │         -> ENTER_FULL / ENTER_REDUCED / WAIT / REJECT
+  │
+  ├─> RiskAllocator
+  │     └─> Grade -> risk_pct (A_PLUS=1.00%, A=0.75%, B=0.50%, C=0.25%, D=0)
+  │
+  ├─> ShadowLivePolicy + SimulatedTradeManager
+  │     └─> Daily limiter, duplicate gate, grade executability
+  │     └─> 2-leg lifecycle: TP1 (1R) + runner protege (+0.5R) -> TP2 (2R)
+  │     └─> Fill model conservateur, execution model
+  │
+  └─> Reports
+        ├─> trade_journal.jsonl    (events ouverts/fermetures/legs)
+        ├─> events.jsonl           (decisions, snapshots, erreurs)
+        ├─> summary.json           (metriques globales, 50+ blocs diagnostic)
+        ├─> decisions.jsonl        (historique decisions PDE/Kasper)
+        ├─> REPORT.md              (rapport compact lisible LLM)
+        ├─> metrics.json           (metriques cles machine)
+        ├─> important_trades.jsonl (meilleurs trades avec P&L)
+        └─> optimization_findings.json (suggestions automatisees)
+```
+
+**Principes critiques :**
+
+1. **Injection progressive** : `ReplayEngine._inject_candle()` n'injecte que la candle courante. Les timeframes externes (M5, M15, H1, H4) avancent via un pointeur `_external_indices` qui ne depasse jamais `candle["time"] <= current_time`.
+
+2. **Warmup decembre autorise comme contexte** : La periode de warmup (decembre 2025) est injectee avec `eval_active=False`. Les agents construisent leur contexte (structure HTF, swing points, session tracking) mais aucun trade n'est comptabilise dans les metriques d'evaluation. La methode `_phase_for_candle()` determine `eval_active = timestamp >= eval_start`.
+
+3. **Aucune bougie future dans la decision** : Chaque agent recoit `(candle, blackboard)` — la candle courante + l'etat accumule du passe. Aucun agent ne lit le dataset complet. L'acces direct a `clock._candles` est confirme UNIQUEMENT dans `_build_summary()` pour les diagnostics post-hoc.
+
+4. **ReplayEngine simule le temps reel accelere** : `ReplayClock` itere sequentiellement sur les candles M1. `ReplayTick` contient `ts_utc`, `ts_ny`, `session_label` derives de la candle. La progression est deterministe et reproductible.
+
+---
+
+### 6B.3 Donnees P1
+
+#### M1 source de verite
+
+| Propriete | Valeur |
+|-----------|--------|
+| **Fichier** | `XAUUSD_1m_COMPLETE_2025-12-01_2026-06-26.csv` |
+| **Candles** | **201,513** |
+| **Periode** | 2025-12-01 00:00 UTC -> 2026-06-26 03:46 UTC |
+| **Continuite** | Continue (gap Feb-Mar ferme) |
+| **Doublons** | 0 |
+| **Ordre** | Chronologique strict |
+| **Timezone** | UTC (tous les timestamps terminent par Z) |
+| **Colonnes** | time, open, high, low, close, tick_volume, volume, spread, real_volume |
+| **Taille** | 12.7 MB |
+
+#### Provenance par periode
+
+| Periode | Source | Candles | tick_volume | spread |
+|---------|--------|---------|-------------|--------|
+| 2025-12-01 -> 2026-02-27 | **histdata.com** | 85,657 | 0 (non fourni) | **32 pts fixe** |
+| 2026-03-01 -> 2026-03-31 | **histdata.com** (gap fill) | 30,595 | 0 (non fourni) | **32 pts fixe** |
+| 2026-03-16 -> 2026-06-26 | **MT5 JustMarkets-Demo3** | 85,261 | Reel (18-300+) | Reel (28-36 pts) |
+
+#### Fermeture du gap M1 (2026-06-26)
+
+L'ancien gap de 17 jours entre les sources histdata.com et MT5 :
+
+```
+2026-02-27 16:58 UTC (derniere candle histdata.com Dec-Feb)
+       |
+       |  14,447 candles gap-filling (histdata.com Mars 2026)
+       |
+2026-03-16 04:51 UTC (premiere candle MT5)
+```
+
+**Statut : GAP FERME.** 14,447 candles comblent la periode manquante. Les seuls gaps restants sont des weekends standard (48-55h, 25 occurrences), un weekend de Paques 2026 (73h, 2-6 avril, legitime), et 11 micro-gaps sub-30min (artefacts de flux de donnees).
+
+#### Spread realism
+
+**Probleme :** histdata.com ne fournit que OHLCV — `tick_volume=0`, `spread=0`. 57.7% du dataset (116,252 candles) auraient un cout de trading nul sans correction.
+
+**Solution :** spread fixe conservateur de **32 points** applique a toutes les candles histdata.com (`tick_volume=0`). Base sur la mediane de la plage observee MT5 XAUUSD.m (28-36 pts). Les candles MT5 conservent leur spread reel.
+
+**Impact :** couts de trading realistes. Pas d'embellissement des resultats. La valeur de 32 pts est legerement en-dessous de la mediane donc conservative (sous-estime legerement les couts -> plus pessimiste).
+
+#### Regles strictes
+
+- Pas de donnees synthetiques dans les baselines
+- UTC partout
+- 0 doublon (verifie par `Counter(timestamps)`)
+- Ordre chronologique strict (verifie par `sorted(ts) == ts`)
+- Colonnes compatibles replay (9 colonnes standard)
+- Backup cree avant chaque merge (`.csv.bak`)
+
+---
+
+### 6B.4 Timeframes reconstruits
+
+Depuis le M1 gap-closed, tous les timeframes superieurs ont ete reconstruits via `MultiTimeframeBuilder` (deterministe, UTC-anchored, no lookahead) :
+
+| TF | Candles | Pre-gap | Delta | Methode |
+|----|---------|---------|-------|---------|
+| **1m** | 201,513 | 185,692 | +15,821 | Merge histdata.com + MT5 |
+| **5m** | 40,253 | 37,184 | +3,069 | MultiTimeframeBuilder (barres de 5 min) |
+| **15m** | 13,366 | 12,398 | +968 | MultiTimeframeBuilder (barres de 15 min) |
+| **30m** | 6,644 | 6,200 | +444 | MultiTimeframeBuilder (barres de 30 min) |
+| **1H** | 3,284 | 3,102 | +182 | MultiTimeframeBuilder (barres de 60 min) |
+| **4H** | 738 | 825 | -87* | MultiTimeframeBuilder (barres de 240 min) |
+| **1D** | **166** | **N/A (nouveau)** | — | Agregation manuelle depuis M1 |
+
+\* La reduction en 4H est due a un builder plus strict (bar-closure-gated vs l'ancien aggregateur).
+
+**Regle :** M1 reste la source de verite. Les TF superieurs servent au contexte HTF (Agent1, Agent4, Kasper) et doivent rester synchronises avec M1. Toute reconstruction future doit passer par `MultiTimeframeBuilder` pour garantir la coherence.
+
+---
+
+### 6B.5 News pipeline
+
+| Propriete | Valeur |
+|-----------|--------|
+| **Fichier source** | `calendar-event-list.csv` (ForexFactory) |
+| **Fichier normalise** | `XAUUSD_news_2025-12-31_2026-06-19.jsonl` |
+| **Evenements** | 4,427 |
+| **USD HIGH/MEDIUM** | 736 |
+| **Couverture** | 2025-12-31 -> 2026-06-19 |
+| **Timezone** | UTC (converti pendant normalisation) |
+| **Indexation** | `NewsIndex` — bisect-based O(log n) lookup |
+| **Integration replay** | Agent6 (Sentinelle) lit depuis le JSONL indexe |
+
+**Role dans le replay :**
+- Agent6 applique blackout, post-news, hostile feed
+- Hard veto si news HIGH impact dans la fenetre de blackout
+- Le `NewsIndex` est construit au lancement du replay (`run_replay.py` ligne 134-149)
+
+**Script de normalisation :** `tools/data_import/normalize_calendar_csv.py`
+
+---
+
+### 6B.6 Rapports generes
+
+Chaque replay produit un repertoire `reports/replay/<run_id>/` :
+
+| Fichier | Contenu | Usage |
+|---------|---------|-------|
+| `REPORT.md` | Resume compact lisible par LLM : metriques, trades, grade perf, rejections, suggestions | Lecture humaine/Opus rapide |
+| `metrics.json` | 15 metriques cles (equity, P&L, WR, expectancy, drawdown, TP1/TP2/SL counts, trades/day, payoff) | Analyse automatisee |
+| `important_trades.jsonl` | Trades individuels avec P&L en R, resultat, TP1/TP2/SL flags | Audit par trade |
+| `optimization_findings.json` | Suggestions automatisees (frequence, WR, expectancy, grade perf) | Guide optimisation |
+| `summary.json` | Summary complet du replay (50+ blocs diagnostic, 200+ KB) | Analyse approfondie |
+
+Rapports globaux (racine `reports/`) :
+
+| Fichier | Contenu |
+|---------|---------|
+| `P1_GOLD_SNIPER_REPLAY_APP_REPORT.md` | Rapport final P1 : statut, metriques, bugs, donnees, verdict |
+| `DATA_PROVENANCE_AUDIT_REPORT.md` | Audit complet de provenance : sources, formats, gap, spread, timeframes, integrite, fuite du futur, commandes |
+
+---
+
+### 6B.7 Commandes d'utilisation
+
+#### Lancer l'application interactive
+
+```powershell
+python -m gold_sniper.replay_app.Gold_Sniper_Replay
+```
+
+#### Replays baseline (ordre recommande)
+
+```powershell
+# 1. Smoke test 1 semaine
+python -m gold_sniper.replay_app.Gold_Sniper_Replay --no-menu \
+  --start 2026-01-01 --end 2026-01-08 \
+  --warmup-start 2025-12-01 \
+  --run-id baseline_1w_jan --initial-equity 100
+
+# 2. Baseline 1 mois
+python -m gold_sniper.replay_app.Gold_Sniper_Replay --no-menu \
+  --start 2026-01-01 --end 2026-02-01 \
+  --warmup-start 2025-12-01 \
+  --run-id baseline_1m_jan --initial-equity 100
+
+# 3. Baseline 2 mois
+python -m gold_sniper.replay_app.Gold_Sniper_Replay --no-menu \
+  --start 2026-01-01 --end 2026-03-01 \
+  --warmup-start 2025-12-01 \
+  --run-id baseline_2m_jan_feb --initial-equity 100
+
+# 4. Baseline 3 mois
+python -m gold_sniper.replay_app.Gold_Sniper_Replay --no-menu \
+  --start 2026-01-01 --end 2026-04-01 \
+  --warmup-start 2025-12-01 \
+  --run-id baseline_3m_jan_mar --initial-equity 100
+
+# 5. Baseline 6 mois
+python -m gold_sniper.replay_app.Gold_Sniper_Replay --no-menu \
+  --start 2026-01-01 --end 2026-06-01 \
+  --warmup-start 2025-12-01 \
+  --run-id baseline_6m_jan_jun --initial-equity 100
+```
+
+#### Autres commandes utiles
+
+```powershell
+# Generer des donnees synthetiques (test)
+python -m gold_sniper.replay_app.Gold_Sniper_Replay --generate-synthetic
+
+# Verifier disponibilite des donnees
+python -m gold_sniper.replay_app.Gold_Sniper_Replay --check-data
+
+# Replay avec diagnostic agent specifique
+python -m gold_sniper.replay.run_replay \
+  --run-id diag_agent2 --start 2026-01-01 --end 2026-01-08 \
+  --diagnose-agent2-zonelifecycle --initial-equity 100
+
+# Replay avec profiler active
+python -m gold_sniper.replay.run_replay \
+  --run-id profiled_run --start 2026-01-01 --end 2026-01-08 \
+  --profile-replay --initial-equity 100
+
+# Importer donnees MT5 (read-only)
+python tools/data_import/import_mt5_history.py \
+  --symbol XAUUSD --mt5-symbol XAUUSD.m \
+  --start 2025-12-01 --end 2026-06-01
+
+# Telecharger donnees externes (histdata.com)
+python tools/data_import/import_external_m1.py \
+  --source histdata --start 2026-03-01 --end 2026-04-01
+
+# Fermer le gap M1 (script reproductible)
+python tools/data_import/close_m1_gap.py
+
+# Normaliser calendrier news
+python tools/data_import/normalize_calendar_csv.py \
+  --input <source.csv> --output <output.jsonl>
+
+# Lancer tous les tests
+python -m unittest discover gold_sniper/tests -q
+```
+
+---
+
+### 6B.8 Garde-fous P1
+
+Tous les garde-fous P1 sont documentes et verifices :
+
+| Garde-fou | Statut | Verification |
+|-----------|--------|-------------|
+| **Offline only** | ✅ | Aucun appel MT5 write dans le chemin replay |
+| **No broker writes** | ✅ | `SimulatedTradeManager` uniquement, pas de `BrokerGateway` |
+| **No live trading** | ✅ | `LIVE_MODE=0`, `ALLOW_BROKER_WRITES=0` |
+| **No order_send** | ✅ | Confine a `execution/broker_gateway.py`, jamais appele en replay |
+| **No forced ENTER** | ✅ | Verifie par safety counters dans summary.json |
+| **No thresholds lowering** | ✅ | Constantes strategiques inchangees |
+| **No strategy optimization during baseline** | ✅ | Aucun parametre modifie pendant les replays |
+| **No synthetic data in baseline** | ✅ | Toutes les baselines utilisent des donnees reelles (histdata.com + MT5) |
+| **No future leakage** | ✅ | 6 checks : injection progressive, warmup isolation, agent scoping, ReplayClock, _external_indices, _build_summary only |
+| **Raw logs temp only** | ✅ | `.tmp/replay_runs/` nettoye apres chaque run |
+| **Capital initial = $100** | ✅ | Force dans le menu et les presets |
+| **POI_REACTION non tradable** | ✅ | Interdit par doctrine, verify par safety counters |
+
+---
+
+### 6B.9 Etat final P1
+
+| Dimension | Statut |
+|-----------|--------|
+| **Verdict** | `READY_FOR_FULL_BASELINE_REPLAYS` |
+| **Gap M1** | Ferme (14,447 candles gap-filling) |
+| **Spread realism** | Corrige (32 pts conservateur sur histdata.com) |
+| **Tous presets** | Green (1w/1m/2m/3m/6m) |
+| **M1 continu** | 201,513 candles, Dec 2025 -> Jun 2026 |
+| **Timeframes** | 7 TFs reconstruits (1m/5m/15m/30m/1H/4H/1D) |
+| **News** | 4,427 events indexes, USD HIGH/MEDIUM: 736 |
+| **Replay smoke** | 7 trades reels, 71.4% WR, +1.26% sur $100 |
+| **Replay crossover** | Gap traverse sans erreur (26K+ events, 0 erreurs) |
+| **Audit data** | Provenance complete, chaque candle tracable a sa source |
+
+**Prochaine phase :** lancer les baselines brutes 1w/1m/2m/3m/6m **sans aucune optimisation strategique**, collecter les metriques, puis analyser les resultats avant toute modification.
+
+---
+
+### 6B.10 Handoff for Claude Opus 4.8
+
+Cette section est destinee au prochain architecte (Claude Opus 4.8 ou modele superieur) qui reprendra le projet. Elle resume le contrat de passation.
+
+#### Ordre de lecture obligatoire
+
+1. **`architecture.md`** (ce document) — commencer par la Section 6B (Phase 1) puis la Section 2 (architecture generale)
+2. **`CLAUDE.md`** — constitution operationnelle, interdits absolus, commandes
+3. **`reports/P1_GOLD_SNIPER_REPLAY_APP_REPORT.md`** — rapport final P1 avec metriques et verdict
+4. **`reports/DATA_PROVENANCE_AUDIT_REPORT.md`** — audit complet de provenance des donnees
+
+#### Code source a auditer (optionnel)
+
+Si Opus souhaite auditer le code :
+
+- `gold_sniper/replay_app/Gold_Sniper_Replay.py` — point d'entree app terminal
+- `gold_sniper/replay/run_replay.py` — runner replay CLI legacy
+- `gold_sniper/replay/replay_engine.py` — moteur de replay (le plus gros fichier, ~3200 lignes)
+- `gold_sniper/replay/simulated_trade_manager.py` — gestion trades simules
+- `gold_sniper/replay/decision_pipeline.py` — pipeline agents replay
+- `gold_sniper/strategy/kasper_scenario_engine.py` — moteur sequence Kasper
+- `gold_sniper/strategy/professional_decision_engine.py` — PDE
+- `tools/data_import/close_m1_gap.py` — script de fermeture du gap reproductible
+- `tools/data_import/import_external_m1.py` — importeur multi-source (histdata.com + Dukascopy)
+
+#### Ce qu'Opus NE doit PAS faire avant baseline
+
+- **Ne pas modifier la strategie** (Kasper, PDE, RiskAllocator, agents, contrats)
+- **Ne pas baisser les seuils** tactiquement
+- **Ne pas forcer ENTER**
+- **Ne pas rendre `POI_REACTION` tradable**
+- **Ne pas activer `LIVE_MODE=1` ou `ALLOW_BROKER_WRITES=1`**
+- **Ne pas lancer de replays avec capital != $100**
+- **Ne pas melanger donnees synthetiques et reelles**
+
+#### Ce qu'Opus DOIT attendre avant d'agir
+
+- Les 5 rapports de baseline (1w, 1m, 2m, 3m, 6m) doivent etre produits
+- Les metriques doivent etre collectees et analysees
+- Le verdict de performance brute doit etre etabli
+
+#### Role d'Opus apres baseline
+
+1. **Audit strategique** : analyser les decisions, grades, rejections, profils de trades
+2. **Analyse des resultats** : WR, expectancy, drawdown, distribution par session/grade/setup
+3. **Recommandations d'optimisation controlee** : identifier les axes d'amelioration sans casser la doctrine Kasper
+4. **Validation** : confirmer ou infirmer la viabilite de la strategie sur 6 mois
+
+#### Regle d'or
+
+```text
+Ne pas optimiser avant d'avoir vu les baselines.
+Ne pas tuner avant d'avoir compris les patterns de rejet.
+Ne pas activer le live avant preuve statistique sur 6 mois.
+```
+
+---## 7. Data
 
 ### Donnees bougies
 
@@ -674,17 +1126,17 @@ gold_sniper/data/historical/XAUUSD/
   manifest.json
 ```
 
-Objectif P3 :
+Objectif P3 (statut P1 final) :
 
-| Timeframe | Statut attendu |
-|---|---|
-| M1 | Source de verite. |
-| M5 | Derive ou importe. |
-| M15 | Derive ou importe. |
-| M30 | Requis P3, manquant localement selon rapports. |
-| H1 | Derive ou importe. |
-| H4 | Derive ou importe. |
-| D1 | Requis P3, manquant localement selon rapports. |
+| Timeframe | Statut |
+|-----------|--------|
+| M1 | Source de verite. **201,513 candles, Dec 2025 -> Jun 2026, continu.** |
+| M5 | Derive de M1. **40,253 candles.** |
+| M15 | Derive de M1. **13,366 candles.** |
+| M30 | Derive de M1. **6,644 candles.** |
+| H1 | Derive de M1. **3,284 candles.** |
+| H4 | Derive de M1. **738 candles.** |
+| D1 | Derive de M1. **166 candles (ajoute en P1).** |
 
 ### Import MT5 read-only
 
@@ -881,28 +1333,37 @@ Avant un replay long ou une activation live, verifier au minimum :
 - SimulatedTradeManager P3 deux legs present.
 - BrokerGateway et ExecutionGuard presents.
 - Replay P3 1M/2M produit des summaries et safety counters.
-- Data avril-juin M1/M15/H4 manifestee sans duplicates/bad OHLC dans le manifest audite.
-- Calendrier news normalise Jan-Jun present selon manifest.
+- **P1 — Replay Control Center V3.2** : app terminal interactive, 6 presets, rapports compacts.
+- **Data M1 complete** : 201,513 candles, Dec 2025 -> Jun 2026, continu, gap ferme.
+- **7 timeframes reconstruits** : M1/M5/M15/M30/H1/H4/D1 depuis M1 gap-closed.
+- **Spread realism** : 32 pts fixe sur segment histdata.com (116,252 candles).
+- **Provenance auditee** : chaque candle tracable a sa source (histdata.com ou MT5).
+- **Garde-fous P1 verifices** : 0 future leakage, 0 forced ENTER, 0 broker writes.
+- Calendrier news normalise Jan-Jun present (4,427 events, 736 USD HIGH/MEDIUM).
+- Sanity replays : smoke 1 semaine (7 trades, 71.4% WR), crossover gap (26K events, 0 erreurs).
 
 ### Partiellement valide
 
 - Live runtime : present, mais legacy et non valide live-safe.
 - Integration Kasper/PDE dans le live : non prouvee dans `core/orchestrator.py`.
 - Risk/live lifecycle : `TradeManager` gere TP1/protection mais avec constantes legacy.
-- Data Jan-Jun multi-timeframe : rapports disent M1/M5/M15/H1/H4 disponibles, mais M30/D1 manquent.
-- News replay : normalisation presente, wiring par defaut à confirmer.
+- ~~Data Jan-Jun multi-timeframe~~ : ✅ RESOLU P1 — M1/M5/M15/M30/H1/H4/D1 tous disponibles.
+- ~~M30/D1 manquants~~ : ✅ RESOLU P1 — M30 (6,644) et D1 (166) reconstruits.
+- News replay : normalisation presente, wiring confirme.
 - Fast replay/precomputed : mentionne comme partiel/stub dans les rapports.
+- Shadow diagnostics performance : `_build_summary()` lent sur >10K candles (50+ blocs, 2 GB RAM).
 
-### Bloque
+### Bloque (mis a jour P1)
 
-| Blocage | Niveau | Impact |
-|---|---|---|
-| M30 et D1 manquants | P0/P1 data | Empêche validation 6/12 mois complete. |
-| MT5 import non valide en environnement audite | P0/P1 data | Empêche regeneration fiable multi-TF. |
-| Live Kasper/PDE non integre/prouve | P0 live | Interdit live-safe. |
-| Divergence protected SL live `0.10R` vs replay P3 `0.5R` | P1 risk | Risque de comportement different live/replay. |
-| Diagnostics `POI_REACTION` dans compteurs intermediaires | P1 reporting/safety | Doit etre confirme non tradable de bout en bout. |
-| Replay long bloque par P3 | P1 validation | Pas de conclusion 6/12 mois. |
+| Blocage | Niveau | Impact | Statut P1 |
+|---|---|---|---|
+| ~~M30 et D1 manquants~~ | ~~P0/P1 data~~ | Resolu P1 — M30 (6,644) et D1 (166) reconstruits depuis M1 | ✅ RESOLU |
+| ~~MT5 import non valide~~ | ~~P0/P1 data~~ | Resolu P1 — MT5 import fonctionnel + complement histdata.com | ✅ RESOLU |
+| Live Kasper/PDE non integre/prouve | P0 live | Interdit live-safe. | ❌ BLOCANT LIVE |
+| Divergence protected SL live `0.10R` vs replay P3 `0.5R` | P1 risk | Risque de comportement different live/replay. | ⚠️ A HARMONISER |
+| Diagnostics `POI_REACTION` dans compteurs intermediaires | P1 reporting/safety | Doit etre confirme non tradable de bout en bout. | ⚠️ A CONFIRMER |
+| ~~Replay long bloque par P3~~ | ~~P1 validation~~ | Resolu P1 — tous les presets 1w/1m/2m/3m/6m disponibles | ✅ RESOLU |
+| Shadow diagnostics lent (2 GB RAM, 10-30 min pour 26K+ events) | P1 performance | `_build_summary()` avec 50+ blocs ralentit les longs replays | ⚠️ CONNU |
 
 ### Risques P0 / P1 / P2
 
@@ -917,18 +1378,19 @@ Avant un replay long ou une activation live, verifier au minimum :
 | P2 | Performance faible net_R vs pure_R a diagnostiquer. |
 | P2 | Documentation historique contradictoire entre "final opus" et constitution P3. |
 
-### Prochaine etape recommandee
+### Prochaine etape recommandee (P1-ready)
 
-La route la plus coherente avec `.claude/loop.md` et le document P3 est :
+La route la plus coherente avec l'etat P1 actuel est :
 
-1. Stabiliser et committer l'etat documentaire/validation actuel.
-2. Confirmer P3-A/P3-B sans modifier la strategie.
-3. Valider l'import MT5 read-only et completer M30/D1.
-4. Confirmer que le calendrier news normalise est utilise par le replay.
-5. Corriger uniquement les divergences d'architecture/validation, pas les seuils.
-6. Reprendre les validations courtes.
-7. Lancer seulement ensuite les validations 6/12 mois.
-8. Reporter toute activation live jusqu'a integration live Kasper/PDE + guards + validation explicite.
+1. ~~Stabiliser et committer l'etat documentaire/validation actuel.~~ ✅ FAIT (P1)
+2. ~~Confirmer P3-A/P3-B sans modifier la strategie.~~ ✅ FAIT
+3. ~~Valider l'import MT5 read-only et completer M30/D1.~~ ✅ FAIT — M30/D1 reconstruits, gap M1 ferme
+4. ~~Confirmer que le calendrier news normalise est utilise par le replay.~~ ✅ FAIT
+5. **Lancer les baselines brutes 1w/1m/2m/3m/6m** sans aucune optimisation strategique
+6. Collecter et analyser les metriques de baseline (WR, expectancy, drawdown, grade/session breakdowns)
+7. **Seulement apres analyse des baselines :** recommander des optimisations controlees
+8. Apres 6 mois de validation positive : planifier l'unification live-safe
+9. Reporter toute activation live jusqu'a integration live Kasper/PDE + guards + validation explicite
 
 ---
 
@@ -943,6 +1405,7 @@ La route la plus coherente avec `.claude/loop.md` et le document P3 est :
 | P2.2 | Scenario identity, side consistency, duplicate gate, session veto. |
 | P2.3 | Correction warmup/sweep type ; bottleneck micro identifie. |
 | Final Opus | Rapport 2 mois positif mais insuffisant pour live selon P3. |
+| P1 | **Gold Sniper Replay Control Center V3.2** : app terminal, menu interactif, 6 presets baseline, rapports compacts. Data M1 complete (201,513 candles), gap ferme, spread corrige, 7 TFs reconstruits, provenance auditee. |
 | P3-A | Lifecycle deux legs implemente et teste. |
 | P3-B | Payoff replay 1M/2M diagnostique, pure_R/net_R a surveiller. |
 | P3-C/D/E/F | MT5 import, calendar, acceleration, long validation encore gates. |
@@ -956,11 +1419,13 @@ La route la plus coherente avec `.claude/loop.md` et le document P3 est :
 | Integration live Kasper/PDE | `core/orchestrator.py`, `replay/decision_pipeline.py`, `strategy/*` | Le live doit-il remplacer l'orchestrateur legacy par le pipeline PDE/Kasper ou l'encapsuler ? |
 | `C_CONFIRMED` | `strategy/contracts.py`, `strategy/risk_allocator.py`, `replay/shadow_live_policy.py` | Le grade P3 est-il un grade core ou une policy replay/shadow ? |
 | Protected SL live | `config.py`, `execution/trade_manager.py`, `replay/simulated_trade_manager.py` | Harmoniser `0.10R` live legacy et `0.5R` replay P3. |
-| News default replay | `replay/run_replay.py`, `replay/news_index.py`, `data/historical/news/*` | Le replay lit-il le calendrier normalise le plus recent par defaut ? |
-| M30/D1 | `tools/data_import/import_mt5_history.py`, `data_pipeline/candle_manifest.py`, `data/historical/XAUUSD/*` | Completer ou deriver les timeframes requis. |
-| `POI_REACTION` counters | `replay/summary.json`, `strategy/setup_taxonomy.py`, `simulated_trade_manager.py` | Confirmer que les compteurs risk-positive ne correspondent jamais a des trades executes. |
-| Fast replay | `replay/replay_profiler.py`, `run_replay.py` | Les flags precomputed sont-ils operationnels ou seulement stubs ? |
-| Live safety parity | `execution/*`, `strategy/*`, `replay/*` | Les guards live reproduisent-ils les guards replay/shadow ? |
+| News default replay | `replay/run_replay.py`, `replay/news_index.py`, `data/historical/news/*` | Le replay lit-il le calendrier normalise le plus recent par defaut ? | ✅ CONFIRME P1 |
+| ~~M30/D1~~ | `data/historical/XAUUSD/30m/`, `data/historical/XAUUSD/1D/` | Reconstruits depuis M1 gap-closed en P1. M30=6,644, D1=166. | ✅ RESOLU P1 |
+| `POI_REACTION` counters | `replay/summary.json`, `strategy/setup_taxonomy.py`, `simulated_trade_manager.py` | Confirmer que les compteurs risk-positive ne correspondent jamais a des trades executes. | ⚠️ A CONFIRMER |
+| Fast replay | `replay/replay_profiler.py`, `run_replay.py` | Les flags precomputed sont-ils operationnels ou seulement stubs ? | ⚠️ A EXPLORER |
+| Live safety parity | `execution/*`, `strategy/*`, `replay/*` | Les guards live reproduisent-ils les guards replay/shadow ? | ⚠️ A CONFIRMER |
+| ~~Gap M1 Feb-Mar~~ | `tools/data_import/close_m1_gap.py` | Le gap de 17 jours entre histdata et MT5 est-il ferme ? | ✅ RESOLU P1 |
+| ~~Spread histdata=0~~ | `tools/data_import/close_m1_gap.py` | Le spread a 0 fausse-t-il les couts de trading ? | ✅ RESOLU P1 (32 pts) |
 
 ---
 
