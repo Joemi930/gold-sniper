@@ -202,6 +202,42 @@ class SimulatedTradeManager:
             (pure_expectancy_R - expectancy_R) if parent_pnl_Rs else 0.0, 6
         )
 
+        # ── P4: first/last trade time ──────────────────────────────────
+        open_events = [e for e in self.events if e.get("event") == open_name]
+        open_times = [str(e.get("time")) for e in open_events if e.get("time")]
+        first_trade_time = min(open_times) if open_times else None
+        last_trade_time = max(open_times) if open_times else None
+
+        # ── P4: payoff diagnostics (pure vs net per scenario) ──────────
+        tp1_tp2_closes = [
+            e for e in parent_closes
+            if e.get("leg_1_exit_reason") == "TP1" and e.get("leg_2_exit_reason") == "TP2"
+        ]
+        tp1_protected_closes = [
+            e for e in parent_closes
+            if e.get("leg_1_exit_reason") == "TP1" and e.get("leg_2_exit_reason") == "PROTECTED_SL"
+        ]
+
+        def _avg(items, key):
+            vals = [float(x.get(key) or 0) for x in items if x.get(key) is not None]
+            return round(sum(vals) / len(vals), 6) if vals else 0.0
+
+        tp1_tp2_avg_net_R = _avg(tp1_tp2_closes, "parent_pnl_R")
+        tp1_tp2_avg_pure_R = _avg(tp1_tp2_closes, "pure_parent_pnl_R")
+        tp1_protected_avg_net_R = _avg(tp1_protected_closes, "parent_pnl_R")
+        tp1_protected_avg_pure_R = _avg(tp1_protected_closes, "pure_parent_pnl_R")
+
+        # avg cost drag per trade
+        cost_drags = [
+            round((e.get("pure_parent_pnl_R") or 0.0) - (e.get("parent_pnl_R") or 0.0), 6)
+            for e in parent_closes
+        ]
+        avg_cost_drag_per_trade_R = round(sum(cost_drags) / len(cost_drags), 6) if cost_drags else 0.0
+        winner_drags = [d for i, d in enumerate(cost_drags) if i < len(parent_closes) and parent_closes[i].get("parent_outcome") == "WIN"]
+        loser_drags = [d for i, d in enumerate(cost_drags) if i < len(parent_closes) and parent_closes[i].get("parent_outcome") == "LOSS"]
+        avg_cost_drag_winners_R = round(sum(winner_drags) / len(winner_drags), 6) if winner_drags else 0.0
+        avg_cost_drag_losers_R = round(sum(loser_drags) / len(loser_drags), 6) if loser_drags else 0.0
+
         return {
             "initial_equity": round(self.config.equity_initial, 6),
             "signals": self.signal_count,
@@ -287,6 +323,21 @@ class SimulatedTradeManager:
             "winrate_full_win": winrate_full_win,
             "winrate_tp1_touch": winrate_tp1_touch,
             "cost_drag_R": cost_drag_R,
+            # ── P4: trade time boundaries ────────────────────────────
+            "first_trade_time": first_trade_time,
+            "last_trade_time": last_trade_time,
+            # ── P4: pure-vs-net payoff diagnostics ───────────────────
+            "tp1_tp2_avg_net_R": tp1_tp2_avg_net_R,
+            "tp1_tp2_avg_pure_R": tp1_tp2_avg_pure_R,
+            "tp1_protected_avg_net_R": tp1_protected_avg_net_R,
+            "tp1_protected_avg_pure_R": tp1_protected_avg_pure_R,
+            "avg_cost_drag_per_trade_R": avg_cost_drag_per_trade_R,
+            "avg_cost_drag_winners_R": avg_cost_drag_winners_R,
+            "avg_cost_drag_losers_R": avg_cost_drag_losers_R,
+            "tp1_tp2_count": tp1_then_tp2,
+            "tp1_protected_count": tp1_then_protected_sl,
+            "full_win_count": full_win_count,
+            "tp1_touch_count": tp1_touch,
             "shadow_live_policy": self.policy.to_dict(),
             **_risk_realism_summary(self.events, parent_closes),
         }
@@ -949,7 +1000,12 @@ class SimulatedTradeManager:
     def _parent_close_event(
         self, trade: dict[str, Any], candle: dict[str, Any]
     ) -> dict[str, Any]:
-        """Emit parent-level close event when both legs are closed."""
+        """Emit parent-level close event when both legs are closed.
+
+        P4: enriched with R-unit diagnostics for pure-vs-net cost drag analysis.
+        """
+        pure_parent = trade.get("pure_parent_pnl_R")
+        net_parent = trade.get("parent_pnl_R")
         return {
             "event": self._event_name("close"),
             "time": _iso(candle["time"]),
@@ -958,8 +1014,8 @@ class SimulatedTradeManager:
             "type": trade["type"],
             "entry_price": trade["entry_price"],
             "setup_grade": trade.get("setup_grade", ""),
-            "parent_pnl_R": trade.get("parent_pnl_R"),
-            "pure_parent_pnl_R": trade.get("pure_parent_pnl_R"),  # P3: parent R before exit costs
+            "parent_pnl_R": net_parent,
+            "pure_parent_pnl_R": pure_parent,  # P3: parent R before exit costs
             "parent_outcome": trade.get("parent_outcome"),
             "leg_1_exit_reason": trade["leg_1"].get("exit_reason"),
             "leg_1_pnl_R": trade["leg_1"].get("pnl_R"),
@@ -973,7 +1029,18 @@ class SimulatedTradeManager:
             "commission": trade.get("commission_total", 0.0),
             "equity": self.equity,
             "risk_cash": trade.get("total_risk_cash") or trade.get("risk_cash"),
-            "r_multiple": trade.get("parent_pnl_R"),
+            "r_multiple": net_parent,
+            # ── P4: R-unit & cost diagnostics ──────────────────────────
+            "r_unit_points": trade.get("r_unit_points"),
+            "effective_risk_points": trade.get("effective_risk_points"),
+            "structural_risk_points": trade.get("structural_risk_points"),
+            "entry_spread_points": trade.get("entry_spread_points"),
+            "entry_slippage_points": trade.get("entry_slippage_points"),
+            "commission_total": trade.get("commission_total"),
+            "cost_drag_trade_R": round(
+                (pure_parent or 0.0) - (net_parent or 0.0), 6
+            ),
+            # ── end P4 diagnostics ─────────────────────────────────────
             "tier": trade.get("tier"),
             "setup_grade": trade.get("setup_grade"),
             "kasper_grade": trade.get("kasper_grade"),
@@ -983,7 +1050,6 @@ class SimulatedTradeManager:
             "fill_model": trade.get("fill_model"),
             "execution_conservative": trade.get("execution_conservative"),
             "news_execution_mode": trade.get("news_execution_mode"),
-            "setup_grade": trade.get("setup_grade"),
             "scenario_key": trade.get("scenario_key"),
         }
 
@@ -1123,9 +1189,16 @@ class SimulatedTradeManager:
         Phase18: enforces daily trade limits and grade executability before opening.
         Phase18 fix: manages triggered positions BEFORE consuming signal so that
         existing trades are checked for TP/SL hits on every candle.
+
+        P4: safety gate — if eval_active is explicitly False, refuse all operations.
         """
         if not isinstance(decision, dict):
             return []
+
+        # ── P4 warmup safety gate ────────────────────────────────────────
+        if decision.get("eval_active") is False:
+            return []
+
         self.last_seen_candle = dict(candle)
 
         # ── Check existing positions for TP/SL hits FIRST ──────────────

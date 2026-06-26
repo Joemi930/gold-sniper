@@ -204,28 +204,46 @@ def write_compact_report(
 
     # --- metrics.json ---
     # Map both legacy and current summary field names
+    pure_R = _safe_float(summary.get("pure_expectancy_R", summary.get("pure_R", 0)))
+    net_R = _safe_float(summary.get("expectancy_R", summary.get("net_R", 0)))
+    cost_drag = _safe_float(summary.get("cost_drag_R", round(pure_R - net_R, 6)))
+
     metrics = {
         "initial_equity": _safe_float(summary.get("initial_equity", 100)),
         "final_equity": _safe_float(summary.get("final_equity", summary.get("equity", 100))),
         "net_pnl": _safe_float(summary.get("net_pnl", summary.get("net_pnl_R", 0))),
         "net_pnl_pct": _safe_float(summary.get("net_pnl_pct", 0)),
-        "pure_R": _safe_float(summary.get("pure_expectancy_R", summary.get("pure_R", 0))),
-        "net_R": _safe_float(summary.get("expectancy_R", summary.get("net_R", 0))),
+        "pure_R": pure_R,
+        "net_R": net_R,
         "winrate_pct": _safe_float(summary.get("win_rate", summary.get("winrate", summary.get("win_rate_pct", 0)))),
         "winrate_full_win": _safe_float(summary.get("winrate_full_win", 0)),
         "winrate_tp1_touch": _safe_float(summary.get("winrate_tp1_touch", 0)),
-        "expectancy_R": _safe_float(summary.get("expectancy_R", 0)),
-        "cost_drag_R": _safe_float(summary.get("cost_drag_R", 0)),
+        "expectancy_R": net_R,
+        "cost_drag_R": cost_drag,
         "max_drawdown_pct": _safe_float(summary.get("max_drawdown_pct", 0)),
         "total_trades": _safe_int(summary.get("parent_trades", summary.get("trades", summary.get("closed_trades", 0)))),
         "tp1_count": _safe_int(summary.get("tp1_hit_count", summary.get("tp1_count", 0))),
         "tp2_count": _safe_int(summary.get("tp2_hit_count", summary.get("tp2_count", 0))),
-        "full_sl_count": _safe_int(summary.get("sl_hit_count", summary.get("full_sl_count", 0))),
+        # P4: separate parent full SL from leg SL
+        "full_sl_count": _safe_int(summary.get("parent_full_sl_count", summary.get("full_sl_count", 0))),
+        "leg_sl_count": _safe_int(summary.get("leg_sl_count", summary.get("sl_hit_count", 0))),
         "protected_sl_count": _safe_int(summary.get("protected_sl_hit_count", summary.get("protected_sl_count", 0))),
         "trades_per_day": _safe_float(summary.get("trades_per_day", 0)),
+        "trades_per_eval_day": _safe_float(summary.get("trades_per_eval_day", 0)),
+        "trades_per_active_day": _safe_float(summary.get("trades_per_active_day", 0)),
         "avg_win_R": _safe_float(summary.get("avg_win_R", 0)),
         "avg_loss_R": _safe_float(summary.get("avg_loss_R", 0)),
         "payoff_ratio": _safe_float(summary.get("payoff_ratio", 0)),
+        # P4: payoff diagnostics
+        "tp1_tp2_avg_net_R": _safe_float(summary.get("tp1_tp2_avg_net_R", 0)),
+        "tp1_tp2_avg_pure_R": _safe_float(summary.get("tp1_tp2_avg_pure_R", 0)),
+        "tp1_protected_avg_net_R": _safe_float(summary.get("tp1_protected_avg_net_R", 0)),
+        "tp1_protected_avg_pure_R": _safe_float(summary.get("tp1_protected_avg_pure_R", 0)),
+        "avg_cost_drag_per_trade_R": _safe_float(summary.get("avg_cost_drag_per_trade_R", 0)),
+        # P4: trade time boundaries
+        "first_trade_time": summary.get("first_trade_time"),
+        "last_trade_time": summary.get("last_trade_time"),
+        "warmup_trade_count": _safe_int(summary.get("warmup_trade_count", 0)),
     }
     (output / "metrics.json").write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -283,9 +301,11 @@ def _write_markdown_report(
         ("Cost Drag R", f"{metrics['cost_drag_R']:+.4f}R"),
         ("Max Drawdown", f"{metrics['max_drawdown_pct']:.2f}%"),
         ("Total Trades", str(metrics['total_trades'])),
-        ("TP1 / TP2 / Full SL / Prot SL",
-         f"{metrics['tp1_count']} / {metrics['tp2_count']} / {metrics['full_sl_count']} / {metrics['protected_sl_count']}"),
+        ("TP1 / TP2 / Parent Full SL / Prot SL / Leg SL",
+         f"{metrics['tp1_count']} / {metrics['tp2_count']} / {metrics['full_sl_count']} / {metrics['protected_sl_count']} / {metrics['leg_sl_count']}"),
         ("Trades/Day", f"{metrics['trades_per_day']:.2f}"),
+        ("Trades/Eval Day", f"{metrics['trades_per_eval_day']:.2f}"),
+        ("Trades/Active Day", f"{metrics['trades_per_active_day']:.2f}"),
         ("Avg Win R", f"{metrics['avg_win_R']:.2f}R"),
         ("Avg Loss R", f"{metrics['avg_loss_R']:.2f}R"),
         ("Payoff Ratio", f"{metrics['payoff_ratio']:.2f}"),
@@ -293,8 +313,51 @@ def _write_markdown_report(
     for label, value in metric_labels:
         lines.append(f"| {label} | {value} |")
 
+    # ── P4: Period & trade boundaries ──────────────────────────────────
+    warmup_start = summary.get("warmup_start", "—")
+    eval_start = summary.get("eval_start", "—")
+    eval_end = summary.get("eval_end", "—")
+    first_trade = metrics.get("first_trade_time") or "—"
+    last_trade = metrics.get("last_trade_time") or "—"
+    warmup_trades = metrics.get("warmup_trade_count", 0)
+
     lines += [
         "",
+        "---",
+        "",
+        "## Period & Boundaries",
+        "",
+        f"- **Warmup start:** {warmup_start}",
+        f"- **Eval start:** {eval_start}",
+        f"- **Eval end:** {eval_end}",
+        f"- **First trade:** {first_trade}",
+        f"- **Last trade:** {last_trade}",
+        f"- **Warmup trades:** {warmup_trades}",
+        "",
+    ]
+
+    # ── P4: Payoff diagnostics ─────────────────────────────────────────
+    tp1_tp2_net = metrics.get("tp1_tp2_avg_net_R", 0)
+    tp1_tp2_pure = metrics.get("tp1_tp2_avg_pure_R", 0)
+    tp1_prot_net = metrics.get("tp1_protected_avg_net_R", 0)
+    tp1_prot_pure = metrics.get("tp1_protected_avg_pure_R", 0)
+    avg_cost_drag = metrics.get("avg_cost_drag_per_trade_R", 0)
+
+    if tp1_tp2_net or tp1_tp2_pure or tp1_prot_net or tp1_prot_pure:
+        lines += [
+            "---",
+            "",
+            "## Payoff Diagnostics (Pure vs Net R)",
+            "",
+            "| Scenario | Avg Net R | Avg Pure R | Cost Drag |",
+            "|----------|-----------|------------|-----------|",
+            f"| TP1+TP2 | {tp1_tp2_net:+.4f}R | {tp1_tp2_pure:+.4f}R | {round(tp1_tp2_pure - tp1_tp2_net, 4):+.4f}R |",
+            f"| TP1+Protected | {tp1_prot_net:+.4f}R | {tp1_prot_pure:+.4f}R | {round(tp1_prot_pure - tp1_prot_net, 4):+.4f}R |",
+            f"| **Avg/Trade** | — | — | {avg_cost_drag:+.4f}R |",
+            "",
+        ]
+
+    lines += [
         "---",
         "",
         "## Important Trades",

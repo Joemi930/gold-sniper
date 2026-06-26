@@ -212,6 +212,10 @@ def _run_replay_interactive(
     initial_equity: float = 100.0,
     agent_ids: list[str] | None = None,
     profile: bool = False,
+    fast_replay: bool = False,
+    minimal_events: bool = False,
+    event_buffer_size: int = 1000,
+    no_tui: bool = False,
 ) -> int:
     """Launch a replay with live TUI display. Returns 0 on success, 1 on error."""
     from replay_app.live_runner import run_replay_in_thread
@@ -224,6 +228,10 @@ def _run_replay_interactive(
     print(f"\nStarting replay: {label}")
     print(f"Run ID: {run_id}")
     print(f"Initial equity: ${initial_equity:.2f}")
+    if fast_replay:
+        print("Mode: FAST REPLAY (warmup context-only, minimal events, buffered writes)")
+    if profile:
+        print("Profiling: ENABLED")
     print("Press Esc to stop replay gracefully.\n")
 
     # Launch replay in background thread
@@ -238,6 +246,10 @@ def _run_replay_interactive(
         agent_ids=agent_ids,
         initial_equity=initial_equity,
         profile=profile,
+        fast_replay=fast_replay,
+        minimal_events=minimal_events,
+        event_buffer_size=event_buffer_size,
+        no_tui=no_tui,
         state_queue=state_queue,
         stop_event=stop_event,
     )
@@ -744,6 +756,16 @@ def _build_cli_parser() -> argparse.ArgumentParser:
                         help="Comma-separated agent numbers")
     parser.add_argument("--profile", action="store_true",
                         help="Enable per-agent timing profiling")
+    parser.add_argument("--profile-replay", action="store_true",
+                        help="Alias for --profile")
+    parser.add_argument("--fast-replay", action="store_true",
+                        help="P4: Fast replay — warmup context-only, minimal events, buffered writes")
+    parser.add_argument("--minimal-events", action="store_true",
+                        help="P4: Write only trade-lifecycle events")
+    parser.add_argument("--event-buffer-size", type=int, default=1000,
+                        help="P4: JSONL event buffer size (default 1000)")
+    parser.add_argument("--no-tui", action="store_true",
+                        help="P4: Disable TUI state updates entirely")
     parser.add_argument("--check-data", action="store_true",
                         help="Check data availability and exit")
     parser.add_argument("--generate-synthetic", action="store_true",
@@ -787,6 +809,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--start and --end are required with --no-menu")
         run_id = args.run_id or f"replay_cli_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         agent_ids = [f"agent_{a.strip()}" for a in args.agents.split(",") if a.strip().isdigit()]
+        profile = args.profile or getattr(args, 'profile_replay', False)
         return _run_replay_interactive(
             run_id=run_id,
             start=args.start,
@@ -794,7 +817,11 @@ def main(argv: list[str] | None = None) -> int:
             warmup_start=args.warmup_start,
             initial_equity=args.initial_equity,
             agent_ids=agent_ids or None,
-            profile=args.profile,
+            profile=profile,
+            fast_replay=args.fast_replay,
+            minimal_events=args.minimal_events,
+            event_buffer_size=args.event_buffer_size,
+            no_tui=args.no_tui,
         )
 
     # Default: interactive menu

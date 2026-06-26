@@ -56,6 +56,7 @@ class ReplayEngine:
         on_decision_hook: DecisionHook | None = None,
         candles_by_timeframe: Mapping[str, Sequence[dict[str, Any]]] | None = None,
         metadata: dict[str, Any] | None = None,
+        runtime_config: Any | None = None,  # ReplayRuntimeConfig
         warmup_start: datetime | str | None = None,
         eval_start: datetime | str | None = None,
         eval_end: datetime | str | None = None,
@@ -111,6 +112,23 @@ class ReplayEngine:
         self._mtf_builder = MultiTimeframeBuilder()
         self.decisions_path = self.run_dir / "decisions.jsonl"
 
+        # ── P4: runtime config (fast/slow mode, event buffering) ──────
+        if runtime_config is None:
+            from replay.replay_runtime_config import ReplayRuntimeConfig
+            runtime_config = ReplayRuntimeConfig()
+        self.runtime_config = runtime_config
+        self.fast_replay = self.runtime_config.fast_replay
+        self._buffered_writer: Any = None
+        if self.runtime_config.event_buffer_size > 0:
+            try:
+                from replay.buffered_jsonl_writer import BufferedJsonlWriter
+                self._buffered_writer = BufferedJsonlWriter(
+                    self.events_path,
+                    flush_every=self.runtime_config.event_buffer_size,
+                )
+            except Exception:
+                self._buffered_writer = None
+
     async def run(self) -> dict[str, Any]:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.events_path.write_text("", encoding="utf-8")
@@ -151,6 +169,16 @@ class ReplayEngine:
 
             await self._inject_candle(candle, index)
             await self.blackboard.update_dict("meta.replay", {"phase": phase, "eval_active": eval_active})
+
+            # ── P4: warmup gate — context only, no decisions, no trades ──
+            if not eval_active:
+                # Still call the display hook so TUI shows progress through warmup
+                await self._call_hook(candle, phase, eval_active)
+                continue
+
+            # ═══════════════════════════════════════════════════════════════
+            # Evaluation-only below this line
+            # ═══════════════════════════════════════════════════════════════
             self._append_event(self._decision_snapshot_event(candle, index, phase, eval_active))
             await self._call_hook(candle, phase, eval_active)
 
@@ -165,20 +193,23 @@ class ReplayEngine:
             except Exception:
                 pass
 
+            # P4: stamp eval_active on decision for trade-manager safety gate
+            decision["eval_active"] = True
+
             self._record_p1_decision(candle, index, decision, phase, eval_active)
             if decision.get("signal") or decision.get("trade_signal"):
                 self._errors.append("P1_REPLAY_FORBIDS_TRADE_SIGNAL")
-            
+
             scoring_diag = None
             if getattr(self, "diagnose_scoring", False):
                 scoring_diag = self._build_scoring_diagnostic(candle, decision, phase, eval_active)
-                
+
             event = self._decision_event(candle, index, decision, phase, eval_active)
             if scoring_diag:
                 event["scoring_diagnostic"] = scoring_diag
-                
+
             self._append_event(event)
-            
+
             await self._append_signal_event(candle, index, decision, phase, eval_active)
 
             # P3-E: profile trade manager
@@ -214,15 +245,32 @@ class ReplayEngine:
                 }
             )
 
+        # ── P4: flush buffered writer & write profiler report ─────────
+        if self._buffered_writer is not None:
+            try:
+                self._buffered_writer.close()
+            except Exception:
+                pass
+
+        try:
+            from replay.replay_profiler import get_profiler
+            prof = get_profiler()
+            if prof.enabled:
+                prof.write_report(self.run_dir)
+        except Exception:
+            pass
+
         summary = self._build_summary(first_time, last_time)
         self.summary_path.write_text(
             json.dumps(summary, ensure_ascii=False, default=_json_default, indent=2),
             encoding="utf-8",
         )
-        self.decisions_path.write_text(
-            "\n".join(json.dumps(item, ensure_ascii=False, default=_json_default) for item in self._p1_decisions),
-            encoding="utf-8",
-        )
+        # P4: skip decisions.jsonl in fast mode (saves I/O)
+        if self.runtime_config.write_decisions_jsonl:
+            self.decisions_path.write_text(
+                "\n".join(json.dumps(item, ensure_ascii=False, default=_json_default) for item in self._p1_decisions),
+                encoding="utf-8",
+            )
         self._write_trade_journal()
         return summary
 
@@ -627,12 +675,26 @@ class ReplayEngine:
             )
 
     def _append_event(self, event: dict[str, Any]) -> None:
+        # ── P4 fast-replay: drop non-essential events ─────────────────
+        if self.runtime_config.minimal_events:
+            if not self._is_fast_keep_event(event):
+                return
+
         if self._drop_compact_event(event):
             return
         event = _json_safe(event)
         self._events_for_summary.append(dict(event))
         if not self._write_compact_event(event):
             return
+
+        # ── P4: use buffered writer when available ────────────────────
+        if self._buffered_writer is not None:
+            try:
+                self._buffered_writer.write(event)
+            except Exception:
+                pass  # fallback to direct write on buffer error
+            return
+
         line = json.dumps(event, ensure_ascii=False, default=_json_default) + "\n"
         line_bytes = len(line.encode("utf-8"))
         limit_bytes = int(self.event_log_limit_mb * 1024 * 1024)
@@ -654,6 +716,23 @@ class ReplayEngine:
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(line)
         self._event_log_size_bytes += line_bytes
+
+    def _is_fast_keep_event(self, event: dict[str, Any]) -> bool:
+        """P4: keep only trade-lifecycle events in fast mode."""
+        name = str(event.get("event") or "")
+        if name in {
+            "open", "close", "leg_close", "missed_entry",
+            "rejected", "warmup_start", "warmup_end",
+            "hook_error", "decision_hook_error", "event_log_warning",
+        }:
+            return True
+        # Keep any event that is explicitly marked eval_active (trade-related)
+        if event.get("eval_active") is True and name in {
+            "tier_trade_open", "tier_trade_close", "tier_leg_close",
+            "tier_missed_entry", "tier_trade_rejected",
+        }:
+            return True
+        return False
 
     def _drop_compact_event(self, event: dict[str, Any]) -> bool:
         if not self.compact_event_logging:
@@ -777,6 +856,21 @@ class ReplayEngine:
             "protected_sl_hit_count": trade_summary.get("protected_sl_hit_count", trade_summary.get("protected_sl_hits", 0)),
             "leg1_pnl_R_total": trade_summary.get("leg1_pnl_R_total"),
             "leg2_pnl_R_total": trade_summary.get("leg2_pnl_R_total"),
+            # ── P4: reporting consistency metrics ────────────────────
+            "trades_per_day": trade_summary.get("trades_per_day", 0.0),
+            "active_trading_days": trade_summary.get("active_trading_days", 0),
+            "winrate_full_win": trade_summary.get("winrate_full_win", 0.0),
+            "winrate_tp1_touch": trade_summary.get("winrate_tp1_touch", 0.0),
+            "cost_drag_R": trade_summary.get("cost_drag_R", 0.0),
+            "full_win_count": trade_summary.get("full_win_count", 0),
+            "tp1_touch_count": trade_summary.get("tp1_touch_count", 0),
+            "first_trade_time": trade_summary.get("first_trade_time"),
+            "last_trade_time": trade_summary.get("last_trade_time"),
+            "warmup_trade_count": trade_summary.get("warmup_trade_count", 0),
+            "trades_per_eval_day": trade_summary.get("trades_per_eval_day", 0.0),
+            "trades_per_active_day": trade_summary.get("trades_per_active_day", 0.0),
+            "leg_sl_count": trade_summary.get("sl_hit_count", 0),
+            "parent_full_sl_count": trade_summary.get("full_sl_count", 0),
             # ── end P3 metrics ──────────────────────────────────────
             "initial_equity": capital_summary.get("initial_equity"),
             "final_equity": capital_summary.get("final_equity", capital_summary.get("equity_final")),

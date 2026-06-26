@@ -252,6 +252,10 @@ async def _run_replay_live(
     agent_ids: list[str] | None = None,
     initial_equity: float = 100.0,
     profile: bool = False,
+    fast_replay: bool = False,
+    minimal_events: bool = False,
+    event_buffer_size: int = 1000,
+    no_tui: bool = False,
     diagnose_agents: list[str] | None = None,
     state_queue: queue.Queue[Any] | None = None,
     stop_event: threading.Event | None = None,
@@ -302,6 +306,10 @@ async def _run_replay_live(
     args.output_root = output_root
     args.run_id = run_id
     args.profile_replay = profile
+    args.fast_replay = fast_replay
+    args.minimal_events = minimal_events or fast_replay
+    args.event_buffer_size = event_buffer_size
+    args.no_tui = no_tui
     args.replay_agent = agent_ids
     args.news_calendar = news_calendar_path
     args.data_manifest = None
@@ -318,6 +326,35 @@ async def _run_replay_live(
     args.diagnose_contextual_orchestrator = False
     args.fast_precomputed = False
     args.precompute_root = None
+
+    # ── P4: build runtime config ──────────────────────────────────────
+    from replay.replay_runtime_config import ReplayRuntimeConfig
+    if fast_replay:
+        runtime_config = ReplayRuntimeConfig.fast(profile_replay=profile)
+    else:
+        runtime_config = ReplayRuntimeConfig(
+            fast_replay=False,
+            minimal_events=minimal_events,
+            profile_replay=profile,
+            event_buffer_size=event_buffer_size,
+            state_update_every_n_candles=500,
+            state_update_every_seconds=1.0,
+            write_decisions_jsonl=True,
+            write_decision_snapshots=True,
+            warmup_decision_pipeline=False,
+        )
+        if no_tui:
+            runtime_config = ReplayRuntimeConfig(
+                fast_replay=False,
+                minimal_events=minimal_events,
+                profile_replay=profile,
+                event_buffer_size=event_buffer_size,
+                state_update_every_n_candles=999999,
+                state_update_every_seconds=999999.0,
+                write_decisions_jsonl=True,
+                write_decision_snapshots=True,
+                warmup_decision_pipeline=False,
+            )
 
     # ---- Phase 1: Resolve boundaries ----------------------------------------
     boundaries = _resolve_boundaries(args)
@@ -394,7 +431,13 @@ async def _run_replay_live(
     # ---- Phase 8: Wrap pipeline with display hook ---------------------------
     original_pipeline_call = pipeline.__call__
 
+    # P4: throttle state for TUI
+    _last_push_time = 0.0
+    _last_push_index = 0
+
     async def display_hook(candle: dict[str, Any], bb: BlackBoard) -> dict[str, Any] | None:
+        nonlocal _last_push_time, _last_push_index
+
         # Check for user interrupt
         if stop_event and stop_event.is_set():
             raise ReplayInterrupted("User stopped replay")
@@ -410,12 +453,23 @@ async def _run_replay_live(
             except Exception:
                 pass  # display state extraction is non-critical
 
-        # Push to queue (non-blocking)
+        # P4: throttle TUI pushes (every N candles or T seconds)
         if state_queue is not None:
-            try:
-                state_queue.put_nowait(live_state.to_dict())
-            except queue.Full:
-                pass
+            now = time.monotonic()
+            cfg = runtime_config
+            should_push = (
+                live_state.candles_processed - _last_push_index >= cfg.state_update_every_n_candles
+                or now - _last_push_time >= cfg.state_update_every_seconds
+                or live_state.progress_pct >= 100.0
+                or not cfg.tui_throttle_enabled
+            )
+            if should_push:
+                try:
+                    state_queue.put_nowait(live_state.to_dict())
+                    _last_push_time = now
+                    _last_push_index = live_state.candles_processed
+                except queue.Full:
+                    pass
 
         return decision
 
@@ -448,6 +502,7 @@ async def _run_replay_live(
         on_decision_hook=display_hook,
         candles_by_timeframe=external_candles,
         metadata=metadata,
+        runtime_config=runtime_config,
         warmup_start=load_start,
         eval_start=eval_start,
         eval_end=eval_end,
@@ -549,6 +604,10 @@ def run_replay_in_thread(
     agent_ids: list[str] | None = None,
     initial_equity: float = 100.0,
     profile: bool = False,
+    fast_replay: bool = False,
+    minimal_events: bool = False,
+    event_buffer_size: int = 1000,
+    no_tui: bool = False,
     diagnose_agents: list[str] | None = None,
     state_queue: queue.Queue[Any] | None = None,
     stop_event: threading.Event | None = None,
@@ -576,6 +635,10 @@ def run_replay_in_thread(
                     agent_ids=agent_ids,
                     initial_equity=initial_equity,
                     profile=profile,
+                    fast_replay=fast_replay,
+                    minimal_events=minimal_events,
+                    event_buffer_size=event_buffer_size,
+                    no_tui=no_tui,
                     diagnose_agents=diagnose_agents,
                     state_queue=state_queue,
                     stop_event=stop_event,

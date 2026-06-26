@@ -108,6 +108,28 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="P3-E: Directory for precomputed Parquet caches (NOT YET IMPLEMENTED).",
     )
+    # P4: fast replay & performance flags
+    parser.add_argument(
+        "--fast-replay",
+        action="store_true",
+        help="P4: Fast replay mode — warmup context-only, minimal events, buffered writes, throttled TUI.",
+    )
+    parser.add_argument(
+        "--minimal-events",
+        action="store_true",
+        help="P4: Write only trade-lifecycle events (open/close/leg_close/rejected).",
+    )
+    parser.add_argument(
+        "--event-buffer-size",
+        type=int,
+        default=1000,
+        help="P4: Buffer size for JSONL event writer (default: 1000, 0=disable).",
+    )
+    parser.add_argument(
+        "--no-tui",
+        action="store_true",
+        help="P4: Disable TUI state updates entirely (fastest path).",
+    )
     return parser
 
 
