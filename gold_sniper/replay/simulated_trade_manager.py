@@ -179,6 +179,29 @@ class SimulatedTradeManager:
         }
         total_daily_trades = sum(daily_trade_counts.values())
 
+        # ── BUG-3: trades/day on distinct UTC dates with ≥1 trade opened ──
+        open_days: set[str] = set()
+        for e in self.events:
+            if "open" in str(e.get("event", "")).lower() and e.get("time"):
+                open_days.add(str(e["time"])[:10])
+        active_days = max(1, len(open_days))
+        trades_per_day = round(len(parent_closes) / active_days, 4)
+
+        # ── BUG-5: double winrate (full-win + tp1-touch) ─────────────
+        n = len(parent_closes)
+        full_win_count = sum(1 for e in parent_closes if e.get("leg_2_exit_reason") == "TP2")
+        tp1_touch = sum(
+            1 for e in parent_closes
+            if e.get("leg_1_exit_reason") == "TP1" or e.get("leg_2_exit_reason") == "TP2"
+        )
+        winrate_full_win = round(full_win_count / n * 100, 2) if n else 0.0
+        winrate_tp1_touch = round(tp1_touch / n * 100, 2) if n else 0.0
+
+        # ── cost drag (pure vs net expectancy) ────────────────────────
+        cost_drag_R = round(
+            (pure_expectancy_R - expectancy_R) if parent_pnl_Rs else 0.0, 6
+        )
+
         return {
             "initial_equity": round(self.config.equity_initial, 6),
             "signals": self.signal_count,
@@ -259,6 +282,11 @@ class SimulatedTradeManager:
             "grade_blocked_count": self.grade_blocked_count,
             "legacy_enter_blocked_count": self.legacy_enter_blocked_count,
             "duplicate_rejections": self.duplicate_rejections,
+            "trades_per_day": trades_per_day,
+            "active_trading_days": active_days,
+            "winrate_full_win": winrate_full_win,
+            "winrate_tp1_touch": winrate_tp1_touch,
+            "cost_drag_R": cost_drag_R,
             "shadow_live_policy": self.policy.to_dict(),
             **_risk_realism_summary(self.events, parent_closes),
         }
@@ -929,6 +957,7 @@ class SimulatedTradeManager:
             "reason": "PARENT_CLOSE",
             "type": trade["type"],
             "entry_price": trade["entry_price"],
+            "setup_grade": trade.get("setup_grade", ""),
             "parent_pnl_R": trade.get("parent_pnl_R"),
             "pure_parent_pnl_R": trade.get("pure_parent_pnl_R"),  # P3: parent R before exit costs
             "parent_outcome": trade.get("parent_outcome"),

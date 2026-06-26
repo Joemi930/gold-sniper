@@ -78,9 +78,13 @@ def extract_important_trades(summary: dict[str, Any], run_dir: str | None = None
                             t["side"] = str(event.get("side", t["side"]))
                             t["entry"] = _safe_float(event.get("entry_price", t["entry"]))
                         elif etype == "close" or "PARENT" in reason.upper():
-                            # Parent close — captures final P&L
+                            # Parent close — captures final P&L and grade
                             t["pnl_r"] = _safe_float(event.get("pnl", event.get("pnl_R", event.get("net_r", 0))))
                             t["result"] = reason
+                            # BUG-4: grade from parent close or open event
+                            grade = str(event.get("setup_grade") or event.get("kasper_grade") or event.get("tier") or "")
+                            if grade:
+                                t["grade"] = grade
                         elif etype == "leg_close":
                             t["exit_time"] = str(event.get("time", t["exit_time"]))
                             if "TP1" in reason:
@@ -96,25 +100,8 @@ def extract_important_trades(summary: dict[str, Any], run_dir: str | None = None
             except Exception:
                 pass
 
-    # ---- Fallback: derive from summary metrics ----
-    if not trades:
-        parent_count = _safe_int(summary.get("parent_trades", summary.get("trades", summary.get("closed_trades", 0))))
-        if parent_count > 0:
-            tp2_count = _safe_int(summary.get("tp2_hit_count", summary.get("tp1_then_tp2_count", 0)))
-            psl_count = _safe_int(summary.get("protected_sl_hit_count", summary.get("tp1_then_protected_sl_count", 0)))
-            wins = _safe_int(summary.get("wins", 0))
-            avg_win = _safe_float(summary.get("avg_win_R", 0))
-            avg_loss = _safe_float(summary.get("avg_loss_R", 0))
-            for i in range(parent_count):
-                is_win = i < wins
-                trades.append({
-                    "entry_time": f"Trade #{i+1}",
-                    "side": "", "entry": 0.0, "exit": 0.0,
-                    "pnl_r": avg_win if is_win else -avg_loss,
-                    "grade": "A_PLUS", "result": "WIN" if is_win else "LOSS",
-                    "tp1": True, "tp2": i < tp2_count,
-                    "sl": False, "protected_sl": i >= tp2_count and i < tp2_count + psl_count,
-                })
+    # BUG-6: NO synthetic fallback. If no real trade journal, trades stays empty.
+    # The report will show "INVALID: no real trade journal" downstream.
 
     return trades
 
@@ -225,7 +212,10 @@ def write_compact_report(
         "pure_R": _safe_float(summary.get("pure_expectancy_R", summary.get("pure_R", 0))),
         "net_R": _safe_float(summary.get("expectancy_R", summary.get("net_R", 0))),
         "winrate_pct": _safe_float(summary.get("win_rate", summary.get("winrate", summary.get("win_rate_pct", 0)))),
+        "winrate_full_win": _safe_float(summary.get("winrate_full_win", 0)),
+        "winrate_tp1_touch": _safe_float(summary.get("winrate_tp1_touch", 0)),
         "expectancy_R": _safe_float(summary.get("expectancy_R", 0)),
+        "cost_drag_R": _safe_float(summary.get("cost_drag_R", 0)),
         "max_drawdown_pct": _safe_float(summary.get("max_drawdown_pct", 0)),
         "total_trades": _safe_int(summary.get("parent_trades", summary.get("trades", summary.get("closed_trades", 0)))),
         "tp1_count": _safe_int(summary.get("tp1_hit_count", summary.get("tp1_count", 0))),
@@ -288,7 +278,9 @@ def _write_markdown_report(
         ("Net P&L %", f"{metrics['net_pnl_pct']:+.2f}%"),
         ("Pure R", f"{metrics['pure_R']:+.2f}R"),
         ("Net R (expectancy)", f"{metrics['net_R']:+.2f}R"),
-        ("Winrate", f"{metrics['winrate_pct']:.1f}%"),
+        ("Winrate (parent)", f"{metrics['winrate_pct']:.1f}%"),
+        ("Winrate (full win / TP1 touch)", f"{metrics['winrate_full_win']:.1f}% / {metrics['winrate_tp1_touch']:.1f}%"),
+        ("Cost Drag R", f"{metrics['cost_drag_R']:+.4f}R"),
         ("Max Drawdown", f"{metrics['max_drawdown_pct']:.2f}%"),
         ("Total Trades", str(metrics['total_trades'])),
         ("TP1 / TP2 / Full SL / Prot SL",
