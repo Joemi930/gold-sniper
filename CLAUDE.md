@@ -2,11 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current phase: P1-clean
+## Current phase: P1-READY (Gap-Closed, Provenance-Verified)
 
-The repo is in **P1-clean** — replay/shadow only. The next goal is P1 — Gold Sniper Trading & Optimisation: building a terminal replay control center for fast, clean backtesting (see `P1_GOLD_SNIPER_TRADING_AND_OPTIMISATION.md`).
+The repo is in **P1-ready** — data audit complete, gap closed, spread realism fixed, ready for baseline replays. The Replay Control Center V3.2 is built and tested. See `reports/DATA_PROVENANCE_AUDIT_REPORT.md` for complete provenance audit and `reports/P1_GOLD_SNIPER_REPLAY_APP_REPORT.md` for final P1 status.
 
-**Hard prohibitions during P1-clean:**
+**Data state:** 201,513 M1 candles (Dec 2025 → Jun 2026 continuous), 7 timeframes (incl. D1), spread=32 pts on histdata.com segment. Gap CLOSED.
+
+**Hard prohibitions (PERMANENT until live-audit pass):**
 - Never set `LIVE_MODE=1` or `ALLOW_BROKER_WRITES=1`
 - Never call `mt5.order_send()` outside `execution/broker_gateway.py` → `execution/execution_guard.py`
 - Never forced-ENTER, never lower thresholds tactically, never make `POI_REACTION` tradable
