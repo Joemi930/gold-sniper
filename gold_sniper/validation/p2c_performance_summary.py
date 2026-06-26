@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 from statistics import median
 from typing import Any
 
-from gold_sniper.strategy.readiness_risk_gate_contract import evaluate_readiness_risk_gate
+from strategy.readiness_risk_gate_contract import evaluate_readiness_risk_gate
 
 
 GRADES = ("A_PLUS", "A", "B", "C", "D")
