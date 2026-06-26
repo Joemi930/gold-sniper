@@ -353,13 +353,25 @@ def _run_replay_interactive(
     print("REPLAY COMPLETE")
     print("=" * 60)
 
-    if complete_data and complete_data.get("type") == "complete":
-        summary = complete_data.get("summary", {})
-        output_root = complete_data.get("output_root", str(DEFAULT_OUTPUT_ROOT))
-        run_dir = complete_data.get("run_dir", "")
+    if complete_data and complete_data.get("type") == "complete" or complete_data is None:
+        # Read summary directly from the output file (most reliable)
+        output_root = complete_data.get("output_root", str(DEFAULT_OUTPUT_ROOT)) if complete_data else str(DEFAULT_OUTPUT_ROOT)
+        run_dir = complete_data.get("run_dir", str(DEFAULT_OUTPUT_ROOT / run_id)) if complete_data else str(DEFAULT_OUTPUT_ROOT / run_id)
+
+        # Try to load summary from the replay output file
+        summary_path = Path(run_dir) / "summary.json"
+        summary = {}
+        if summary_path.exists():
+            try:
+                import json as _json
+                summary = _json.loads(summary_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        if not summary and complete_data:
+            summary = complete_data.get("summary", {})
 
         # Extract trades
-        trades = extract_important_trades(summary)
+        trades = extract_important_trades(summary, run_dir=run_dir)
 
         # Build optimization findings
         opt_findings = build_optimization_findings(summary)
@@ -369,6 +381,7 @@ def _run_replay_interactive(
         report_path = write_compact_report(
             summary, run_id, report_dir,
             trades=trades, optimization_findings=opt_findings,
+            run_dir=run_dir,
         )
 
         # Print summary

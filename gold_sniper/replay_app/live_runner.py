@@ -152,9 +152,16 @@ def _extract_display_state(
     now = time.monotonic()
 
     # Progress
-    if hasattr(engine, "clock") and hasattr(engine.clock, "index"):
-        live_state.candles_processed = engine.clock.index
-        live_state.total_candles = len(engine.clock.candles)
+    if hasattr(engine, "clock"):
+        clock = engine.clock
+        try:
+            live_state.candles_processed = clock.index + 1 if hasattr(clock, "index") else 0
+        except Exception:
+            live_state.candles_processed = 0
+        try:
+            live_state.total_candles = len(clock)
+        except Exception:
+            live_state.total_candles = 1
         if live_state.total_candles > 0:
             live_state.progress_pct = min(
                 100.0, (live_state.candles_processed / live_state.total_candles) * 100.0
@@ -392,15 +399,18 @@ async def _run_replay_live(
         if stop_event and stop_event.is_set():
             raise ReplayInterrupted("User stopped replay")
 
-        # Call the real pipeline
+        # Call the real pipeline FIRST — never let display code break the decision
         decision = await original_pipeline_call(candle, bb)
 
-        # Extract state for TUI
+        # Extract state for TUI (best-effort, must never break the pipeline)
         engine = engine_ref[0]
         if engine is not None:
-            _extract_display_state(candle, bb, decision, live_state, engine, start_time)
+            try:
+                _extract_display_state(candle, bb, decision, live_state, engine, start_time)
+            except Exception:
+                pass  # display state extraction is non-critical
 
-        # Push to queue
+        # Push to queue (non-blocking)
         if state_queue is not None:
             try:
                 state_queue.put_nowait(live_state.to_dict())
@@ -511,15 +521,18 @@ async def _run_replay_live(
         except Exception:
             pass
 
-    # Signal completion
+    # Signal completion (use put_nowait to avoid blocking if queue is full)
     if state_queue:
-        state_queue.put({
-            "type": "complete",
-            "summary": summary,
-            "output_root": str(output_root),
-            "run_id": run_id,
-            "run_dir": str(getattr(engine, "run_dir", "")),
-        })
+        try:
+            state_queue.put_nowait({
+                "type": "complete",
+                "summary": summary,
+                "output_root": str(output_root),
+                "run_id": run_id,
+                "run_dir": str(getattr(engine, "run_dir", "")),
+            })
+        except queue.Full:
+            pass  # TUI will read summary from file directly
 
     return summary
 
