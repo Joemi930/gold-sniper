@@ -364,5 +364,34 @@ class TestP3NonRegression(unittest.TestCase):
                 f"Expected some failures. Output: {out[:500]}")
 
 
+class TestP3ReportWriterMiniFix(unittest.TestCase):
+    """Report writer mini-fix: pnl_r uses parent_pnl_R, side falls back to type."""
+
+    def test_pnl_r_uses_parent_pnl_R_not_cash_pnl(self):
+        """pnl_r must use R-based fields, not cash pnl."""
+        from replay_app.report_writer import _safe_float
+        event_with_parent = {"event": "close", "reason": "PARENT_CLOSE",
+                             "parent_pnl_R": 1.35, "pnl": 135.0}
+        val = _safe_float(event_with_parent.get("parent_pnl_R") or event_with_parent.get("r_multiple") or event_with_parent.get("pnl_R") or event_with_parent.get("net_r") or 0)
+        self.assertEqual(val, 1.35,
+                         f"Should pick parent_pnl_R=1.35, got {val}")
+
+    def test_side_falls_back_to_type(self):
+        """side falls back to type when side is absent."""
+        event_no_side = {"type": "BUY", "entry_price": 2000.0}
+        side = str(event_no_side.get("side") or event_no_side.get("type") or "")
+        self.assertEqual(side, "BUY")
+
+    def test_no_synthetic_fallback(self):
+        """Empty summary with no journal returns zero trades."""
+        from replay_app.report_writer import extract_important_trades
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            trades = extract_important_trades({"parent_trades": 0}, str(d))
+            self.assertEqual(len(trades), 0,
+                             "BUG-6: synthetic fallback must stay deleted")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -75,11 +75,11 @@ def extract_important_trades(summary: dict[str, Any], run_dir: str | None = None
                         reason = str(event.get("reason", ""))
                         if etype == "open":
                             t["entry_time"] = str(event.get("time", t["entry_time"]))
-                            t["side"] = str(event.get("side", t["side"]))
+                            t["side"] = str(event.get("side") or event.get("type") or t["side"])
                             t["entry"] = _safe_float(event.get("entry_price", t["entry"]))
                         elif etype == "close" or "PARENT" in reason.upper():
                             # Parent close — captures final P&L and grade
-                            t["pnl_r"] = _safe_float(event.get("pnl", event.get("pnl_R", event.get("net_r", 0))))
+                            t["pnl_r"] = _safe_float(event.get("parent_pnl_R") or event.get("r_multiple") or event.get("pnl_R") or event.get("net_r") or 0)
                             t["result"] = reason
                             # BUG-4: grade from parent close or open event
                             grade = str(event.get("setup_grade") or event.get("kasper_grade") or event.get("tier") or "")
