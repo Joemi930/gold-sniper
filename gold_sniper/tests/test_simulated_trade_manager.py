@@ -133,27 +133,34 @@ class TestSimulatedTradeManager(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(manager.summary()["pnl"], 0)
 
     async def test_buy_tp1_then_protected_sl(self) -> None:
-        """P3: BUY — leg_1 TP1 then leg_2 protected SL at entry+0.5R.
-        Entry=2015, SL=1975, risk=40, leg_1 TP=2055, leg_2 TP=2095, protected SL=2035."""
+        """P3: BUY — leg_1 TP1 then leg_2 protected SL at entry+0.5*effective_risk_points.
+
+        FIX R-accounting (BUG-1): TP/protected placed on effective_risk_points
+        (== structural_risk_points from signal when no P1_SHADOW_DECISION).
+        Entry=2015 (fill), SL=1975, structural=25, effective=25,
+        r_unit=25, leg_1 TP=2040, leg_2 TP=2065, protected SL=2027.5."""
         board = BlackBoard()
         manager = SimulatedTradeManager(board)
         await board.write("trade_signals", dict(BUY_SIGNAL))
         await manager.on_candle(candle(0))
 
-        # Candle 1: leg_1 hits TP1, low stays above protected SL
-        await manager.on_candle(candle(1, high=2056.0, low=2040.0))
-        # Candle 2: price falls to hit protected SL at 2035.0 (but not full SL)
-        events = await manager.on_candle(candle(2, high=2040.0, low=2034.9))
+        # Candle 1: leg_1 hits TP1 at 2040, low stays above protected 2027.5
+        await manager.on_candle(candle(1, high=2056.0, low=2030.0))
+        # Candle 2: price falls to hit protected SL at 2027.5 (but not full SL)
+        events = await manager.on_candle(candle(2, high=2030.0, low=2027.0))
 
         # P3: leg_2 closes at PROTECTED_SL
         leg2_close = [e for e in events if e.get("leg") == 2 and e.get("reason") == "PROTECTED_SL"]
         self.assertEqual(len(leg2_close), 1)
-        # Protected SL = 2035.0 (entry + 0.5R)
-        self.assertAlmostEqual(leg2_close[0]["requested_price"], 2035.0, places=1)
+        # Protected SL = entry + 0.5 * effective_risk_points = 2015 + 12.5 = 2027.5
+        self.assertAlmostEqual(leg2_close[0]["requested_price"], 2027.5, places=1)
 
     async def test_sell_tp1_then_protected_sl(self) -> None:
-        """P3: SELL — leg_1 TP1 then leg_2 protected SL at entry-0.5R.
-        Entry=1985, SL=2025, risk=40, leg_1 TP=1945, leg_2 TP=1905, protected SL=1965."""
+        """P3: SELL — leg_1 TP1 then leg_2 protected SL at entry-0.5*effective_risk_points.
+
+        FIX R-accounting (BUG-1): TP/protected placed on effective_risk_points.
+        Entry=1985 (fill), SL=2025, structural=25, effective=25,
+        r_unit=25, leg_1 TP=1960, leg_2 TP=1935, protected SL=1972.5."""
         board = BlackBoard()
         manager = SimulatedTradeManager(board)
         await board.write(
@@ -161,17 +168,18 @@ class TestSimulatedTradeManager(unittest.IsolatedAsyncioTestCase):
             {"signal": "SELL", "entry_price": 2000.0, "stop_loss": 2025.0},
         )
         await manager.on_candle(candle(0))
+        # r_unit=25, TP1=1985-25=1960, protected=1985-12.5=1972.5
 
-        # Candle 1: leg_1 hits TP1, high stays below protected SL
-        await manager.on_candle(candle(1, high=1960.0, low=1944.0))
-        # Candle 2: price rises to hit protected SL at 1965.0
-        events = await manager.on_candle(candle(2, high=1965.1, low=1950.0))
+        # Candle 1: leg_1 hits TP1 at 1960, high stays below protected 1972.5
+        await manager.on_candle(candle(1, high=1970.0, low=1944.0))
+        # Candle 2: price rises to hit protected SL at 1972.5
+        events = await manager.on_candle(candle(2, high=1973.0, low=1960.0))
 
         # P3: leg_2 closes at PROTECTED_SL
         leg2_close = [e for e in events if e.get("leg") == 2 and e.get("reason") == "PROTECTED_SL"]
         self.assertEqual(len(leg2_close), 1)
-        # Protected SL ≈ 1965.0
-        self.assertAlmostEqual(leg2_close[0]["requested_price"], 1965.0, places=1)
+        # Protected SL = entry - 0.5 * effective_risk_points = 1985 - 12.5 = 1972.5
+        self.assertAlmostEqual(leg2_close[0]["requested_price"], 1972.5, places=1)
 
     async def test_sell_same_candle_sl_and_tp1_chooses_sl_first(self) -> None:
         """P3: SELL intrabar conservative — SL wins over TP1."""

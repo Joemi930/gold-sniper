@@ -579,16 +579,25 @@ class SimulatedTradeManager:
         if risk <= 0:
             raise ValueError("invalid_risk_points")
 
+        # ── R UNIT FIX (BUG-1/BUG-2/BUG-7) ─────────────────────────
+        # Volume is sized on effective_risk_points (sizing).  For
+        #   full SL = -1R, TP1 = +0.5R/leg, TP2 = +1.0R/leg,
+        #   protected = +0.5R unit, targets MUST use the same unit.
+        # 'risk' (structural from fill) is NOT the sizing unit.
+        r_unit = float(effective_risk_points)
+        if r_unit <= 0.0:
+            raise ValueError("invalid_r_unit")
+
         # ── P3: leg TP levels ─────────────────────────────────────────
         # leg_1 TP = 1R from entry, leg_2 TP = 2R from entry
         if action == "BUY":
-            leg_1_tp = entry + risk * LEG_TARGET_RR[1]
-            leg_2_tp = entry + risk * LEG_TARGET_RR[2]
-            protected_sl_price = round(entry + PROTECTED_RUNNER_SL_R * risk, 6)
+            leg_1_tp = entry + r_unit * LEG_TARGET_RR[1]
+            leg_2_tp = entry + r_unit * LEG_TARGET_RR[2]
+            protected_sl_price = round(entry + PROTECTED_RUNNER_SL_R * r_unit, 6)
         else:
-            leg_1_tp = entry - risk * LEG_TARGET_RR[1]
-            leg_2_tp = entry - risk * LEG_TARGET_RR[2]
-            protected_sl_price = round(entry - PROTECTED_RUNNER_SL_R * risk, 6)
+            leg_1_tp = entry - r_unit * LEG_TARGET_RR[1]
+            leg_2_tp = entry - r_unit * LEG_TARGET_RR[2]
+            protected_sl_price = round(entry - PROTECTED_RUNNER_SL_R * r_unit, 6)
 
         # Validate levels
         if action == "BUY" and not (sl < entry < leg_1_tp <= leg_2_tp):
@@ -641,7 +650,8 @@ class SimulatedTradeManager:
             "setup_grade": grade,
             "daily_slot_reason": signal.get("daily_slot_reason"),
             "structural_risk_points": round(structural_risk_points, 6),
-            "effective_risk_points": round(float(risk), 6),
+            "effective_risk_points": round(float(effective_risk_points), 6),
+            "r_unit_points": round(r_unit, 6),
             "cost_aware_volume": round(float(volume), 6),
             "risk_realism_expected_loss": expected_sl_loss,
             "risk_realism_status": risk_realism_status,
@@ -880,11 +890,11 @@ class SimulatedTradeManager:
             return
         action = trade["type"]
         entry = float(trade["entry_price"])
-        risk = float(trade["risk_points"])
+        r_unit = float(trade.get("r_unit_points") or trade.get("effective_risk_points") or trade["risk_points"])
         if action == "BUY":
-            psl = round(entry + PROTECTED_RUNNER_SL_R * risk, 6)
+            psl = round(entry + PROTECTED_RUNNER_SL_R * r_unit, 6)
         else:
-            psl = round(entry - PROTECTED_RUNNER_SL_R * risk, 6)
+            psl = round(entry - PROTECTED_RUNNER_SL_R * r_unit, 6)
         leg_2["protected_sl"] = psl
         leg_2["sl"] = psl  # Move SL to protected level
         trade["protected_sl"] = psl  # Legacy compat

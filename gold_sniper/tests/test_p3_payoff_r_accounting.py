@@ -134,8 +134,9 @@ class TestP3PayoffWithCosts(unittest.IsolatedAsyncioTestCase):
 
     structural=100 (entry=2000, sl=1900)
     effective = 100 + 20 + 2*5 = 130
-    Entry fill = 2015, risk = 115 (BUG: should be 130)
-    TP1=2130 TP2=2245 protected=2072.5  (should use 130: TP1=2145 etc.)
+    Entry fill = 2015, r_unit=130
+    TP1=2145 TP2=2275 protected=2080  (after fix)
+    (BUG: TP1=2130 TP2=2245 protected=2072.5 using risk=115)
     """
 
     async def _open(self, manager, sl=1900.0, grade="A_PLUS"):
@@ -144,16 +145,16 @@ class TestP3PayoffWithCosts(unittest.IsolatedAsyncioTestCase):
         await manager.on_candle(candle(0))
 
     async def test_full_win_band_with_costs(self):
-        """TP1+TP2 with costs.  BUG: ~1.21 instead of ~1.38.
-        FAILS on current code: parent_pnl_R < 1.30."""
+        """TP1+TP2 with costs.  After fix: parent_pnl_R ∈ [1.30, 1.50].
+        FAILS on current (pre-fix) code: parent_pnl_R < 1.30."""
         board = BlackBoard()
         manager = SimulatedTradeManager(board, COST_CFG)
         await self._open(manager)             # entry=2000 sl=1900
 
-        # Candle 1: high=2140 >= TP1=2130, low=2080 > protected=2072.5
-        await manager.on_candle(candle(1, high=2140, low=2080, close=2130))
-        # Candle 2: high=2255 >= TP2=2245, low=2200 > protected=2072.5
-        await manager.on_candle(candle(2, high=2255, low=2200, close=2245))
+        # TP1=2145 (after fix), protected=2080
+        await manager.on_candle(candle(1, high=2150, low=2090, close=2145))
+        # TP2=2275 (after fix)
+        await manager.on_candle(candle(2, high=2280, low=2220, close=2275))
 
         close = [e for e in manager.events if e["event"] == "close"]
         self.assertEqual(len(close), 1)
@@ -167,18 +168,18 @@ class TestP3PayoffWithCosts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parent["parent_outcome"], "WIN")
 
     async def test_tp1_then_protected_is_positive_and_win(self):
-        """TP1+protected with tight stop.  BUG: ~-0.022 instead of positive.
-        FAILS on current code: parent_pnl_R <= 0."""
+        """TP1+protected with tight stop.  After fix: parent_pnl_R > 0, WIN.
+        FAILS on current (pre-fix) code: parent_pnl_R <= 0."""
         board = BlackBoard()
         manager = SimulatedTradeManager(board, COST_CFG)
-        # structural=4 => sl=1996, effective=34, entry=2015, risk=19
-        # TP1=2034, protected=2024.5 (on current code)
+        # structural=4 => sl=1996, effective=34, entry=2015, r_unit=34
+        # TP1=2049, protected=2032 (after fix)
         await self._open(manager, sl=1996.0)
 
-        # Candle 1: high=2040 >= TP1=2034, low=2028 > protected=2024.5
-        await manager.on_candle(candle(1, high=2040, low=2028, close=2034))
-        # Candle 2: low=2020 <= protected=2024.5
-        await manager.on_candle(candle(2, high=2030, low=2020, close=2025))
+        # Candle 1: high=2055 >= TP1=2049, low=2035 > protected=2032
+        await manager.on_candle(candle(1, high=2055, low=2035, close=2049))
+        # Candle 2: low=2025 <= protected=2032
+        await manager.on_candle(candle(2, high=2040, low=2025, close=2030))
 
         close = [e for e in manager.events if e["event"] == "close"]
         self.assertEqual(len(close), 1)
@@ -188,7 +189,7 @@ class TestP3PayoffWithCosts(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreater(r, 0,
             f"BUG: parent_pnl_R={r:.4f} <= 0 — protected SL exit fill "
-            f"puts runner in loss; TP on risk=19 instead of effective=34")
+            f"puts runner in loss; TP on risk instead of effective")
         self.assertEqual(outcome, "WIN")
         self.assertEqual(parent["leg_1_exit_reason"], "TP1")
         self.assertEqual(parent["leg_2_exit_reason"], "PROTECTED_SL")
