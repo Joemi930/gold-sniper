@@ -167,9 +167,12 @@ class CandidateWindowEvaluator:
         """Create a DecisionRecord from an already-computed P1 payload."""
         decision = str(p1_payload.get("decision", "REJECT")).upper()
         setup_type = p1_payload.get("setup_type")
+        reject_reason = p1_payload.get("reject_reason")
 
         if setup_type and str(setup_type).upper().replace(" ", "_") == "POI_REACTION":
             decision = "REJECT"
+            if not reject_reason:
+                reject_reason = "POI_REACTION_DIAGNOSTIC_NOT_TRADABLE"
 
         return DecisionRecord(
             window=window,
@@ -182,6 +185,6 @@ class CandidateWindowEvaluator:
             veto_code=p1_payload.get("veto_code"),
             risk_multiplier=float(p1_payload.get("risk_multiplier", 0.0)),
             risk_allowed=bool(p1_payload.get("risk_allowed", False)),
-            reject_reason=p1_payload.get("reject_reason"),
+            reject_reason=reject_reason,
             p1_payload=p1_payload,
         )
