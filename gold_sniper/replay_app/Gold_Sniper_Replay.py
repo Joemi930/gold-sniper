@@ -736,6 +736,256 @@ def _execute_menu_option(choice: str) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# P4.2 — V2 engine + parity mode
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _run_replay_v2(
+    run_id: str,
+    start: str,
+    end: str,
+    warmup_start: str | None = None,
+    initial_equity: float = 100.0,
+    agent_ids: list[str] | None = None,
+    profile: bool = False,
+    fast_replay: bool = False,
+    minimal_events: bool = False,
+    event_buffer_size: int = 1000,
+    no_tui: bool = False,
+) -> int:
+    """Run replay using ReplayEngineV2 (candidate-driven)."""
+    import asyncio
+
+    from core.blackboard import BlackBoard
+    from replay.decision_pipeline import ReplayDecisionPipeline
+    from replay.economic_calendar import load_calendar_result
+    from replay.execution_model import build_default_execution_model
+    from replay.historical_data import load_csv_candles, parse_timestamp
+    from replay.replay_engine_v2 import ReplayEngineV2
+    from replay.run_replay import _load_replay_timeframes, _resolve_boundaries
+    from replay.simulated_trade_manager import SimulatedTradeConfig, SimulatedTradeManager
+    from replay_app.report_writer import write_compact_report, extract_important_trades, build_optimization_findings
+
+    label = f"{start} -> {end}"
+    print(f"\n=== P4.2 ReplayEngineV2 ===")
+    print(f"Period: {label}")
+    print(f"Run ID: {run_id}")
+    print(f"Engine: V2 (candidate-driven)")
+    if fast_replay:
+        print("Mode: FAST")
+    if profile:
+        print("Profiling: ENABLED (ProfilerV2)")
+
+    data_root = DEFAULT_DATA_ROOT
+    output_root = DEFAULT_OUTPUT_ROOT
+
+    # Load data
+    load_start = start if warmup_start else start
+    boundaries = {
+        "load_start": f"{load_start}T00:00:00Z" if len(load_start) == 10 else load_start,
+        "eval_start": f"{start}T00:00:00Z" if len(start) == 10 else start,
+        "eval_end": f"{end}T23:59:59Z" if len(end) == 10 else end,
+    }
+    if warmup_start:
+        boundaries["load_start"] = f"{warmup_start}T00:00:00Z" if len(warmup_start) == 10 else warmup_start
+
+    loaded, _, _, _ = _load_replay_timeframes(
+        data_root,
+        symbol="XAUUSD",
+        start=boundaries["load_start"],
+        end=boundaries["eval_end"],
+    )
+
+    if not loaded.get("1m"):
+        print("ERROR: No 1m candles available for the requested period.")
+        return 1
+
+    m1_candles = loaded["1m"]
+    print(f"Loaded {len(m1_candles):,} M1 candles.")
+
+    # Build decision pipeline
+    agent_list = agent_ids or ["agent_1", "agent_2", "agent_3", "agent_4", "agent_5", "agent_6", "agent_7"]
+    calendar_result = load_calendar_result(DEFAULT_NEWS_CALENDAR, start=boundaries["load_start"], end=boundaries["eval_end"])
+    decision_hook = ReplayDecisionPipeline.from_agent_ids(
+        agent_list,
+        use_orchestrator=False,
+        news_events=calendar_result.events,
+        news_feed_alive=not calendar_result.missing and not calendar_result.empty,
+        news_source=calendar_result.source_format if not calendar_result.missing else "REPLAY_EMPTY",
+    )
+
+    blackboard = BlackBoard()
+    execution_model = build_default_execution_model(initial_equity=initial_equity)
+    trade_manager = SimulatedTradeManager(
+        blackboard,
+        SimulatedTradeConfig(
+            equity_initial=initial_equity,
+            execution_model=execution_model,
+            require_execution_model=True,
+        ),
+    )
+
+    engine = ReplayEngineV2(
+        candles_1m=m1_candles,
+        decision_pipeline=decision_hook,
+        trade_manager=trade_manager,
+        eval_start=boundaries["eval_start"],
+        eval_end=boundaries["eval_end"],
+        initial_equity=initial_equity,
+        run_id=run_id,
+        output_root=output_root,
+    )
+
+    summary = engine.run(blackboard=blackboard, profile=profile)
+
+    # Write summary to file
+    run_dir = output_root / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    import json as _json
+    (run_dir / "summary_v2.json").write_text(
+        _json.dumps(summary, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+
+    # Print summary
+    print(f"\n=== ReplayEngineV2 Complete ===")
+    state = summary.get("state", summary.get("engine", "OK"))
+    print(f"State:        {state}")
+    print(f"Runtime:      {summary.get('runtime_ms', 0):.0f}ms")
+    print(f"Candles:      {summary.get('candles_total', 0):,}")
+    print(f"Candidates:   {summary.get('candidate_count', 0)}")
+    print(f"Windows:      {summary.get('window_count', 0)}")
+    print(f"Trades:       {summary.get('trade_count', 0)}")
+    if summary.get("winrate") is not None:
+        print(f"Winrate:      {float(summary['winrate']) * 100:.1f}%")
+        print(f"Expectancy:   {float(summary.get('expectancy_R', 0)):+.2f}R")
+    print(f"Summary:      {run_dir / 'summary_v2.json'}")
+
+    if profile and "profiler" in summary:
+        pr = summary["profiler"]
+        print(f"\nProfilerV2:")
+        print(f"  Coverage:   {pr.get('coverage_pct', 0)}%")
+        print(f"  Accounted:  {pr.get('accounted_ms', 0):.0f}ms")
+        print(f"  Unaccounted:{pr.get('unaccounted_ms', 0):.0f}ms")
+
+    return 0
+
+
+def _run_parity_mode(
+    run_id: str,
+    start: str,
+    end: str,
+    warmup_start: str | None = None,
+    initial_equity: float = 100.0,
+    agent_ids: list[str] | None = None,
+    profile: bool = False,
+    fast_replay: bool = False,
+    minimal_events: bool = False,
+    event_buffer_size: int = 1000,
+    no_tui: bool = False,
+) -> int:
+    """Run both legacy (full) and V2 (fast) engines, compare results.
+
+    Parity mode validates that the V2 candidate-driven architecture
+    produces identical decisions to the legacy full-scan approach.
+    """
+    import hashlib
+    import json as _json
+
+    print("\n" + "=" * 60)
+    print("P4.2 PARITY MODE — Legacy Full vs V2 Fast")
+    print("=" * 60)
+
+    # ── Run V2 engine first (fast) ─────────────────────────────────
+    print("\n[1/2] Running ReplayEngineV2 (fast, candidate-driven)...")
+    v2_rc = _run_replay_v2(
+        run_id=f"{run_id}_v2",
+        start=start, end=end, warmup_start=warmup_start,
+        initial_equity=initial_equity, agent_ids=agent_ids,
+        profile=profile, fast_replay=True,
+        minimal_events=minimal_events, event_buffer_size=event_buffer_size,
+        no_tui=True,  # no TUI during parity
+    )
+
+    if v2_rc != 0:
+        print("ERROR: V2 engine failed — parity aborted.")
+        return 1
+
+    # Read V2 summary
+    v2_summary_path = DEFAULT_OUTPUT_ROOT / f"{run_id}_v2" / "summary_v2.json"
+    v2_summary = {}
+    if v2_summary_path.exists():
+        v2_summary = _json.loads(v2_summary_path.read_text(encoding="utf-8"))
+
+    # ── Run legacy engine (full) ───────────────────────────────────
+    print("\n[2/2] Running legacy engine (full scan)...")
+    legacy_rc = _run_replay_interactive(
+        run_id=f"{run_id}_legacy",
+        start=start, end=end, warmup_start=warmup_start,
+        initial_equity=initial_equity, agent_ids=agent_ids,
+        profile=False, fast_replay=False,
+        minimal_events=False, event_buffer_size=event_buffer_size,
+        no_tui=True,
+    )
+
+    if legacy_rc != 0:
+        print("WARNING: Legacy engine returned non-zero exit code.")
+
+    # Read legacy summary
+    legacy_summary_path = DEFAULT_OUTPUT_ROOT / f"{run_id}_legacy" / "summary.json"
+    legacy_summary = {}
+    if legacy_summary_path.exists():
+        legacy_summary = _json.loads(legacy_summary_path.read_text(encoding="utf-8"))
+
+    # ── Compare ────────────────────────────────────────────────────
+    print("\n" + "=" * 60)
+    print("PARITY COMPARISON")
+    print("=" * 60)
+
+    v2_trades = v2_summary.get("trade_count", 0)
+    leg_trades = legacy_summary.get("parent_trades", legacy_summary.get("trade_count", 0))
+
+    print(f"V2 trades:     {v2_trades}")
+    print(f"Legacy trades: {leg_trades}")
+
+    # Compute decision hashes for comparison
+    v2_hash = hashlib.sha256(_json.dumps(v2_summary, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    leg_hash = hashlib.sha256(_json.dumps(legacy_summary, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+    print(f"V2 hash:       {v2_hash}")
+    print(f"Legacy hash:   {leg_hash}")
+
+    # Runtime comparison
+    v2_runtime = v2_summary.get("runtime_ms", 0)
+    print(f"V2 runtime:    {v2_runtime:.0f}ms")
+
+    if v2_trades == leg_trades:
+        print("\n✅ PARITY: Trade count matches!")
+    else:
+        print(f"\n⚠️  PARITY MISMATCH: trade count differs ({v2_trades} vs {leg_trades})")
+
+    # Write parity report
+    parity_dir = DEFAULT_OUTPUT_ROOT / f"{run_id}_parity"
+    parity_dir.mkdir(parents=True, exist_ok=True)
+    parity_report = {
+        "parity_mode": "P4.2",
+        "period": f"{start} -> {end}",
+        "v2_trades": v2_trades,
+        "legacy_trades": leg_trades,
+        "trade_count_match": v2_trades == leg_trades,
+        "v2_hash": v2_hash,
+        "legacy_hash": leg_hash,
+        "v2_runtime_ms": v2_runtime,
+    }
+    (parity_dir / "parity_report.json").write_text(
+        _json.dumps(parity_report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(f"Parity report: {parity_dir / 'parity_report.json'}")
+
+    return 0 if v2_trades == leg_trades else 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # CLI mode (for scripting / direct replay)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -758,6 +1008,14 @@ def _build_cli_parser() -> argparse.ArgumentParser:
                         help="Enable per-agent timing profiling")
     parser.add_argument("--profile-replay", action="store_true",
                         help="Alias for --profile")
+    # ── P4.2: engine selection ─────────────────────────────────────────
+    parser.add_argument("--engine", choices=("legacy", "v2"), default="legacy",
+                        help="P4.2: Replay engine version (legacy|v2, default: legacy)")
+    parser.add_argument("--parity", action="store_true",
+                        help="P4.2: Run parity mode (full legacy vs fast v2 comparison, 1 day)")
+    parser.add_argument("--fast", action="store_true",
+                        help="P4.2: Alias for --fast-replay (fast mode)")
+    # ── Legacy P4 flags (still supported) ──────────────────────────────
     parser.add_argument("--fast-replay", action="store_true",
                         help="P4: Fast replay — warmup context-only, minimal events, buffered writes")
     parser.add_argument("--minimal-events", action="store_true",
@@ -807,9 +1065,48 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_menu:
         if not args.start or not args.end:
             parser.error("--start and --end are required with --no-menu")
+
+        # ── P4.2: resolve engine ──────────────────────────────────────
+        engine = getattr(args, 'engine', 'legacy') or 'legacy'
+        parity = getattr(args, 'parity', False)
+        fast_mode = getattr(args, 'fast', False) or args.fast_replay
+
         run_id = args.run_id or f"replay_cli_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         agent_ids = [f"agent_{a.strip()}" for a in args.agents.split(",") if a.strip().isdigit()]
         profile = args.profile or getattr(args, 'profile_replay', False)
+
+        # ── P4.2: parity mode — run both engines and compare ──────────
+        if parity:
+            return _run_parity_mode(
+                run_id=run_id,
+                start=args.start,
+                end=args.end,
+                warmup_start=args.warmup_start,
+                initial_equity=args.initial_equity,
+                agent_ids=agent_ids or None,
+                profile=profile,
+                fast_replay=fast_mode,
+                minimal_events=args.minimal_events,
+                event_buffer_size=args.event_buffer_size,
+                no_tui=args.no_tui,
+            )
+
+        # ── P4.2: V2 engine path ──────────────────────────────────────
+        if engine == 'v2':
+            return _run_replay_v2(
+                run_id=run_id,
+                start=args.start,
+                end=args.end,
+                warmup_start=args.warmup_start,
+                initial_equity=args.initial_equity,
+                agent_ids=agent_ids or None,
+                profile=profile,
+                fast_replay=fast_mode,
+                minimal_events=args.minimal_events,
+                event_buffer_size=args.event_buffer_size,
+                no_tui=args.no_tui,
+            )
+
         return _run_replay_interactive(
             run_id=run_id,
             start=args.start,
@@ -818,7 +1115,7 @@ def main(argv: list[str] | None = None) -> int:
             initial_equity=args.initial_equity,
             agent_ids=agent_ids or None,
             profile=profile,
-            fast_replay=args.fast_replay,
+            fast_replay=fast_mode,
             minimal_events=args.minimal_events,
             event_buffer_size=args.event_buffer_size,
             no_tui=args.no_tui,

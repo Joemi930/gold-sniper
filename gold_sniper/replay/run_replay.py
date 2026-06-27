@@ -114,6 +114,24 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="P4: Fast replay mode — warmup context-only, minimal events, buffered writes, throttled TUI.",
     )
+    # ── P4.2: engine selection flags ──────────────────────────────────
+    parser.add_argument(
+        "--engine",
+        choices=("legacy", "v2"),
+        default="legacy",
+        help="P4.2: Replay engine version (legacy|v2, default: legacy).",
+    )
+    parser.add_argument(
+        "--parity",
+        action="store_true",
+        help="P4.2: Run parity mode (full legacy vs fast v2 comparison, 1 day).",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="P4.2: Alias for --fast-replay.",
+    )
+    # ── end P4.2 flags ────────────────────────────────────────────────
     parser.add_argument(
         "--minimal-events",
         action="store_true",
