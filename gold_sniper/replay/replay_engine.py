@@ -158,16 +158,20 @@ class ReplayEngine:
             first_time = first_time or candle["time"]
             last_time = candle["time"]
 
-            # P3-E: profiler tick
+            # P3-E/P4.1: profiler tick
             try:
                 from replay.replay_profiler import get_profiler
                 prof = get_profiler()
                 if prof.enabled:
                     prof.tick_candle(eval_active)
             except Exception:
-                pass
+                prof = None
 
-            await self._inject_candle(candle, index)
+            if prof and prof.enabled:
+                with prof.section("inject_candle"):
+                    await self._inject_candle(candle, index)
+            else:
+                await self._inject_candle(candle, index)
             await self.blackboard.update_dict("meta.replay", {"phase": phase, "eval_active": eval_active})
 
             # ── P4: warmup gate — context only, no decisions, no trades ──
@@ -179,7 +183,11 @@ class ReplayEngine:
             # ═══════════════════════════════════════════════════════════════
             # Evaluation-only below this line
             # ═══════════════════════════════════════════════════════════════
-            self._append_event(self._decision_snapshot_event(candle, index, phase, eval_active))
+            if prof and prof.enabled:
+                with prof.section("decision_snapshot"):
+                    self._append_event(self._decision_snapshot_event(candle, index, phase, eval_active))
+            else:
+                self._append_event(self._decision_snapshot_event(candle, index, phase, eval_active))
             await self._call_hook(candle, phase, eval_active)
 
             # P3-E: profile decision hook
@@ -212,26 +220,35 @@ class ReplayEngine:
 
             await self._append_signal_event(candle, index, decision, phase, eval_active)
 
-            # P3-E: profile trade manager
-            _tm0 = __import__("time").perf_counter()
-            events = await self.trade_manager.on_p1_decision(candle, decision)
-            _tm_ms = (__import__("time").perf_counter() - _tm0) * 1000.0
+            # P3-E/P4.1: profile trade manager
             try:
-                prof = get_profiler()
-                if prof.enabled:
-                    prof.record_agent("trade_manager", _tm_ms)
+                _prof = get_profiler()
             except Exception:
-                pass
-
-            for event in events:
-                event.setdefault("phase", phase)
-                event.setdefault("eval_active", eval_active)
-                self._append_event(event)
-            tier_events = await self._tier_simulation_events(candle, index, decision, phase, eval_active)
-            for event in tier_events:
-                event.setdefault("phase", phase)
-                event.setdefault("eval_active", eval_active)
-                self._append_event(event)
+                _prof = None
+            if _prof and _prof.enabled:
+                with _prof.section("trade_manager"):
+                    events = await self.trade_manager.on_p1_decision(candle, decision)
+                for event in events:
+                    event.setdefault("phase", phase)
+                    event.setdefault("eval_active", eval_active)
+                    self._append_event(event)
+                with _prof.section("tier_events"):
+                    tier_events = await self._tier_simulation_events(candle, index, decision, phase, eval_active)
+                for event in tier_events:
+                    event.setdefault("phase", phase)
+                    event.setdefault("eval_active", eval_active)
+                    self._append_event(event)
+            else:
+                events = await self.trade_manager.on_p1_decision(candle, decision)
+                for event in events:
+                    event.setdefault("phase", phase)
+                    event.setdefault("eval_active", eval_active)
+                    self._append_event(event)
+                tier_events = await self._tier_simulation_events(candle, index, decision, phase, eval_active)
+                for event in tier_events:
+                    event.setdefault("phase", phase)
+                    event.setdefault("eval_active", eval_active)
+                    self._append_event(event)
 
         if self.compact_event_logging and self._warmup_candles:
             self._append_event(
@@ -867,8 +884,15 @@ class ReplayEngine:
             "first_trade_time": trade_summary.get("first_trade_time"),
             "last_trade_time": trade_summary.get("last_trade_time"),
             "warmup_trade_count": trade_summary.get("warmup_trade_count", 0),
-            "trades_per_eval_day": trade_summary.get("trades_per_eval_day", 0.0),
-            "trades_per_active_day": trade_summary.get("trades_per_active_day", 0.0),
+            # P4.1: computed directly (trade_summary does not have eval boundaries)
+            "trades_per_eval_day": _compute_trades_per_eval_day(
+                trade_summary.get("parent_trades", trade_summary.get("closed_trades", 0)),
+                self.eval_start, self.eval_end, first_time, last_time,
+            ),
+            "trades_per_active_day": _compute_trades_per_active_day(
+                trade_summary.get("parent_trades", trade_summary.get("closed_trades", 0)),
+                trade_summary.get("active_trading_days", 0),
+            ),
             "leg_sl_count": trade_summary.get("sl_hit_count", 0),
             "parent_full_sl_count": trade_summary.get("full_sl_count", 0),
             # ── end P3 metrics ──────────────────────────────────────
@@ -5665,4 +5689,40 @@ def _daily_limit_status(trade_summary: dict[str, Any]) -> str:
     if max_observed > standard_max:
         return "WARN"
     return "PASS"
+
+
+# ── P4.1: trades-per-day helpers ─────────────────────────────────────────────
+
+
+def _compute_trades_per_eval_day(
+    parent_trades: int,
+    eval_start: Any,
+    eval_end: Any,
+    first_time: Any,
+    last_time: Any,
+) -> float:
+    """Compute trades per evaluation day from eval_start→eval_end.
+
+    Falls back to first_time→last_time if eval boundaries are not set.
+    """
+    start_dt = _as_utc(eval_start) if eval_start is not None else None
+    end_dt = _as_utc(eval_end) if eval_end is not None else None
+    if start_dt is None:
+        start_dt = _as_utc(first_time) if first_time is not None else None
+    if end_dt is None:
+        end_dt = _as_utc(last_time) if last_time is not None else None
+    if start_dt is None or end_dt is None:
+        return 0.0
+    eval_seconds = max(1.0, (end_dt - start_dt).total_seconds())
+    eval_days = max(1.0, eval_seconds / 86400.0)
+    return round(parent_trades / eval_days, 4)
+
+
+def _compute_trades_per_active_day(
+    parent_trades: int,
+    active_trading_days: int,
+) -> float:
+    """Compute trades per active trading day."""
+    days = max(1, int(active_trading_days or 0))
+    return round(parent_trades / days, 4)
 

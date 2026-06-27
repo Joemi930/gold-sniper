@@ -81,13 +81,26 @@ class ReplayDecisionPipeline:
         )
 
     async def __call__(self, candle: dict[str, Any], blackboard) -> dict[str, Any]:
+        # ── P4.1: profiler access ──────────────────────────────────────
+        try:
+            from replay.replay_profiler import get_profiler
+            prof = get_profiler()
+        except Exception:
+            prof = None
+
         agent_errors: dict[str, str] = {}
         for runner in self.agent_runners:
             agent_id = _runner_agent_id(runner)
             try:
-                result = runner(candle, blackboard)
-                if inspect.isawaitable(result):
-                    result = await result
+                if prof and prof.enabled:
+                    with prof.section(f"agent_{agent_id}"):
+                        result = runner(candle, blackboard)
+                        if inspect.isawaitable(result):
+                            result = await result
+                else:
+                    result = runner(candle, blackboard)
+                    if inspect.isawaitable(result):
+                        result = await result
             except Exception as exc:
                 agent_errors[agent_id] = str(exc)
                 continue
@@ -102,13 +115,24 @@ class ReplayDecisionPipeline:
 
         # P1-replay: build EvidenceBundle → run PDE
         ts_utc = candle["time"].isoformat() if hasattr(candle["time"], "isoformat") else str(candle["time"])
-        bundle = build_evidence_bundle_from_blackboard(
-            blackboard,
-            symbol=str(candle.get("symbol") or "XAUUSD"),
-            ts_utc=ts_utc,
-        )
-        validation_errors = validate_evidence_bundle(bundle)
-        decision_result = evaluate_professional_decision(bundle)
+        if prof and prof.enabled:
+            with prof.section("evidence_builder"):
+                bundle = build_evidence_bundle_from_blackboard(
+                    blackboard,
+                    symbol=str(candle.get("symbol") or "XAUUSD"),
+                    ts_utc=ts_utc,
+                )
+            validation_errors = validate_evidence_bundle(bundle)
+            with prof.section("pde"):
+                decision_result = evaluate_professional_decision(bundle)
+        else:
+            bundle = build_evidence_bundle_from_blackboard(
+                blackboard,
+                symbol=str(candle.get("symbol") or "XAUUSD"),
+                ts_utc=ts_utc,
+            )
+            validation_errors = validate_evidence_bundle(bundle)
+            decision_result = evaluate_professional_decision(bundle)
         p1_payload = _p1_decision_payload(bundle, decision_result, validation_errors)
 
         # P2-E Phase11: propagate micro contract from EvidenceBundle.micro
@@ -1014,19 +1038,36 @@ def _p1_decision_payload(bundle, decision_result, validation_errors: list[str]) 
     _bundle_sess = bundle_dict.get("session") if isinstance(bundle_dict.get("session"), dict) else None
 
     try:
-        kasper_bundle = build_kasper_evidence_bundle(
-            context=_bundle_ctx,
-            poi=_bundle_poi,
-            liquidity=_bundle_liq,
-            timing=_bundle_timing,
-            micro=_bundle_micro,
-            news=_bundle_news,
-            session=_bundle_sess,
-            symbol=str(bundle_dict.get("symbol") or "XAUUSD"),
-            timestamp=payload.get("timestamp"),
-            extra_sweep_evidence=True,  # Phase16: use reconciled sweep/micro evidence
-        )
-        kasper_result = evaluate_kasper_scenario(kasper_bundle)
+        if prof and prof.enabled:
+            with prof.section("kasper_build"):
+                kasper_bundle = build_kasper_evidence_bundle(
+                    context=_bundle_ctx,
+                    poi=_bundle_poi,
+                    liquidity=_bundle_liq,
+                    timing=_bundle_timing,
+                    micro=_bundle_micro,
+                    news=_bundle_news,
+                    session=_bundle_sess,
+                    symbol=str(bundle_dict.get("symbol") or "XAUUSD"),
+                    timestamp=payload.get("timestamp"),
+                    extra_sweep_evidence=True,
+                )
+            with prof.section("kasper_evaluate"):
+                kasper_result = evaluate_kasper_scenario(kasper_bundle)
+        else:
+            kasper_bundle = build_kasper_evidence_bundle(
+                context=_bundle_ctx,
+                poi=_bundle_poi,
+                liquidity=_bundle_liq,
+                timing=_bundle_timing,
+                micro=_bundle_micro,
+                news=_bundle_news,
+                session=_bundle_sess,
+                symbol=str(bundle_dict.get("symbol") or "XAUUSD"),
+                timestamp=payload.get("timestamp"),
+                extra_sweep_evidence=True,
+            )
+            kasper_result = evaluate_kasper_scenario(kasper_bundle)
         payload.update({
             "scenario_id": kasper_result.scenario_id,
             "scenario_key": kasper_result.scenario_key,

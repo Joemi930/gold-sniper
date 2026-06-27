@@ -238,6 +238,15 @@ class SimulatedTradeManager:
         avg_cost_drag_winners_R = round(sum(winner_drags) / len(winner_drags), 6) if winner_drags else 0.0
         avg_cost_drag_losers_R = round(sum(loser_drags) / len(loser_drags), 6) if loser_drags else 0.0
 
+        # ── P4.1: cost drag component breakdown ───────────────────────
+        total_spread = round(sum(float(e.get("entry_spread_points", 0) or 0) for e in parent_closes), 6)
+        total_slippage = round(sum(float(e.get("entry_slippage_points", 0) or 0) for e in parent_closes), 6)
+        total_commission = round(sum(float(e.get("commission", 0) or 0) for e in parent_closes), 6)
+        n_ts = max(1, len(parent_closes))
+        avg_spread_per_trade = round(total_spread / n_ts, 6)
+        avg_slippage_per_trade = round(total_slippage / n_ts, 6)
+        avg_commission_per_trade = round(total_commission / n_ts, 6)
+
         return {
             "initial_equity": round(self.config.equity_initial, 6),
             "signals": self.signal_count,
@@ -334,6 +343,13 @@ class SimulatedTradeManager:
             "avg_cost_drag_per_trade_R": avg_cost_drag_per_trade_R,
             "avg_cost_drag_winners_R": avg_cost_drag_winners_R,
             "avg_cost_drag_losers_R": avg_cost_drag_losers_R,
+            # P4.1: cost component breakdown (spread / slippage / commission)
+            "total_spread_points": total_spread,
+            "total_slippage_points": total_slippage,
+            "total_commission_R": total_commission,
+            "avg_spread_per_trade": avg_spread_per_trade,
+            "avg_slippage_per_trade": avg_slippage_per_trade,
+            "avg_commission_per_trade": avg_commission_per_trade,
             "tp1_tp2_count": tp1_then_tp2,
             "tp1_protected_count": tp1_then_protected_sl,
             "full_win_count": full_win_count,

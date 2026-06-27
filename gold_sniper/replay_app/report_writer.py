@@ -147,10 +147,20 @@ def build_optimization_findings(summary: dict[str, Any]) -> dict[str, Any]:
         )
 
     # Generate suggestions
-    wr = _safe_float(summary.get("winrate", summary.get("win_rate_pct", 0)))
+    # P4.1 fix: correct field name priority — engine uses "win_rate"
+    wr = _safe_float(
+        summary.get("win_rate")
+        or summary.get("winrate")
+        or summary.get("win_rate_pct")
+        or summary.get("winrate_pct")
+        or 0
+    )
     ex = _safe_float(summary.get("expectancy_R", 0))
-    trade_count = _safe_int(summary.get("total_trades", summary.get("trades_closed", 0)))
-    avg_per_day = _safe_float(summary.get("trades_per_day", trade_count / max(1, 30)))
+    trade_count = _safe_int(summary.get("parent_trades", summary.get("total_trades", summary.get("trades_closed", 0))))
+    # P4.1: use trades_per_eval_day if available, else fall back with sensible default
+    avg_per_day = _safe_float(summary.get("trades_per_eval_day", summary.get("trades_per_day", 0)))
+    if avg_per_day == 0 and trade_count > 0:
+        avg_per_day = 0.01  # non-zero sentinel to avoid divide-by-zero noise
 
     if avg_per_day < 1.0:
         findings["suggestions"].append(
@@ -240,6 +250,13 @@ def write_compact_report(
         "tp1_protected_avg_net_R": _safe_float(summary.get("tp1_protected_avg_net_R", 0)),
         "tp1_protected_avg_pure_R": _safe_float(summary.get("tp1_protected_avg_pure_R", 0)),
         "avg_cost_drag_per_trade_R": _safe_float(summary.get("avg_cost_drag_per_trade_R", 0)),
+        # P4.1: cost component breakdown
+        "total_spread_points": _safe_float(summary.get("total_spread_points", 0)),
+        "total_slippage_points": _safe_float(summary.get("total_slippage_points", 0)),
+        "total_commission_R": _safe_float(summary.get("total_commission_R", 0)),
+        "avg_spread_per_trade": _safe_float(summary.get("avg_spread_per_trade", 0)),
+        "avg_slippage_per_trade": _safe_float(summary.get("avg_slippage_per_trade", 0)),
+        "avg_commission_per_trade": _safe_float(summary.get("avg_commission_per_trade", 0)),
         # P4: trade time boundaries
         "first_trade_time": summary.get("first_trade_time"),
         "last_trade_time": summary.get("last_trade_time"),
@@ -344,6 +361,12 @@ def _write_markdown_report(
     avg_cost_drag = metrics.get("avg_cost_drag_per_trade_R", 0)
 
     if tp1_tp2_net or tp1_tp2_pure or tp1_prot_net or tp1_prot_pure:
+        avg_spread = metrics.get("avg_spread_per_trade", 0)
+        avg_slippage = metrics.get("avg_slippage_per_trade", 0)
+        avg_commission = metrics.get("avg_commission_per_trade", 0)
+        total_spread = metrics.get("total_spread_points", 0)
+        total_slippage = metrics.get("total_slippage_points", 0)
+        total_commission = metrics.get("total_commission_R", 0)
         lines += [
             "---",
             "",
@@ -354,6 +377,15 @@ def _write_markdown_report(
             f"| TP1+TP2 | {tp1_tp2_net:+.4f}R | {tp1_tp2_pure:+.4f}R | {round(tp1_tp2_pure - tp1_tp2_net, 4):+.4f}R |",
             f"| TP1+Protected | {tp1_prot_net:+.4f}R | {tp1_prot_pure:+.4f}R | {round(tp1_prot_pure - tp1_prot_net, 4):+.4f}R |",
             f"| **Avg/Trade** | — | — | {avg_cost_drag:+.4f}R |",
+            "",
+            "### Cost Component Breakdown",
+            "",
+            "| Component | Total (all trades) | Per Trade Avg |",
+            "|-----------|-------------------|---------------|",
+            f"| Spread | {total_spread:.1f} pts | {avg_spread:.1f} pts/trade |",
+            f"| Slippage | {total_slippage:.1f} pts | {avg_slippage:.1f} pts/trade |",
+            f"| Commission | {total_commission:.4f} R | {avg_commission:.4f} R/trade |",
+            f"| **Total Cost Drag** | **{avg_cost_drag:+.4f} R/trade** | — |",
             "",
         ]
 
