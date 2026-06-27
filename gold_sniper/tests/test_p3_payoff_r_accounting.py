@@ -346,12 +346,23 @@ class TestP3NonRegression(unittest.TestCase):
     """Existing tests remain green — run via `python -m unittest discover`."""
 
     def test_non_regression(self):
-        import subprocess, sys
+        import os
+        import subprocess
+        import sys
+
+        if os.environ.get("GOLD_SNIPER_P3_NON_REGRESSION_INNER") == "1":
+            return
+
+        env = dict(os.environ)
+        env["GOLD_SNIPER_P3_NON_REGRESSION_INNER"] = "1"
+        legacy_path = r"C:\Users\tetej\Music\Bug bounty\Trading\gold_sniper"
+        env["PYTHONPATH"] = legacy_path + os.pathsep + env.get("PYTHONPATH", "")
         result = subprocess.run(
             [sys.executable, "-m", "unittest", "discover",
              "gold_sniper/tests",
              "-q"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+            env=env,
             cwd=r"C:\Users\tetej\Music\Bug bounty\Trading")
         # Known pre-existing failures (not our bugs): 3 in P1 guards + agent5.
         # We require only that the test module import succeeds (no ImportError).

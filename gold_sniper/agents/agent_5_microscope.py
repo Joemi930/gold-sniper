@@ -242,6 +242,9 @@ def _extract_agent2_p2a_poi_for_agent5(blackboard: BlackBoard) -> tuple[dict[str
 
     anchor, diagnostics = extract_p2a_selected_poi(blackboard)
     if not anchor:
+        if diagnostics.get("failure_reason") == "NO_P2A_POI_OR_BOUNDS":
+            diagnostics = dict(diagnostics)
+            diagnostics["failure_reason"] = "NO_SELECTED_POI_OR_BOUNDS"
         return None, diagnostics
 
     normalized = dict(anchor)
@@ -639,7 +642,9 @@ def analyze_amd_sequence(
     retest_detected = False
     sweep_detected = False
     choch_detected = False
-    
+    sweep_price = 0.0
+    choch_price = 0.0
+
     score_shadow = 0
 
     if len(candles) < AMD_ACCUMULATION_WINDOW + AMD_MAX_CHOCH_DELAY:

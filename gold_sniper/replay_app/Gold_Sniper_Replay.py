@@ -959,9 +959,9 @@ def _run_parity_mode(
     print(f"V2 runtime:    {v2_runtime:.0f}ms")
 
     if v2_trades == leg_trades:
-        print("\n✅ PARITY: Trade count matches!")
+        print("\nPARITY: Trade count matches!")
     else:
-        print(f"\n⚠️  PARITY MISMATCH: trade count differs ({v2_trades} vs {leg_trades})")
+        print(f"\nPARITY MISMATCH: trade count differs ({v2_trades} vs {leg_trades})")
 
     # Write parity report
     parity_dir = DEFAULT_OUTPUT_ROOT / f"{run_id}_parity"
@@ -1077,7 +1077,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # ── P4.2: parity mode — run both engines and compare ──────────
         if parity:
-            return _run_parity_mode(
+            rc = _run_parity_mode(
                 run_id=run_id,
                 start=args.start,
                 end=args.end,
@@ -1090,6 +1090,9 @@ def main(argv: list[str] | None = None) -> int:
                 event_buffer_size=args.event_buffer_size,
                 no_tui=args.no_tui,
             )
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(rc)
 
         # ── P4.2: V2 engine path ──────────────────────────────────────
         if engine == 'v2':
