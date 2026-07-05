@@ -67,6 +67,15 @@ class SimulatedTradeManager:
         self.equity = float(self.config.equity_initial)
         self.peak_equity = self.equity
         self.max_drawdown = 0.0
+        self.max_drawdown_pct_peak = 0.0  # TRUE risk: worst peak-to-trough %, vs peak (not initial)
+        # ── Profit sweep (doctrine de sécurisation du capital) ──
+        import os as _os
+        self._sweep_enabled = _os.environ.get("GS_PROFIT_SWEEP", "0").strip().lower() in ("1","true","yes","on")
+        self._sweep_trigger_mult = float(_os.environ.get("GS_SWEEP_TRIGGER_MULT", "2.0") or "2.0")
+        self._sweep_pct = float(_os.environ.get("GS_SWEEP_PCT", "50") or "50") / 100.0
+        self.sweep_ref = float(self.config.equity_initial)   # référence du prochain doublement
+        self.withdrawn_total = 0.0                            # cumul sécurisé (hors risque)
+        self.sweep_count = 0
         self.signal_count = 0
         self.rejected_count = 0
         # Phase18: live-like policy, daily counters, open-end tracking
@@ -79,6 +88,42 @@ class SimulatedTradeManager:
         self.duplicate_rejections: int = 0
         # P1.1 Kasper: legacy ENTER blocked by Kasper authority gate
         self.legacy_enter_blocked_count: int = 0
+        self.cost_filter_rejections: int = 0
+        # Exact reason each ENTER was blocked at the Kasper Authority Gate
+        # (e.g. KASPER_RR_BELOW_MINIMUM, KASPER_SCENARIO_KEY_MISSING). Ends
+        # the guessing about *why* enter_eligible candidates produce 0 trades.
+        self.enter_block_reasons: dict[str, int] = {}
+        self._live_open_count = 0
+        self._live_parent_close_count = 0
+        self._live_win_count = 0
+        self._live_loss_count = 0
+        self._live_parent_pnl_r_total = 0.0
+        self._live_tp1_count = 0
+        self._live_tp2_count = 0
+        self._live_sl_count = 0
+        self._live_protected_sl_count = 0
+
+    def live_summary(self) -> dict[str, Any]:
+        """O(1) subset of summary() for per-candle display updates."""
+        closed = self._live_parent_close_count
+        initial = self.config.equity_initial
+        pnl = round(self.equity - initial, 6)
+        return {
+            "final_equity": round(self.equity, 6),
+            "equity": round(self.equity, 6),
+            "net_pnl": pnl,
+            "win_rate": round((self._live_win_count / closed) * 100, 2) if closed else 0.0,
+            "expectancy_R": round(self._live_parent_pnl_r_total / closed, 6) if closed else 0.0,
+            "max_drawdown_pct": round((self.max_drawdown / initial) * 100, 6) if initial else 0.0,
+            "open_trades_end_count": len(self.active_positions),
+            "active_trades": len(self.active_positions),
+            "trades": self._live_open_count,
+            "closed_trades": closed,
+            "tp1_hit_count": self._live_tp1_count,
+            "tp2_hit_count": self._live_tp2_count,
+            "sl_hit_count": self._live_sl_count,
+            "protected_sl_hit_count": self._live_protected_sl_count,
+        }
 
     async def on_candle(self, candle: dict[str, Any]) -> list[dict[str, Any]]:
         self.last_seen_candle = dict(candle)
@@ -265,6 +310,17 @@ class SimulatedTradeManager:
             "max_drawdown_pct": round((self.max_drawdown / self.config.equity_initial) * 100, 6)
             if self.config.equity_initial
             else 0.0,
+            # THE honest risk metric: worst drawdown relative to the running peak.
+            "max_drawdown_pct_of_peak": round(self.max_drawdown_pct_peak, 4),
+            # Profit sweep (sécurisation): equity = capital à risque restant;
+            # withdrawn_total = sécurisé hors compte; total_value = vraie valeur.
+            "withdrawn_total": round(self.withdrawn_total, 2),
+            "sweep_count": self.sweep_count,
+            "total_value": round(self.equity + self.withdrawn_total, 2),
+            "total_return_pct": round(
+                ((self.equity + self.withdrawn_total) - self.config.equity_initial)
+                / self.config.equity_initial * 100, 4
+            ) if self.config.equity_initial else 0.0,
             "rejections": self.rejected_count,
             "missed_entries": len([e for e in self.events if e["event"] == missed_name]),
             # P3: payoff metrics
@@ -326,6 +382,8 @@ class SimulatedTradeManager:
             "daily_limit_rejections": self.daily_limit_rejections,
             "grade_blocked_count": self.grade_blocked_count,
             "legacy_enter_blocked_count": self.legacy_enter_blocked_count,
+            "cost_filter_rejections": self.cost_filter_rejections,
+            "enter_block_reasons": dict(self.enter_block_reasons),
             "duplicate_rejections": self.duplicate_rejections,
             "trades_per_day": trades_per_day,
             "active_trading_days": active_days,
@@ -909,6 +967,18 @@ class SimulatedTradeManager:
                         self._activate_protected_sl(trade)
                     events.append(self._close_leg(trade, candle, 2, "TP2", level2))
 
+            # Étape 2: AFTER the exit check, ratchet the runner's protected SL up
+            # behind this candle's confirmed peak — so the tightened level applies
+            # to the NEXT candle. Doing it here (not before) avoids intrabar
+            # look-ahead (using this candle's high to stop this candle's low).
+            # No-op unless RUNNER_TRAIL_ENABLED and leg_2 is still open & protected.
+            if leg_2["status"] == "OPEN":
+                self._update_runner_trail(trade, candle)
+
+        # BE-at-1R (pre-TP1): after this candle's exit checks, so the tightened
+        # SL applies from the NEXT candle — same no-look-ahead discipline.
+        self._update_pre_tp1_breakeven(trade, candle)
+
         # ── Phase 3: Parent finalization ──────────────────────────────
         if leg_1["status"] == "CLOSED" and leg_2["status"] == "CLOSED":
             parent_pnl = (leg_1.get("pnl", 0.0) or 0.0) + (leg_2.get("pnl", 0.0) or 0.0)
@@ -976,7 +1046,16 @@ class SimulatedTradeManager:
         entry = float(trade["entry_price"])
         pure_pnl = round((float(exit_price) - entry) * volume, 6) if trade["type"] == "BUY" else round((entry - float(exit_price)) * volume, 6)
         leg["pure_pnl_R"] = round(pure_pnl / leg_risk, 6) if leg_risk > 0 else 0.0
-        return self._leg_event(candle, trade, leg_num, reason, exit_price, actual_exit, volume, pnl, fill)
+        _leg_evt = self._leg_event(candle, trade, leg_num, reason, exit_price, actual_exit, volume, pnl, fill)
+        # BUGFIX (gardes anti-rechute): les fermetures de leg NE passent PAS par
+        # _record_event, donc _track_sl_loss ne voyait jamais les SL → compteur
+        # figé à 0 → gardes inertes. On alimente ici. leg_1 en SL = STOP PLEIN
+        # (trade perdu avant TP1); on ne compte que le leg 1 pour ne pas
+        # double-compter les 2 legs d'un même stop. Causal: le SL est traité dans
+        # _manage_triggered_positions AVANT _consume_signal du même bougie.
+        if leg_num == 1 and reason == "SL":
+            self._track_sl_loss({"reason": "SL", "time": _leg_evt.get("time"), "side": trade.get("type")})
+        return _leg_evt
 
     def _activate_protected_sl(self, trade: dict[str, Any]) -> None:
         """After leg_1 TP1, move leg_2 SL to entry + 0.5R (protected)."""
@@ -995,6 +1074,103 @@ class SimulatedTradeManager:
         trade["protected_sl"] = psl  # Legacy compat
         trade["breakeven_activated"] = True
         trade["be_plus_activated"] = True
+        # Runner-trail bookkeeping: at TP1 the price is at +1R, so the peak
+        # favourable excursion starts at 1.0R. Used by _update_runner_trail.
+        trade["_runner_peak_r"] = 1.0
+
+    def _update_runner_trail(self, trade: dict[str, Any], candle: dict[str, Any]) -> None:
+        """Ratchet leg_2's protected SL up behind the price peak after TP1.
+
+        SAFE BY CONSTRUCTION: the trailed level can never go below the fixed
+        protected floor (PROTECTED_RUNNER_SL_R), and only moves favourably — so
+        leg_2 can only lock in MORE profit, never turn a winner into a loss.
+        OFF by default; enabled via config/env.
+        """
+        try:
+            from config import RUNNER_TRAIL_ENABLED, RUNNER_TRAIL_R
+
+            if not RUNNER_TRAIL_ENABLED:
+                return
+            leg_2 = trade.get("leg_2") or {}
+            if leg_2.get("status") != "OPEN" or leg_2.get("protected_sl") is None:
+                return
+            action = trade["type"]
+            entry = float(trade["entry_price"])
+            r_unit = float(
+                trade.get("r_unit_points")
+                or trade.get("effective_risk_points")
+                or trade["risk_points"]
+            )
+            if r_unit <= 0:
+                return
+            hi = float(candle.get("high") or entry)
+            lo = float(candle.get("low") or entry)
+            fav_r = (hi - entry) / r_unit if action == "BUY" else (entry - lo) / r_unit
+            peak = max(float(trade.get("_runner_peak_r") or 1.0), fav_r)
+            trade["_runner_peak_r"] = peak
+            trailed_r = max(PROTECTED_RUNNER_SL_R, peak - RUNNER_TRAIL_R)
+            new_psl = (
+                round(entry + trailed_r * r_unit, 6)
+                if action == "BUY"
+                else round(entry - trailed_r * r_unit, 6)
+            )
+            cur = leg_2.get("protected_sl")
+            if action == "BUY":
+                if cur is None or new_psl > cur:
+                    leg_2["protected_sl"] = new_psl
+                    leg_2["sl"] = new_psl
+                    trade["protected_sl"] = new_psl
+            else:
+                if cur is None or new_psl < cur:
+                    leg_2["protected_sl"] = new_psl
+                    leg_2["sl"] = new_psl
+                    trade["protected_sl"] = new_psl
+        except Exception:
+            return
+
+    def _update_pre_tp1_breakeven(self, trade: dict[str, Any], candle: dict[str, Any]) -> None:
+        """Move SL to entry+lock once price has been +1R in favour (pre-TP1).
+
+        With structural (far) TP1s, a trade can reach +2R and reverse; without
+        this, it would still exit at -1R. Causal: the trigger uses THIS candle's
+        confirmed extreme, but the tightened SL only applies from the NEXT candle
+        (called after this candle's exit checks) — no intrabar look-ahead.
+        Default ON via config.BE_AT_1R; fail-safe no-op on any error.
+        """
+        try:
+            from config import BE_AT_1R, BE_AT_1R_TRIGGER_R, BE_AT_1R_LOCK_R
+            if not BE_AT_1R or trade.get("_be1r_done"):
+                return
+            leg_1 = trade.get("leg_1") or {}
+            if leg_1.get("status") != "OPEN":
+                return  # post-TP1 protection is handled by protected SL
+            action = trade["type"]
+            entry = float(trade["entry_price"])
+            r_unit = float(
+                trade.get("r_unit_points")
+                or trade.get("effective_risk_points")
+                or trade["risk_points"]
+            )
+            if r_unit <= 0:
+                return
+            hi = float(candle.get("high") or entry)
+            lo = float(candle.get("low") or entry)
+            fav_r = (hi - entry) / r_unit if action == "BUY" else (entry - lo) / r_unit
+            if fav_r < BE_AT_1R_TRIGGER_R:
+                return
+            lock = BE_AT_1R_LOCK_R * r_unit
+            new_sl = round(entry + lock, 6) if action == "BUY" else round(entry - lock, 6)
+            for leg_key in ("leg_1", "leg_2"):
+                leg = trade.get(leg_key) or {}
+                if leg.get("status") != "OPEN":
+                    continue
+                cur = leg.get("sl")
+                if cur is None or (action == "BUY" and new_sl > cur) or (action == "SELL" and new_sl < cur):
+                    leg["sl"] = new_sl
+            trade["_be1r_done"] = True
+            trade["breakeven_activated"] = True
+        except Exception:
+            return
 
     def _finalize_parent(
         self, trade: dict[str, Any], candle: dict[str, Any]
@@ -1132,6 +1308,29 @@ class SimulatedTradeManager:
         self.equity += pnl
         self.peak_equity = max(self.peak_equity, self.equity)
         self.max_drawdown = max(self.max_drawdown, self.peak_equity - self.equity)
+        # TRUE drawdown: relative to the running PEAK (what you actually feel),
+        # not to initial equity. On a compounding account, /initial inflates the
+        # number wildly (e.g. 465% is a $465 dip on a $4270 peak = ~11% real).
+        if self.peak_equity > 0:
+            _dd_peak = (self.peak_equity - self.equity) / self.peak_equity * 100.0
+            self.max_drawdown_pct_peak = max(self.max_drawdown_pct_peak, _dd_peak)
+
+        # ── Profit sweep: dès que l'équité ACTIVE a doublé depuis la dernière
+        # référence, on sort une fraction du bénéfice du compte (retiré = sécurisé,
+        # hors risque). Le retrait N'EST PAS un drawdown → on ramène le high-water
+        # mark au niveau post-retrait pour que le DD ne reflète que le capital
+        # réellement à risque, et le sizing (basé sur l'équité) se dé-risque
+        # naturellement. Aucune influence sur les décisions de trading. Défaut OFF.
+        if self._sweep_enabled and self.equity >= self.sweep_ref * self._sweep_trigger_mult:
+            profit = self.equity - self.sweep_ref
+            if profit > 0:
+                swept = round(profit * self._sweep_pct, 2)
+                if swept > 0:
+                    self.equity -= swept
+                    self.withdrawn_total = round(self.withdrawn_total + swept, 2)
+                    self.sweep_count += 1
+                    self.sweep_ref = self.equity
+                    self.peak_equity = self.equity  # un retrait n'est pas une perte
 
     def _pnl(self, trade: dict[str, Any], exit_price: float, volume: float | None = None) -> float:
         volume = float(volume if volume is not None else trade.get("volume_remaining", trade.get("volume_original", 0.0)))
@@ -1167,10 +1366,81 @@ class SimulatedTradeManager:
             positions.clear()
             positions.extend(dict(trade) for trade in self.active_positions.values())
 
+    def _track_sl_loss(self, event: dict[str, Any]) -> None:
+        """Feed the anti-relapse guards from close events (reason == SL)."""
+        try:
+            if str(event.get("reason") or "") != "SL":
+                return
+            t = str(event.get("time") or "")
+            side = str(event.get("side") or event.get("type") or "")
+            day = t[:10]
+            if getattr(self, "_slg_day", None) != day:
+                self._slg_day = day
+                self._slg_count = 0
+            self._slg_count = getattr(self, "_slg_count", 0) + 1
+            if not hasattr(self, "_slg_last"):
+                self._slg_last = {}
+            self._slg_last[side] = t
+        except Exception:
+            return
+
+    def _loss_guard_block(self, candle_time: str, side: str) -> str | None:
+        """Return a block reason if the anti-relapse guards forbid opening."""
+        try:
+            from config import LOSS_BREAKER_MAX_SL_PER_DAY, LOSS_COOLDOWN_SAME_SIDE_MIN
+            day = str(candle_time)[:10]
+            if (
+                LOSS_BREAKER_MAX_SL_PER_DAY > 0
+                and getattr(self, "_slg_day", None) == day
+                and getattr(self, "_slg_count", 0) >= LOSS_BREAKER_MAX_SL_PER_DAY
+            ):
+                return "DAILY_LOSS_BREAKER"
+            if LOSS_COOLDOWN_SAME_SIDE_MIN > 0:
+                last = (getattr(self, "_slg_last", {}) or {}).get(str(side))
+                if last:
+                    from datetime import datetime
+                    def _p(x):
+                        return datetime.fromisoformat(str(x).replace("Z", "+00:00"))
+                    delta_min = (_p(candle_time) - _p(last)).total_seconds() / 60.0
+                    if 0 <= delta_min < LOSS_COOLDOWN_SAME_SIDE_MIN:
+                        return "LOSS_COOLDOWN_SAME_SIDE"
+        except Exception:
+            return None
+        return None
+
     def _record_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        self._track_sl_loss(event)
         event.setdefault("recorded_at", _iso(datetime.now(timezone.utc)))
         self.events.append(event)
+        self._update_live_stats(event)
         return event
+
+    def _update_live_stats(self, event: dict[str, Any]) -> None:
+        name = str(event.get("event") or "")
+        if name == self._event_name("open"):
+            self._live_open_count += 1
+        elif name == self._event_name("close"):
+            self._live_parent_close_count += 1
+            if event.get("parent_outcome") == "WIN":
+                self._live_win_count += 1
+            elif event.get("parent_outcome") == "LOSS":
+                self._live_loss_count += 1
+            value = event.get("parent_pnl_R")
+            if value is not None:
+                try:
+                    self._live_parent_pnl_r_total += float(value)
+                except (TypeError, ValueError):
+                    pass
+        elif name == self._event_name("leg_close"):
+            reason = event.get("reason")
+            if reason == "TP1":
+                self._live_tp1_count += 1
+            elif reason == "TP2":
+                self._live_tp2_count += 1
+            elif reason == "SL":
+                self._live_sl_count += 1
+            elif reason == "PROTECTED_SL":
+                self._live_protected_sl_count += 1
 
     def _event_name(self, name: str) -> str:
         if self.config.event_prefix == "tier":
@@ -1209,6 +1479,15 @@ class SimulatedTradeManager:
         P4: safety gate — if eval_active is explicitly False, refuse all operations.
         """
         if not isinstance(decision, dict):
+            return []
+        # Fast-path: on non-execution 1m candles (no fresh decision) with no open
+        # positions and no pending entries there is nothing to manage — skip all
+        # bookkeeping. Pure speed; identical behaviour (nothing could happen).
+        if (
+            decision.get("_non_execution_bar")
+            and not self.active_positions
+            and not self.pending_entries
+        ):
             return []
 
         # ── P4 warmup safety gate ────────────────────────────────────────
@@ -1256,6 +1535,9 @@ class SimulatedTradeManager:
             if decision.get("_kasper_gate_blocked"):
                 self.legacy_enter_blocked_count += 1
                 gate_reason = decision.get("_kasper_gate_reason", "LEGACY_ENTER_BLOCKED")
+                self.enter_block_reasons[gate_reason] = (
+                    self.enter_block_reasons.get(gate_reason, 0) + 1
+                )
                 events.append(self._record_event({
                     "event": self._event_name("rejected"),
                     "reason": gate_reason,
@@ -1281,6 +1563,18 @@ class SimulatedTradeManager:
                     "setup_grade": grade,
                     "setup_type": shadow_signal.get("setup_type"),
                     "source": "P1_SHADOW_DECISION",
+                }))
+                return events
+
+            # Anti-relapse guards (Dec-2024 autopsy: chained same-side re-entries)
+            _lg_reason = self._loss_guard_block(_iso(candle["time"]), str(shadow_signal.get("side") or shadow_signal.get("action") or shadow_signal.get("type") or ""))
+            if _lg_reason:
+                self.rejected_count += 1
+                events.append(self._record_event({
+                    "event": self._event_name("rejected"),
+                    "time": _iso(candle["time"]),
+                    "reason": _lg_reason,
+                    "source": "LOSS_GUARD",
                 }))
                 return events
 
@@ -1319,6 +1613,49 @@ class SimulatedTradeManager:
                     "source": "P1_SHADOW_DECISION",
                 }))
                 return events
+
+            # ── Étape 1: COST FILTER (rentabilité) ──────────────────────
+            # Refuse a trade whose TP1 reward cannot cover N× the round-trip
+            # execution cost. Acts HERE (entry gate) — does NOT touch risk_points
+            # or the Kasper grade. Fail-open: if reward can't be computed reliably,
+            # we do NOT reject (a data glitch must never silently kill trades).
+            try:
+                from config import (
+                    COST_FILTER_ENABLED,
+                    COST_FILTER_MIN_R_COST_MULT,
+                    COST_FILTER_COST_POINTS,
+                )
+
+                if COST_FILTER_ENABLED:
+                    _entry = _safe_float(shadow_signal.get("entry_price"))
+                    _tp1 = _safe_float(shadow_signal.get("tp1_price"))
+                    _sl = _safe_float(shadow_signal.get("stop_loss"))
+                    # reward to TP1 (dominant exit); fall back to 1R = |entry-SL|
+                    _reward_pts = abs(_tp1 - _entry) if (_tp1 > 0 and _entry > 0) else (
+                        abs(_entry - _sl) if (_entry > 0 and _sl > 0) else 0.0
+                    )
+                    _min_reward = COST_FILTER_MIN_R_COST_MULT * COST_FILTER_COST_POINTS
+                    # Only reject when we have a VALID positive reward below the floor.
+                    if _reward_pts > 0.0 and _reward_pts < _min_reward:
+                        self.cost_filter_rejections += 1
+                        self.enter_block_reasons["COST_UNECONOMIC"] = (
+                            self.enter_block_reasons.get("COST_UNECONOMIC", 0) + 1
+                        )
+                        events.append(self._record_event({
+                            "event": self._event_name("rejected"),
+                            "reason": "COST_UNECONOMIC",
+                            "time": _iso(candle["time"]),
+                            "setup_grade": grade,
+                            "setup_type": shadow_signal.get("setup_type"),
+                            "scenario_id": shadow_signal.get("scenario_id"),
+                            "reward_points": round(_reward_pts, 2),
+                            "min_reward_points": round(_min_reward, 2),
+                            "source": "P1_SHADOW_DECISION",
+                        }))
+                        return events
+            except Exception:
+                # Fail-open: never block a trade because the filter itself errored.
+                pass
 
             opened_or_rejected = await self._consume_signal(
                 candle,

@@ -159,7 +159,11 @@ def _extract_display_state(
         except Exception:
             live_state.candles_processed = 0
         try:
-            live_state.total_candles = len(clock)
+            # BUGFIX: len(clock) returns the SLIDING WINDOW size (~240), not the
+            # run total → index/240 > 1 instantly → bar clamped at 100%. Use the
+            # clock's full candle list when available.
+            _full = getattr(clock, "_candles", None)
+            live_state.total_candles = len(_full) if _full else len(clock)
         except Exception:
             live_state.total_candles = 1
         if live_state.total_candles > 0:
@@ -221,7 +225,8 @@ def _extract_display_state(
     tm = getattr(engine, "trade_manager", None)
     if tm is not None:
         try:
-            summary = tm.summary()
+            summary_func = getattr(tm, "live_summary", None)
+            summary = summary_func() if callable(summary_func) else tm.summary()
             live_state.equity = float(summary.get("final_equity", summary.get("equity", live_state.equity_initial)))
             live_state.net_pnl = float(summary.get("net_pnl", summary.get("net_pnl_R", 0)))
             live_state.winrate = float(summary.get("win_rate", summary.get("winrate", summary.get("win_rate_pct", 0))))
@@ -279,7 +284,7 @@ async def _run_replay_live(
         output_root = project_root / "data" / "replay_runs"
     if news_calendar_path is None:
         news_calendar_path = (
-            project_root / "data" / "historical" / "news" / "calendar_events_20251231_20260619.jsonl"
+            project_root / "data" / "historical" / "news" / "calendar_events_20240101_20260630.jsonl"
         )
 
     live_state = LiveState(initial_equity=initial_equity)

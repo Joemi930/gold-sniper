@@ -13,6 +13,16 @@ from gold_sniper.replay.offline_trade_simulator import simulate_enter_outcomes
 from gold_sniper.strategy.readiness_risk_gate_contract import evaluate_readiness_risk_gate
 
 
+def _graded_entry_active() -> bool:
+    """Whether Kasper graded-entry mode is currently enabled (diagnostic)."""
+    try:
+        from gold_sniper.strategy.kasper_scenario_engine import graded_entry_enabled
+
+        return graded_entry_enabled()
+    except Exception:
+        return False
+
+
 def build_replay_metrics(
     decisions: list[dict[str, Any]],
     *,
@@ -41,6 +51,8 @@ def build_replay_metrics(
     by_month: dict[str, Counter] = defaultdict(Counter)
     by_setup: dict[str, Counter] = defaultdict(Counter)
     setup_grades = Counter()
+    kasper_decisions = Counter()
+    kasper_grades = Counter()
     session_grades = Counter()
     risk_bands = Counter()
     micro_templates = Counter()
@@ -93,6 +105,11 @@ def build_replay_metrics(
         month = str(item.get("month", "UNKNOWN"))
         setup_type = str(item.get("setup_type", "UNKNOWN"))
         setup_grades[str(item.get("setup_grade") or "UNKNOWN")] += 1
+        # Kasper scenario engine's OWN decision + grade (distinct from the
+        # setup/OB grade above). Lets us see whether graded entry is producing
+        # ENTER_ELIGIBLE / B / A tiers at Kasper level.
+        kasper_decisions[str(item.get("kasper_decision_recommendation") or "NONE")] += 1
+        kasper_grades[str(item.get("kasper_grade") or "NONE")] += 1
         session_grades[str(item.get("session_grade") or "UNKNOWN")] += 1
         risk_bands[str(item.get("risk_band") or "UNKNOWN")] += 1
         micro_templates[str(item.get("micro_template") or "UNKNOWN")] += 1
@@ -307,6 +324,9 @@ def build_replay_metrics(
         "average_risk_multiplier": _average_numeric(decisions, "risk_multiplier"),
         "average_final_risk_multiplier": _average_numeric(decisions, "final_risk_multiplier"),
         "setup_grade_distribution": dict(setup_grades.most_common()),
+        "kasper_decision_distribution": dict(kasper_decisions.most_common()),
+        "kasper_grade_distribution": dict(kasper_grades.most_common()),
+        "kasper_graded_entry_active": _graded_entry_active(),
         "session_grade_distribution": dict(session_grades.most_common()),
         "risk_band_distribution": dict(risk_bands.most_common()),
         "timing_readiness_distribution": dict(timing_readiness.most_common()),

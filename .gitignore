@@ -130,3 +130,7 @@ gold_sniper/data/replay_runs/*/trade_journal.jsonl
 reports/replay/
 !reports/replay/.gitkeep
 gold_sniper/replay_app/__pycache__/
+
+# Local handoff/profiling scratch files
+_handoff_*
+prof*.out

@@ -162,6 +162,104 @@ CANDLE_HISTORY = {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 9-bis. TIMEFRAME D'EXÉCUTION — migration M1 → M15  [Étape M15]
+# ─────────────────────────────────────────────────────────────────────────────
+# Principe: la logique Kasper/SMC est INCHANGÉE; on décale l'échelle d'un cran.
+# Le moteur continue d'itérer le flux 1m (fills intrabar précis), mais le pipeline
+# de DÉCISION (agents/Kasper/entrée) ne se déclenche que sur la clôture d'une
+# bougie EXECUTION_TF, et la structure (stop/target) est lue sur EXECUTION_TF —
+# d'où un 1R bien plus grand, donc un coût (~50 pts) en faible fraction de R.
+#
+# DÉFAUT "1m": chaque bougie est une clôture d'exécution → comportement IDENTIQUE
+# à aujourd'hui → ZÉRO régression. Passer en "15m" active la migration.
+# Surchargeable par env: $env:GS_EXECUTION_TF="15m"
+EXECUTION_TF = os.environ.get("GS_EXECUTION_TF", "1m").strip() or "1m"
+
+# Échelle (ladder): pour chaque TF d'exécution, quelles TF nourrissent les agents.
+# "exec"  = la TF de déclenchement (micro-trigger agent_5, structure stop/target)
+# "ltf"   = structure basse (agent_1 structure_15m, sweeps agent_3)
+# "htf"   = structure haute / biais (agent_1 structure_4h, POI agent_2)
+AGENT_TF_LADDER = {
+    "1m":  {"exec": "1m",  "ltf": "15m", "htf": "4H"},   # actuel (défaut)
+    "5m":  {"exec": "5m",  "ltf": "1H",  "htf": "4H"},
+    "15m": {"exec": "15m", "ltf": "1H",  "htf": "4H"},    # 1R ~120 pts (mesuré)
+    "30m": {"exec": "30m", "ltf": "1H",  "htf": "4H"},    # 1R ~200-300 pts (à mesurer)
+    "1H":  {"exec": "1H",  "ltf": "4H",  "htf": "4H"},    # 1R ~350-500 pts (à mesurer)
+}
+
+def execution_ladder() -> dict:
+    """TF-ladder actif pour l'EXECUTION_TF courant (fallback sur 1m)."""
+    return AGENT_TF_LADDER.get(EXECUTION_TF, AGENT_TF_LADDER["1m"])
+
+# Plancher de stop structurel (étape M15 — finir l'étape 3).
+# Le stop d'agent_5 vient du micro-sweep (~mèche), donc 1R reste serré (~120 pts)
+# même en 15m. Ce plancher force risk_points >= STOP_ATR_FLOOR_MULT × ATR(exec),
+# ce qui agrandit 1R. Les cibles (tp = risk × RR) scalent → RR préservé.
+# DÉFAUT 0.0 = INACTIF (zéro régression). Surchargeable: $env:GS_STOP_ATR_FLOOR_MULT="1.5"
+STOP_ATR_FLOOR_MULT = float(os.environ.get("GS_STOP_ATR_FLOOR_MULT", "0.0") or "0.0")
+
+# ── CIBLES STRUCTURELLES (doctrine intraday) ──────────────────────────────
+# TP1 = dernier swing haut/bas pertinent au-delà de l'entrée (la liquidité
+# opposée la plus proche); TP2 = le swing suivant après TP1. Un gagnant peut
+# ainsi rapporter 3-5R au lieu d'être plafonné à 1R/2R. Le RR estimé devient
+# structurel → le gate Kasper (rr>=1.5) filtre naturellement les entrées sans
+# espace (sélectivité par la structure, pas par des règles binaires).
+# Défaut ACTIF (nouvelle doctrine). Désactivable: $env:GS_STRUCT_TP="0"
+STRUCT_TP = os.environ.get("GS_STRUCT_TP", "1").strip().lower() in ("1","true","yes","on")
+STRUCT_TP_MIN_DIST_ATR = float(os.environ.get("GS_STRUCT_MIN_ATR", "0.3") or "0.3")  # dist min TP1 (×ATR), env-réglable
+STRUCT_TP_SEP_ATR = 0.5        # séparation minimale TP1→TP2
+STRUCT_TP_LOOKBACK = 120        # bougies exec pour la détection des swings
+STRUCT_TP_SWING_K = int(float(os.environ.get("GS_SWING_K", "2") or "2"))  # fractale (k↑ = swings plus institutionnels)
+
+# Mise à breakeven indépendante de TP1: quand le trade atteint +1R en sa faveur,
+# le SL monte à entrée±0.10R. Indispensable avec des TP structurels lointains
+# (un trade à +2R qui se retourne ne doit plus finir à -1R).
+# Défaut ACTIF. Désactivable: $env:GS_BE_AT_1R="0"
+BE_AT_1R = os.environ.get("GS_BE_AT_1R", "1").strip().lower() in ("1","true","yes","on")
+
+# ── Garde-fous anti-rechute (audit mois tueurs: déc-2024 = 3 re-entrées BUY
+# perdantes en 45 min le 27/12). Causaux, appliqués à l'ouverture uniquement.
+# GS_LOSS_BREAKER: stop du jour après N pertes SL pleines (0 = off)
+# GS_LOSS_COOLDOWN_MIN: après un SL, blocage des ré-entrées MÊME direction N minutes (0 = off)
+LOSS_BREAKER_MAX_SL_PER_DAY = int(float(os.environ.get("GS_LOSS_BREAKER", "0") or "0"))
+LOSS_COOLDOWN_SAME_SIDE_MIN = int(float(os.environ.get("GS_LOSS_COOLDOWN_MIN", "0") or "0"))
+
+# ── Compte broker (JustMarkets) ──
+ACCOUNT_LEVERAGE = float(os.environ.get("GS_LEVERAGE", "2000") or "2000")  # 1:2000
+XAUUSD_CONTRACT_SIZE = 100.0  # onces par lot standard
+BE_AT_1R_TRIGGER_R = 1.0
+BE_AT_1R_LOCK_R = 0.10
+
+# Filtre de régime (audit 5 mois — février 0/5).
+# La stratégie ne joue QUE des liquidity_sweep_reversal (mean-reversion). Ce type
+# d'edge marche en RANGE/WEAK trend et se fait DÉTRUIRE en tendance forte (fade the
+# trend → straight-to-SL). agent_1 expose primary_regime ∈ {RANGE, WEAK_UP/DOWN,
+# STRONG_UP/DOWN}. Ce filtre bloque l'entrée dans les régimes listés.
+# DÉFAUT OFF (zéro régression). Surchargeable:
+#   $env:GS_REGIME_FILTER = "1"
+#   $env:GS_REGIME_BLOCK  = "STRONG_UP,STRONG_DOWN"   (régimes à bloquer)
+REGIME_FILTER_ENABLED = os.environ.get("GS_REGIME_FILTER", "0").strip().lower() in (
+    "1", "true", "yes", "on"
+)
+# ── STRATEGY V2 — sélecteur de régime dual-edge ──────────────────────────────
+# V2: le régime (agent_1 primary_regime) sélectionne l'edge actif dans Kasper:
+#   RANGE / WEAK_*  → liquidity_sweep_reversal (mean-reversion, l'edge historique)
+#   STRONG_UP/DOWN  → trend_continuation (le modèle continuation, débloqué et
+#                     tradé AVEC la tendance) — le reversal y est BLOQUÉ (fade
+#                     de tendance forte = le tueur prouvé de février).
+# DÉFAUT OFF (zéro régression). $env:GS_STRATEGY_V2="1" pour activer.
+# NOTE: quand V2 est actif, NE PAS activer GS_REGIME_FILTER (V2 le remplace).
+STRATEGY_V2 = os.environ.get("GS_STRATEGY_V2", "0").strip().lower() in (
+    "1", "true", "yes", "on"
+)
+
+REGIME_BLOCKED_SET = {
+    r.strip().upper()
+    for r in os.environ.get("GS_REGIME_BLOCK", "STRONG_UP,STRONG_DOWN").split(",")
+    if r.strip()
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 10. AGENT 3 — FILTRE ANTI-FAKEOUT ASIATIQUE [R8]
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -184,6 +282,47 @@ BREAKEVEN_RR_TRIGGER  = TP1_RR
 PARTIAL_RR_TRIGGER    = TP1_RR
 PARTIAL_CLOSE_PERCENT = 50    # Pourcentage du volume à fermer en partiel
 SL_BUFFER_POINTS      = 2     # Marge de sécurité (en points) sous/au-dessus du SL structurel
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 12-bis. FILTRE DE COÛT (rentabilité)  [Étape 1 — analyse drag mois-1]
+# ─────────────────────────────────────────────────────────────────────────────
+# Refuse les trades dont le gain à TP1 ne couvre pas N× le coût d'exécution.
+# AGIT À LA PRISE DE TRADE (manager), PAS sur la géométrie du risque : le grading
+# Kasper (A+/A/B) reste intact. On décline seulement les setups non-économiques
+# (1R trop petit face aux coûts). Ce n'est pas du cheating : on ne force/baisse
+# aucun seuil de signal, on refuse de payer plus de coût que de gain espéré.
+#
+# Surchargeable par variable d'environnement (pour balayer N sur des fenêtres
+# en parallèle sans éditer ce fichier) :
+#   $env:GS_COST_FILTER     = "1"|"0"   (active/désactive — défaut INACTIF)
+#   $env:GS_COST_FILTER_N   = "3.0"     (multiplicateur N — défaut 3.0)
+#   $env:GS_COST_FILTER_COST_PTS = "50" (coût aller-retour estimé en points)
+COST_FILTER_ENABLED = os.environ.get("GS_COST_FILTER", "0").strip().lower() in (
+    "1", "true", "yes", "on"
+)
+COST_FILTER_MIN_R_COST_MULT = float(os.environ.get("GS_COST_FILTER_N", "3.0") or "3.0")
+COST_FILTER_COST_POINTS = float(os.environ.get("GS_COST_FILTER_COST_PTS", "50.0") or "50.0")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 12-ter. GESTION DES RUNNERS — trailing après TP1  [Étape 2 — analyse payoff]
+# ─────────────────────────────────────────────────────────────────────────────
+# Constat: quand les gagnants courent jusqu'à TP2, payoff ~1.0 et net positif;
+# quand ils sont plafonnés au protected SL (+0.5R), payoff ~0.49 et net négatif.
+# On remplace le protected SL FIXE de leg_2 par un trailing qui SUIT le pic de
+# prix depuis TP1, à RUNNER_TRAIL_R derrière le plus-haut (en R).
+#
+# SÛR PAR CONSTRUCTION: leg_1 a déjà encaissé +1R, et le trail ne descend JAMAIS
+# sous le plancher protégé (PROTECTED_RUNNER_SL_R). Il ne peut donc que verrouiller
+# PLUS de profit — jamais transformer un gagnant en perdant. Le seul arbitrage est
+# trail serré (sort tôt, capture > plancher mais < TP2) vs large (proche du fixe).
+#
+# Surchargeable par variable d'env (balayage parallèle sans éditer le fichier):
+#   $env:GS_RUNNER_TRAIL    = "1"|"0"   (active/désactive — défaut INACTIF)
+#   $env:GS_RUNNER_TRAIL_R  = "0.5"     (distance du trail derrière le pic, en R)
+RUNNER_TRAIL_ENABLED = os.environ.get("GS_RUNNER_TRAIL", "0").strip().lower() in (
+    "1", "true", "yes", "on"
+)
+RUNNER_TRAIL_R = float(os.environ.get("GS_RUNNER_TRAIL_R", "0.5") or "0.5")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 13. NOTIFICATIONS TELEGRAM [R9]

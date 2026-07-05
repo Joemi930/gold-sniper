@@ -8,6 +8,7 @@ Does NOT change Kasper/PDE logic — only changes WHEN they are called.
 
 from __future__ import annotations
 
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -73,38 +74,52 @@ class CandidateWindowEvaluator:
 
     decision_pipeline: Any = None  # ReplayDecisionPipeline instance
     risk_allocator: Any = None     # allocate_risk function or wrapper
+    # Surfaced diagnostics: pipeline exceptions were silently swallowed
+    # (p1_payload={}), turning every window into UNKNOWN/REJECT/D with no trace.
+    eval_error_count: int = 0
+    eval_errors: dict = field(default_factory=dict)
+    first_error_trace: str = ""
 
     def evaluate(
         self,
         window: CandidateWindow,
         blackboard: Any,
+        candle: Any = None,
     ) -> DecisionRecord:
         """Run the heavy pipeline for one candidate window.
 
         Args:
             window: The candidate window from CandidateDiscoveryEngine.
             blackboard: The replay blackboard with current market state.
+            candle: The REAL current M1 candle (with real OHLC). Required for
+                the agents to see real prices — without it the pipeline ran on
+                a zero-price synthetic candle and produced UNKNOWN for every
+                window.
 
         Returns:
             DecisionRecord with the final decision.
         """
-        # Build a synthetic candle dict for the decision pipeline
-        candle = {
-            "time": window.start_t,
-            "symbol": "XAUUSD",
-            "open": 0.0,
-            "high": 0.0,
-            "low": 0.0,
-            "close": 0.0,
-        }
+        # Use the REAL candle when provided; only synthesize as a last resort.
+        if candle is not None:
+            candle = dict(candle)
+            candle.setdefault("symbol", "XAUUSD")
+        else:
+            candle = {
+                "time": window.start_t,
+                "symbol": "XAUUSD",
+                "open": 0.0,
+                "high": 0.0,
+                "low": 0.0,
+                "close": 0.0,
+            }
 
-        # Try to get current price from blackboard
-        try:
-            tick = blackboard.read_sync("market_data.current_tick")
-            if tick:
-                candle["close"] = float(tick.get("bid", 0.0))
-        except Exception:
-            pass
+            # Try to get current price from blackboard
+            try:
+                tick = blackboard.read_sync("market_data.current_tick")
+                if tick:
+                    candle["close"] = float(tick.get("bid", 0.0))
+            except Exception:
+                pass
 
         p1_payload: dict[str, Any] = {}
 
@@ -121,7 +136,12 @@ class CandidateWindowEvaluator:
                 p1_payload = loop.run_until_complete(
                     self.decision_pipeline(candle, blackboard)
                 )
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 — surface, don't hide
+                self.eval_error_count += 1
+                key = type(exc).__name__ + ": " + str(exc)[:120]
+                self.eval_errors[key] = self.eval_errors.get(key, 0) + 1
+                if not self.first_error_trace:
+                    self.first_error_trace = traceback.format_exc()[-1500:]
                 p1_payload = {}
 
         # Extract decision fields from the P1 payload

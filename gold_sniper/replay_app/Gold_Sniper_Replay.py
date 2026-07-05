@@ -65,7 +65,7 @@ else:
 DEFAULT_DATA_ROOT = _PROJECT_ROOT / "data" / "historical" / "XAUUSD"
 DEFAULT_OUTPUT_ROOT = _PROJECT_ROOT / "data" / "replay_runs"
 DEFAULT_NEWS_CALENDAR = (
-    _PROJECT_ROOT / "data" / "historical" / "news" / "calendar_events_20251231_20260619.jsonl"
+    _PROJECT_ROOT / "data" / "historical" / "news" / "calendar_events_20240101_20260630.jsonl"
 )
 REPORTS_DIR = _REPO_ROOT / "reports" / "replay"
 TMP_ROOT = _REPO_ROOT / ".tmp" / "replay_runs"
@@ -110,11 +110,11 @@ def _check_prerequisites() -> dict[str, Any]:
 
 MENU_OPTIONS = [
     ("0", "Generate synthetic test data (quick test)"),
-    ("1", "Replay 1 week smoke     (2026-01-01 -> 2026-01-08)"),
-    ("2", "Replay 1 month           (2026-01-01 -> 2026-02-01)"),
-    ("3", "Replay 2 months          (2026-01-01 -> 2026-03-01)"),
-    ("4", "Replay 3 months          (2026-01-01 -> 2026-04-01)"),
-    ("5", "Replay 6 months          (2026-01-01 -> 2026-06-01)"),
+    ("1", "Replay 1 week smoke     (2024-01-02 -> 2024-01-09)"),
+    ("2", "Replay 1 month           (2024-01-02 -> 2024-02-01)"),
+    ("3", "Replay 4 months          (2024-01-02 -> 2024-05-01)"),
+    ("4", "Replay 1 year            (2024-01-02 -> 2025-01-02)"),
+    ("5", "Replay full window       (2024-01-02 -> 2026-06-30)"),
     ("6", "Replay custom"),
     ("7", "View reports"),
     ("8", "Clean temporary logs"),
@@ -123,11 +123,11 @@ MENU_OPTIONS = [
 ]
 
 REPLAY_PRESETS = {
-    "1": {"start": "2026-01-01", "end": "2026-01-08", "warmup_start": "2025-12-01", "label": "1-week smoke"},
-    "2": {"start": "2026-01-01", "end": "2026-02-01", "warmup_start": "2025-12-01", "label": "1-month"},
-    "3": {"start": "2026-01-01", "end": "2026-03-01", "warmup_start": "2025-12-01", "label": "2-month"},
-    "4": {"start": "2026-01-01", "end": "2026-04-01", "warmup_start": "2025-12-01", "label": "3-month"},
-    "5": {"start": "2026-01-01", "end": "2026-06-01", "warmup_start": "2025-12-01", "label": "6-month"},
+    "1": {"start": "2024-01-02", "end": "2024-01-09", "warmup_start": "2024-01-01", "label": "1-week smoke"},
+    "2": {"start": "2024-01-02", "end": "2024-02-01", "warmup_start": "2024-01-01", "label": "1-month"},
+    "3": {"start": "2024-01-02", "end": "2024-05-01", "warmup_start": "2024-01-01", "label": "4-month"},
+    "4": {"start": "2024-01-02", "end": "2025-01-02", "warmup_start": "2024-01-01", "label": "1-year"},
+    "5": {"start": "2024-01-02", "end": "2026-06-30", "warmup_start": "2024-01-01", "label": "full-window"},
 }
 
 
@@ -139,7 +139,7 @@ def _print_banner() -> None:
 ║                 V3.2 — Trading & Optimisation               ║
 ╠══════════════════════════════════════════════════════════════╣
 ║ Capital initial : 100.00 USD                                ║
-║ Data range      : 2025-12-01 -> 2026-06-01                   ║
+║ Data range      : 2024-01-01 -> 2026-06-30                   ║
 ║ Symbol          : XAUUSD                                    ║
 ║ Mode            : Offline replay / no broker / no future     ║
 ╚══════════════════════════════════════════════════════════════╝
@@ -230,6 +230,15 @@ def _run_replay_interactive(
     print(f"Initial equity: ${initial_equity:.2f}")
     if fast_replay:
         print("Mode: FAST REPLAY (warmup context-only, minimal events, buffered writes)")
+        # Per-candle DEBUG logging to jsonl files is a large hidden cost at
+        # replay speed — raise every gold_sniper logger to WARNING in fast mode.
+        try:
+            import logging as _lg
+            _lg.getLogger().setLevel(_lg.WARNING)
+            for _name in list(_lg.root.manager.loggerDict):
+                _lg.getLogger(_name).setLevel(_lg.WARNING)
+        except Exception:
+            pass
     if profile:
         print("Profiling: ENABLED")
     print("Press Esc to stop replay gracefully.\n")
@@ -286,7 +295,7 @@ def _run_replay_interactive(
     }
 
     try:
-        if _HAS_RICH:
+        if _HAS_RICH and not no_tui:
             live = Live(
                 build_live_layout(last_state),
                 console=_console,
@@ -556,7 +565,7 @@ if _HAS_RICH:
                 "[bold cyan]║[/]                 [dim]V3.2 — Trading & Optimisation[/]               [bold cyan]║[/]",
                 "[bold cyan]╠══════════════════════════════════════════════════════════════╣[/]",
                 f"[bold cyan]║[/] Capital initial : [cyan]$100.00 USD[/]                                [bold cyan]║[/]",
-                f"[bold cyan]║[/] Data range      : 2025-12-01 -> 2026-06-01                   [bold cyan]║[/]",
+                f"[bold cyan]║[/] Data range      : 2024-01-01 -> 2026-06-30                   [bold cyan]║[/]",
                 f"[bold cyan]║[/] Symbol          : XAUUSD                                    [bold cyan]║[/]",
                 f"[bold cyan]║[/] Mode            : Offline replay / no broker / no future     [bold cyan]║[/]",
                 "[bold cyan]╚══════════════════════════════════════════════════════════════╝[/]",
@@ -657,16 +666,16 @@ def _execute_menu_option(choice: str) -> int:
         print("\n" + "="*60)
         print("GENERATING SYNTHETIC TEST DATA")
         print("="*60)
-        print("This will create 6 months of synthetic XAUUSD candles for testing.")
+        print("This will create 1 month of synthetic XAUUSD candles for testing.")
         print("WARNING: Synthetic data is NOT valid for strategy validation!\n")
         confirm = input("Proceed? [y/N]: ").strip().lower()
         if confirm == 'y':
             from replay_app.data_prep import generate_synthetic_candles
-            print("Generating... (this may take 1-2 minutes for 6 months of M1 candles)")
+            print("Generating... (this may take less than a minute for 1 month of M1 candles)")
             result = generate_synthetic_candles(
                 data_root=DEFAULT_DATA_ROOT,
-                start_date="2025-12-01",
-                end_date="2026-06-01",
+                start_date="2024-01-01",
+                end_date="2024-02-01",
             )
             for tf, info in result.get("timeframes", {}).items():
                 print(f"  {tf}: {info.get('candles', 0):,} candles ({info.get('source', '?')})")
@@ -688,9 +697,9 @@ def _execute_menu_option(choice: str) -> int:
         print("\n" + "="*60)
         print("CUSTOM REPLAY")
         print("="*60)
-        start = input("Start date (YYYY-MM-DD) [2026-01-01]: ").strip() or "2026-01-01"
-        end = input("End date (YYYY-MM-DD) [2026-02-01]: ").strip() or "2026-02-01"
-        warmup = input("Warmup start (YYYY-MM-DD) [2025-12-01]: ").strip() or "2025-12-01"
+        start = input("Start date (YYYY-MM-DD) [2024-01-02]: ").strip() or "2024-01-02"
+        end = input("End date (YYYY-MM-DD) [2026-06-30]: ").strip() or "2026-06-30"
+        warmup = input("Warmup start (YYYY-MM-DD) [2024-01-01]: ").strip() or "2024-01-01"
         equity_str = input("Initial equity (USD) [100.00]: ").strip() or "100.00"
         try:
             equity = float(equity_str)
@@ -777,6 +786,20 @@ def _run_replay_v2(
 
     data_root = DEFAULT_DATA_ROOT
     output_root = DEFAULT_OUTPUT_ROOT
+
+    # ── Guard: warmup window must precede the eval start ──
+    # A common mistake ('--start 2024-01-01' vs '--warmup-start 2024-01-01')
+    # inverts the window → 0 warmup candles → no HTF context → Kasper REJECTs
+    # every candle → 0 trades, silently. Fail loudly instead.
+    if warmup_start and str(warmup_start)[:10] >= str(start)[:10]:
+        print(
+            "ERROR: warmup-start (%s) must be STRICTLY BEFORE start (%s).\n"
+            "       The warmup window is [warmup-start .. start]; here it is empty,\n"
+            "       so no higher-timeframe context is built and Kasper rejects all\n"
+            "       candles (0 trades). Fix: e.g. --warmup-start 2024-01-01 --start 2024-01-02."
+            % (warmup_start, start)
+        )
+        return 1
 
     # Load data
     load_start = start if warmup_start else start
@@ -1011,6 +1034,8 @@ def _build_cli_parser() -> argparse.ArgumentParser:
     # ── P4.2: engine selection ─────────────────────────────────────────
     parser.add_argument("--engine", choices=("legacy", "v2"), default="legacy",
                         help="P4.2: Replay engine version (legacy|v2, default: legacy)")
+    parser.add_argument("--graded-entry", action="store_true",
+                        help="Kasper graded-entry mode (A+/A/B tiers) instead of binary 8/8")
     parser.add_argument("--parity", action="store_true",
                         help="P4.2: Run parity mode (full legacy vs fast v2 comparison, 1 day)")
     parser.add_argument("--fast", action="store_true",
@@ -1038,6 +1063,20 @@ def _build_cli_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_cli_parser()
     args = parser.parse_args(argv)
+
+    # Kasper graded-entry mode: enable via --graded-entry OR env var. Resolved
+    # here in the app layer and pushed into the strategy via the pure setter.
+    if getattr(args, "graded_entry", False) or os.environ.get(
+        "GOLD_SNIPER_KASPER_GRADED", ""
+    ).strip().lower() in ("1", "true", "yes", "on"):
+        # Set the env var too, so any later re-resolution of the flag (e.g. in
+        # ReplayDecisionPipeline.__init__) keeps graded mode ON regardless of
+        # whether --graded-entry or the env var was the trigger.
+        os.environ["GOLD_SNIPER_KASPER_GRADED"] = "1"
+        from gold_sniper.strategy.kasper_scenario_engine import set_graded_entry
+
+        set_graded_entry(True)
+        print("⚡ Kasper GRADED-ENTRY mode ENABLED (A+/A/B tiers)")
 
     # --check-data
     if args.check_data:

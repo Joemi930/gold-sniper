@@ -25,7 +25,7 @@ from data_pipeline.timeframe_aggregation import aggregate_candles
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_ROOT = PROJECT_ROOT / "data" / "historical" / "XAUUSD"
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "replay_runs"
-DEFAULT_NEWS_CALENDAR = PROJECT_ROOT / "data" / "historical" / "news" / "economic_calendar_2026-04-01_2026-06-05.jsonl"
+DEFAULT_NEWS_CALENDAR = PROJECT_ROOT / "data" / "historical" / "news" / "calendar_events_20240101_20260630.jsonl"
 DEFAULT_REPLAY_AGENTS = ["agent_1", "agent_2", "agent_3", "agent_4", "agent_5", "agent_6", "agent_7"]
 DEFAULT_TIMEFRAMES = ("1m", "5m", "15m", "1H", "4H")
 

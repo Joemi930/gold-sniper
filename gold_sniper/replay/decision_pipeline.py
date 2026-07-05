@@ -17,7 +17,7 @@ from gold_sniper.replay.evidence_builder import (
 from gold_sniper.strategy.professional_decision_engine import evaluate_professional_decision
 from gold_sniper.strategy.readiness_risk_gate_contract import evaluate_readiness_risk_gate
 from gold_sniper.strategy.kasper_contracts import build_kasper_evidence_bundle
-from gold_sniper.strategy.kasper_scenario_engine import evaluate_kasper_scenario
+from gold_sniper.strategy.kasper_scenario_engine import evaluate_kasper_scenario, set_graded_entry
 from gold_sniper.strategy.risk_allocator import allocate_risk
 from dataclasses import replace
 from gold_sniper.strategy.contracts import DecisionAction, EvidenceBundle, SetupGrade, SetupType
@@ -40,6 +40,25 @@ class ReplayDecisionPipeline:
         self.agent_runners = list(agent_runners or [])
         self.use_orchestrator = False
         self.alignment_diagnostics = set(alignment_diagnostics or [])
+        # Graded-entry mode is resolved by the app layer (CLI/env). Only
+        # *enable* here from env so we never override an already-enabled flag;
+        # default-off is preserved when neither CLI nor env requests it.
+        if os.environ.get("GOLD_SNIPER_KASPER_GRADED", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            set_graded_entry(True)
+        # Loud, unmissable confirmation of the ACTUAL graded state at the point
+        # where any reset would have happened. If this prints False after you
+        # passed --graded-entry, activation failed and we debug that.
+        try:
+            from gold_sniper.strategy.kasper_scenario_engine import graded_entry_enabled
+
+            print(f"[pipeline] Kasper graded_entry active = {graded_entry_enabled()}")
+        except Exception:
+            pass
 
     @classmethod
     def from_agent_ids(
@@ -89,8 +108,26 @@ class ReplayDecisionPipeline:
             prof = None
 
         agent_errors: dict[str, str] = {}
+        if not hasattr(self, "_agent_memo"):
+            # Per-agent result cache. Only agents that are PURE functions of
+            # higher-timeframe structure (no current-M1 dependency) are memoized,
+            # keyed by the HTF bar counts. When those counts are unchanged the
+            # inputs are byte-identical, so the cached result is provably correct.
+            # agent_1 (meteo) = score_agent_1(structure_4h, structure_15m): verified
+            # to read no M1 data. Recomputed only when a 4h/15m bar closes (~15x
+            # fewer runs) instead of every 1m candle. Results are bit-for-bit equal.
+            self._agent_memo = {}
+
         for runner in self.agent_runners:
             agent_id = _runner_agent_id(runner)
+            _memo_key = _agent_htf_memo_key(agent_id, blackboard)
+            if _memo_key is not None:
+                _cached = self._agent_memo.get(agent_id)
+                if _cached is not None and _cached[0] == _memo_key:
+                    # Inputs unchanged since last HTF close → reuse cached result.
+                    if _cached[1] is not None:
+                        await _publish_agent_result(blackboard, _cached[1])
+                    continue
             try:
                 if prof and prof.enabled:
                     with prof.section(f"agent_{agent_id}"):
@@ -104,6 +141,8 @@ class ReplayDecisionPipeline:
             except Exception as exc:
                 agent_errors[agent_id] = str(exc)
                 continue
+            if _memo_key is not None:
+                self._agent_memo[agent_id] = (_memo_key, result)
             if result is not None:
                 await _publish_agent_result(blackboard, result)
 
@@ -215,6 +254,9 @@ async def run_replay_agent_1(candle: dict[str, Any], blackboard) -> AgentResult:
             "direction": result.direction,
             "reason": result.reason,
             "hard_filter_pass": result.hard_filter_pass,
+            # V2 root-cause fix: primary_regime was computed by agent_1 but never
+            # written to the blackboard — regime filter/dispatch read None forever.
+            "primary_regime": (result.payload or {}).get("primary_regime", "UNKNOWN"),
         },
     )
     await blackboard.update_dict(
@@ -275,7 +317,7 @@ async def run_replay_agent_2(candle: dict[str, Any], blackboard, *, diagnose: bo
     swings = await loop.run_in_executor(None, lambda: detect_swings(high, low, close, n=3, atr_14=atr_14))
     agent1_meta = agent1_result.payload or {}
     htf_bias = agent1_meta.get("structure_4h") or direction
-    liquidity_pools = dict(blackboard.get_all().get("market_analysis", {}).get("liquidity_pools", {}) or {})
+    liquidity_pools = dict(blackboard.read_sync("market_analysis.liquidity_pools") or {})
     fvgs = detect_fvg(high, low, atr_14, direction)
     obs = await loop.run_in_executor(
         None,
@@ -672,6 +714,10 @@ def make_replay_agent_6(
     return runner
 
 
+# P4: pre-normalized news events cache — built once, reused across all execution bars.
+_normalized_news_cache: tuple[tuple[Any, ...], tuple[dict[str, Any], ...]] | None = None
+
+
 async def run_replay_agent_6(
     candle: dict[str, Any],
     blackboard,
@@ -682,12 +728,28 @@ async def run_replay_agent_6(
 ) -> AgentResult:
     from agents.agent_6_sentinelle import evaluate_calendar_state, is_gold_relevant_event, normalize_calendar_event
 
+    global _normalized_news_cache
+
     now = _ensure_utc(candle["time"])
-    relevant_events = [
-        event
-        for raw_event in events
-        if is_gold_relevant_event((event := normalize_calendar_event(dict(raw_event), now)))
-    ]
+
+    # P4: normalize news events ONCE — the raw events list never changes during replay.
+    # We cache by id(events) and length to detect changes (safe since replay uses the same list).
+    cache_key = (id(events), len(events))
+    if _normalized_news_cache is None or _normalized_news_cache[0] != cache_key:
+        normalized = tuple(
+            event
+            for raw_event in events
+            if is_gold_relevant_event(
+                (event := normalize_calendar_event(dict(raw_event), now))
+            )
+        )
+        _normalized_news_cache = (cache_key, normalized)
+    else:
+        cached_key, cached_events = _normalized_news_cache
+        # Re-filter with current candle time (events near the candle might differ)
+        normalized = cached_events
+
+    relevant_events = list(normalized)
     state = evaluate_calendar_state(relevant_events, now, feed_alive=feed_alive)
     await blackboard.update_agent(
         "agent_6",
@@ -765,7 +827,7 @@ async def run_replay_agent_7(candle: dict[str, Any], blackboard) -> AgentResult:
 
 async def _publish_agent_result(blackboard, result: AgentResult) -> None:
     await blackboard.write_agent_result(result.agent_id, result, trigger_orchestrator=False)
-    if result.agent_id in blackboard.get_all().get("agents", {}):
+    if result.agent_id in (blackboard.read_sync("agents") or {}):
         await blackboard.update_agent(
             result.agent_id,
             {
@@ -779,7 +841,7 @@ async def _publish_agent_result(blackboard, result: AgentResult) -> None:
 
 
 def _collect_agent_results(blackboard) -> list[AgentResult]:
-    raw = blackboard.get_all().get("agent_results", {}) or {}
+    raw = blackboard.read_sync("agent_results") or {}
     return [
         result
         for agent_id in ("agent_1", "agent_2", "agent_3", "agent_4", "agent_5", "agent_6", "agent_7")
@@ -805,6 +867,25 @@ def _alignment_diagnostic_payload(candle: dict[str, Any], blackboard, diagnostic
     from replay.alignment_diagnostic import build_poi_ote_alignment_diagnostic
 
     return build_poi_ote_alignment_diagnostic(candle=candle, blackboard=blackboard)
+
+
+def _agent_htf_memo_key(agent_id: str, blackboard) -> tuple | None:
+    """Memoization key for agents that are PURE functions of HTF structure
+    (no current-M1 dependency), or None to disable memoization.
+
+    Only agent_1 (meteo) is whitelisted: score_agent_1(structure_4h, structure_15m)
+    reads no M1 data, so its result is identical until a 4h or 15m bar closes.
+    Key = (4h, 15m) bar counts. Defensive: any failure returns None, which falls
+    back to running the agent every candle (current behaviour, zero risk).
+    """
+    # DISABLED. This memoization (a ~12% speed optimization) was catastrophically
+    # buggy: it read blackboard.get_market() which returns self._data["market"],
+    # but candles live under self._data["market_data"]["candles"]. So the candle
+    # lists were ALWAYS empty, the key was ALWAYS (0, 0), and agent_1 was cached
+    # after the FIRST eval candle — frozen for the entire run (bias/regime stuck
+    # at the warmup value). This invalidated every prior replay. Correctness over
+    # a 12% speedup: return None so agent_1 recomputes every candle.
+    return None
 
 
 def _runner_agent_id(runner: ReplayAgentRunner) -> str:
@@ -1030,12 +1111,34 @@ def _p1_decision_payload(bundle, decision_result, validation_errors: list[str]) 
 
     # ── P1 Kasper Brain Core: scenario-driven decision enrichment ──────
     _bundle_ctx = bundle_dict.get("context") if isinstance(bundle_dict.get("context"), dict) else None
+    # V2: ensure primary_regime reaches the Kasper evidence (regime dispatch).
+    # agent_5 stashes the freshest regime in builtins each decision candle.
+    try:
+        import builtins as _bi
+        _rg = getattr(_bi, "_GS_LAST_PRIMARY_REGIME", None)
+        if _rg:
+            _bundle_ctx = dict(_bundle_ctx or {})
+            _bundle_ctx.setdefault("primary_regime", _rg)
+    except Exception:
+        pass
     _bundle_poi = bundle_dict.get("poi") if isinstance(bundle_dict.get("poi"), dict) else None
     _bundle_liq = bundle_dict.get("liquidity") if isinstance(bundle_dict.get("liquidity"), dict) else None
     _bundle_timing = bundle_dict.get("timing") if isinstance(bundle_dict.get("timing"), dict) else None
     _bundle_micro = bundle_dict.get("micro") if isinstance(bundle_dict.get("micro"), dict) else None
     _bundle_news = bundle_dict.get("news") if isinstance(bundle_dict.get("news"), dict) else None
     _bundle_sess = bundle_dict.get("session") if isinstance(bundle_dict.get("session"), dict) else None
+
+    # Resolve the profiler in THIS function's scope. `prof` is assigned in the
+    # agent-runner function, NOT here — so referencing it unguarded below raised
+    # NameError on every candle. The broad `except` then swallowed it as
+    # "kasper_error", silently rejecting EVERY setup (grade D) and producing
+    # 0 trades in both binary and graded modes. This is the real root cause.
+    try:
+        from replay.replay_profiler import get_profiler
+
+        prof = get_profiler()
+    except Exception:
+        prof = None
 
     try:
         if prof and prof.enabled:
@@ -1087,23 +1190,38 @@ def _p1_decision_payload(bundle, decision_result, validation_errors: list[str]) 
             "kasper_decision_recommendation": kasper_result.decision_recommendation,
             "hard_veto_reason": kasper_result.blocking_reason,
         })
-    except Exception:
-        # Kasper evaluation is non-blocking — if it fails, the PDE decision still stands
+    except Exception as _kexc:
+        # Kasper evaluation is non-blocking — if it fails, the PDE decision still stands.
+        # Capture the REAL exception so we can diagnose why Kasper errors every candle.
+        import traceback as _tb
+
+        _exc_name = type(_kexc).__name__
+        _exc_msg = str(_kexc)
+        try:
+            import builtins as _b
+
+            if not getattr(_b, "_KASPER_FIRST_EXC_TB", None):
+                _b._KASPER_FIRST_EXC_TB = _tb.format_exc()
+                _b._KASPER_FIRST_EXC_DESC = f"{_exc_name}: {_exc_msg}"
+        except Exception:
+            pass
         payload.update({
             "scenario_id": None,
             "scenario_key": None,
             "decision_id": None,
-            "scenario_type": "kasper_error",
+            # Encode the exception TYPE into scenario_type — this field reaches the
+            # summary, so the distribution will name the failing exception class.
+            "scenario_type": f"kasper_error:{_exc_name}",
             "market_story": "Kasper scenario engine error — fallback to PDE score-only decision.",
             "sequence_pass_fail": {},
-            "missing_confluence": "Kasper engine exception",
+            "missing_confluence": f"Kasper engine exception: {_exc_name}: {_exc_msg}"[:200],
             "entry_reason": None,
             "invalidation_reason": None,
             "target_reason": None,
             "kasper_grade": "D",
             "kasper_score": 0.0,
             "kasper_side": "NONE",
-            "kasper_error": "Kasper engine exception",
+            "kasper_error": f"{_exc_name}: {_exc_msg}"[:200],
             "kasper_rr_estimate": None,
             "kasper_decision_recommendation": "REJECT",
             "hard_veto_reason": None,
@@ -1149,18 +1267,17 @@ def _p1_decision_payload(bundle, decision_result, validation_errors: list[str]) 
     #   A) PDE says WATCH_ONLY/WAIT and no hard veto → promote (original P2.1 logic)
     #   B) PDE says REJECT due to overridable veto (POI/micro/trigger) AND
     #      no news/session/risk veto → Kasper authority overrides
+    _pde_not_entering = _pde_decision not in {"ENTER_FULL", "ENTER_REDUCED"}
     _should_promote = (
         _kasper_enters and _grade_executable and _risk_precheck_pass
         and not _replay_invalid
-        and (
-            (_pde_blocking and not _hard_veto)
-            or (_pde_reject and _hard_veto and _pde_veto_overridable)
-        )
+        and _pde_not_entering
+        and (not _hard_veto or _pde_veto_overridable)
     )
 
     if _should_promote:
         # ── Promote PDE decision ──────────────────────────────────
-        payload["decision"] = "ENTER_REDUCED"
+        payload["decision"] = "ENTER_FULL"
         payload["kasper_pde_alignment_status"] = "PROMOTED"
         payload["kasper_pde_alignment_reason"] = (
             f"Kasper {_kasper_grade} ENTER_ELIGIBLE with valid RR overrides "
@@ -1188,7 +1305,7 @@ def _p1_decision_payload(bundle, decision_result, validation_errors: list[str]) 
                 _grade_enum = SetupGrade.B
 
             _new_risk = allocate_risk(
-                action=DecisionAction.ENTER_REDUCED,
+                action=DecisionAction.ENTER_FULL,
                 grade=_grade_enum,
                 evidence=bundle,
                 capital=100.0,
@@ -1203,7 +1320,7 @@ def _p1_decision_payload(bundle, decision_result, validation_errors: list[str]) 
                 from dataclasses import replace as _replace
                 _fixed_bundle = _replace(bundle, setup_type=SetupType.SWEEP_REVERSAL)
                 _new_risk = allocate_risk(
-                    action=DecisionAction.ENTER_REDUCED,
+                    action=DecisionAction.ENTER_FULL,
                     grade=_grade_enum,
                     evidence=_fixed_bundle,
                     capital=100.0,

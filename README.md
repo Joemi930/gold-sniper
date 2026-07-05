@@ -1,186 +1,195 @@
-# Gold Sniper — P1-clean
+# Gold Sniper
 
-⚠️ Statut actuel : P1-clean / offline / replay-only / shadow-only.
-
-Pendant P1-clean :
-
-- ne pas lancer le live ;
-- ne pas lancer le paper trading ;
-- ne pas activer `LIVE_MODE=1` ;
-- ne pas connecter le chemin replay à l'orchestrateur live ;
-- ne pas exécuter d'ordre broker ;
-- ne pas lancer de replay long sans validation Architecte.
-
-Les sections legacy présentes plus bas sont conservées uniquement comme archive historique. Elles ne constituent pas des consignes actives pendant P1-clean.
-
----
-
-# Gold Sniper - Clean Repo Restart
-
-Gold Sniper est un moteur de recherche et simulation de setups XAUUSD en Python, asyncio et MetaTrader 5.
-
-Le depot a ete redemarre proprement avant la reforme strategique Opus Phase 0 -> Phase 9. L'objectif n'est plus d'empiler plusieurs strategies concurrentes, mais de preparer une seule future strategie centrale XAUUSD.
-
-Etat actuel :
-
-- Phase 0 : Legacy Strategy Freeze.
-- No live trading.
-- No demo deployment.
-- Les anciennes strategies sont gelees comme briques d'analyse, pas comme autorites autonomes.
-- L'execution MT5 reste dans le code, mais aucune activation live n'est autorisee sans validation statistique future.
+Gold Sniper est une application Python de recherche, diagnostic et replay de setups XAUUSD. Le projet vise a transformer une pile d'agents ICT/SMC en moteur de decision auditable, testable et reproductible avant toute remise en service live.
 
 Depot officiel : [Joemi930/gold-sniper](https://github.com/Joemi930/gold-sniper)
 
-## Etat de reforme
+## Statut actuel
 
-- **Clean repo restart** : nouvel historique Git, commit initial unique.
-- **Phase 0** : gel de l'ancienne architecture multi-strategies.
-- **Doctrine cible** : une seule strategie centrale XAUUSD.
-- **Anciennes strategies** : conservees comme indicateurs, vetoes, scores, etats POI, gates ou champs explicatifs.
-- **Pas de live** : l'execution broker reste protegee et ne doit pas etre activee avant preuve statistique et validation explicite.
+Le projet est actuellement en mode **offline / replay-only / shadow-only**.
 
-## Documentation
+Cela signifie :
 
-- [architecture.md](https://github.com/Joemi930/gold-sniper/blob/main/architecture.md)
-  - cartographie technique actuelle.
-- [docs/legacy_strategy_freeze.md](docs/legacy_strategy_freeze.md)
-  - gel Phase 0 des anciennes strategies autonomes.
+- aucun ordre broker ne doit etre envoye ;
+- `gold_sniper/main.py` ne doit pas etre lance pour trader ;
+- `LIVE_MODE=1` ne doit pas etre active ;
+- le chemin replay ne doit pas etre connecte a l'orchestrateur live ;
+- les validations passent par des replays historiques, des tests et des rapports.
 
-## Points forts
+La branche de travail active est `P1-Gold_sniper_trading_and_optimisation`.
 
-- Architecture Blackboard : les agents publient dans un etat central partage.
-- Orchestrateur event-driven : decision reveillee par les evenements agents et bougies.
-- Connexion MT5 JustMarkets Demo verifiee : login, serveur, symbole, tick et autorisation
-  trading.
-- Execution MT5 encapsulee dans `gold_sniper/execution/broker_gateway.py`.
-  Elle est conservee mais ne doit pas etre activee sans validation future.
-- Risk Manager : drawdown, pertes consecutives, pause, veto et protection equity.
-- Recovery au cold start : reprise des positions MT5 ouvertes et snapshots persistants.
-- Discord : `!start`, `!kill`, `!restart`, `!status`, `!agents`, `!pause`, `!risk`.
-- Dashboard WebSocket : flux temps reel, latence affichee, visual layers dynamiques.
-- Cloudflare Tunnel : URL publique envoyee au demarrage quand `cloudflared` est disponible.
+## Objectif de l'application
+
+Gold Sniper sert a analyser des donnees historiques XAUUSD et a produire une decision structuree autour de plusieurs couches :
+
+- contexte HTF et regime de marche ;
+- zones POI / OB / FVG ;
+- liquidite, sweep et reaction autour du POI ;
+- OTE et timing de session ;
+- micro-confirmation M1 ;
+- decision professionnelle, readiness, risque et explication du rejet.
+
+Le projet ne cherche pas a forcer des entrees. Un resultat `NO_TRADES` est un etat valide si les conditions strategiques ne sont pas reunies.
+
+## Architecture actuelle
+
+### Replay
+
+Le coeur actuel est le replay historique :
+
+- `gold_sniper/replay/replay_engine.py` : moteur legacy full scan ;
+- `gold_sniper/replay/replay_engine_v2.py` : orchestration candidate-driven P4.2 ;
+- `gold_sniper/replay/feature_store.py` : features timestamped avec protection no-lookahead ;
+- `gold_sniper/replay/candidate_discovery.py` : detection de fenetres candidates via gates peu couteux ;
+- `gold_sniper/replay/candidate_window.py` : appel de la pile lourde uniquement dans une fenetre candidate ;
+- `gold_sniper/replay/metrics_aggregator.py` : agregation des decisions, trades, blockers et etat `NO_TRADES` ;
+- `gold_sniper/replay/profiler_v2.py` : profiling par section avec `unaccounted_ms`.
+
+### Decision
+
+Le chemin decisionnel canonique est `gold_sniper/strategy/`.
+
+Il contient notamment :
+
+- contrats et types de decision ;
+- EvidenceBundle ;
+- Kasper scenario engine ;
+- ProfessionalDecisionEngine ;
+- RiskAllocator ;
+- contrats POI, micro, readiness et risk gate ;
+- taxonomie des setups.
+
+Le dossier `gold_sniper/strategies/` reste present pour des selecteurs legacy et diagnostics/reporting. Il n'est pas le coeur canonique de decision.
+
+### Agents
+
+Les agents publient des observations specialisees dans le blackboard :
+
+- Agent 1 : meteo / contexte HTF ;
+- Agent 2 : cartographie POI ;
+- Agent 3 : liquidite ;
+- Agent 4 : Fibonacci / OTE ;
+- Agent 5 : microscope M1 ;
+- Agent 6 : news / sentinelle ;
+- Agent 7 : session / timing.
+
+La logique des agents, de Kasper, du PDE et du RiskAllocator est protegee : les travaux P4.2 changent quand la pile est appelee, pas ce qu'elle decide.
+
+## Etat P4.2
+
+La phase P4.2 introduit une architecture replay V2 candidate-driven :
+
+```text
+candle M1
+  -> FeatureStore.update()
+  -> TradeLifecycleSimulator.on_candle()
+  -> CandidateDiscoveryEngine.scan()
+  -> CandidateWindowEvaluator.evaluate() uniquement si fenetre candidate
+  -> MetricsAggregator.finalize()
+```
+
+Etat de validation local connu :
+
+- suite pytest complete verte : `1676 passed` ;
+- test parity contract present : `gold_sniper/tests/test_parity_one_day.py` ;
+- rapport de validation : `reports/P4_2_ARCHITECTURE_VALIDATION_REPORT.md` ;
+- parity 1 jour partiellement validee sur trade count : V2 `0`, legacy `0`, `trade_count_match=true` ;
+- validation semaine fast P4.2 non acceptee : le run `week_v2` a depasse 3 minutes sans produire `summary_v2.json` lors du dernier passage.
+
+P4.2 ne doit donc pas etre presentee comme totalement acceptee tant que :
+
+- la parity full/fast 1 jour ne prouve pas le hash decisions + `ENTER` + trades ;
+- le replay fast 1 semaine ne termine pas en moins de 3 minutes ;
+- le mois fast n'a pas ete lance apres validation de la semaine.
 
 ## Installation
 
-```powershell
-cd gold_sniper
-powershell -ExecutionPolicy Bypass -File scripts\install_deps.ps1
-```
-
-Ou manuellement :
+Depuis la racine du depot :
 
 ```powershell
-python -m pip install -r requirements.txt
+python -m pip install -r gold_sniper/requirements.txt
+python -m pip install pytest
 ```
 
-Dependances principales : `MetaTrader5`, `aiohttp`, `discord.py`, `truststore`,
-`psutil`, `pandas`, `pyarrow`.
+Certaines fonctionnalites historiques utilisent MetaTrader5, Discord, aiohttp, pandas ou pyarrow. Le mode replay offline ne doit pas envoyer d'ordre broker.
 
-## Configuration
+## Commandes utiles
 
-Creer un fichier `.env` dans `gold_sniper/.env`. Ce fichier est ignore par git.
-
-> Archive legacy uniquement — ne pas utiliser pendant P1-clean.
-
-```env
-MT5_ACCOUNT=
-MT5_PASSWORD=
-MT5_SERVER=JustMarkets-Demo3
-MT5_SYMBOL=XAUUSD.m
-LIVE_MODE=1
-
-DISCORD_TOKEN=
-DISCORD_GUILD_ID=
-DISCORD_USER_ID=
-DISCORD_ALERTS_CHANNEL_ID=
-DISCORD_COMMANDS_CHANNEL_ID=
-DISCORD_REPORTS_CHANNEL_ID=
-DISCORD_LOGS_CHANNEL_ID=
-
-FINNHUB_TOKEN=
-FMP_TOKEN=
-CLOUDFLARED_PATH=
-```
-
-Important : ne pas activer `LIVE_MODE=1` pendant la reforme Phase 0 -> Phase 9.
-Le mode live/demo n'est pas valide tant que l'edge statistique et le pipeline
-unifie n'ont pas ete prouves et valides explicitement.
-
-## Demarrage
-
-### Pilotage quotidien recommande
-
-1. Lancer `LancerManager.bat` ou l'autostart Windows.
-2. Sur Discord, utiliser `!start`.
-3. Ouvrir le dashboard local ou l'URL Cloudflare fournie.
-4. Arreter avec `!kill` avant toute maintenance.
-
-### Debug local
+### Tests
 
 ```powershell
-python main.py
+python -m pytest gold_sniper/tests -q
+python -m pytest gold_sniper/tests/test_parity_one_day.py -q
 ```
 
-Dashboard local :
+### Replay P4.2
 
-```text
-http://localhost:8765
+Parity 1 jour :
+
+```powershell
+python -m gold_sniper.replay_app.Gold_Sniper_Replay --no-menu --engine v2 --parity `
+  --start 2025-12-08 --end 2025-12-09 `
+  --warmup-start 2025-12-01 `
+  --run-id parity_1d `
+  --initial-equity 100
 ```
 
-Endpoints :
+Replay fast 1 semaine :
 
-- `/api/state`
-- `/api/trades`
-- `/api/agents`
-- `/ws`
+```powershell
+python -m gold_sniper.replay_app.Gold_Sniper_Replay --no-menu --engine v2 --fast `
+  --start 2025-12-08 --end 2025-12-15 `
+  --warmup-start 2025-12-01 `
+  --run-id week_v2 `
+  --initial-equity 100
+```
 
-## Structure
+Ne pas lancer le replay fast 1 mois tant que la parity et la semaine ne sont pas validees.
+
+## Structure du depot
 
 ```text
 gold_sniper/
-├── agents/        Agents 1 a 7, macro monitor, regime detector, risk manager
-├── core/          Blackboard, visual layers, engine, orchestrateur, MT5 bridge
-├── execution/     Trade manager, risk calculator, adaptive weights
-├── data/          Memoire SQLite, historical loader, inbox Discord
-├── utils/         Discord, watchdogs, cloudflared, reports, Drive sync, logs
-├── web/           Dashboard aiohttp + HTML V3.2
-├── scripts/       Autostart, stop_all, install deps, MT5 bootstrap
-├── tests/         Tests unitaires
-├── pc_manager.py  Gateway Discord + lifecycle
-├── watchdog.py    Surveillance et restart
-└── main.py        Moteur de trading
+  agents/          Agents 1 a 7 et contrats de handoff
+  core/            Blackboard, engine, orchestrateur, MT5 bridge legacy
+  execution/       Trade manager, broker gateway, risk calculator
+  replay/          Moteurs replay, FeatureStore, CandidateDiscovery, rapports
+  replay_app/      CLI de replay et affichage
+  strategy/        Pile decisionnelle canonique
+  strategies/      Selecteurs legacy et diagnostics/reporting
+  tests/           Suite pytest/unittest
+  tools/           Imports et diagnostics offline
+reports/           Rapports de validation
+docs/              Documentation de gouvernance
 ```
 
-## Validation rapide
+## Securite et gouvernance
 
-```powershell
-python -m py_compile config.py core\blackboard.py execution\trade_manager.py web\dashboard_server.py
-python -m unittest discover tests
-```
+Regles actives :
 
-Validation V3.2 observee :
+- ne pas forcer `ENTER` ;
+- ne pas baisser les seuils ou affaiblir les veto/session/news/risk ;
+- ne pas modifier les chemins live broker/order send pendant les travaux replay ;
+- ne pas supprimer un module strategique sans audit d'import non-test ;
+- ne pas pousser automatiquement vers GitHub.
 
-```text
-Ran 10 tests
-OK
-```
+Voir aussi :
 
-## Securite
+- `AGENTS.md` pour les guardrails P4.2 ;
+- `docs/research_branch_governance.md` pour le mode research shadow-only ;
+- `reports/P4_2_ARCHITECTURE_VALIDATION_REPORT.md` pour l'etat de validation le plus recent.
 
-Ne jamais commiter :
+## Donnees sensibles
 
-- `.env`
-- tokens Discord/GitHub/API
-- `credentials.json`
-- `data/drive_token.json`
-- `data/memory.db`
-- logs, caches, fichiers parquet historiques
-- fichiers `.lock`, `data/discord_inbox.jsonl`, `data/bot_ready.json`
+Ne pas commiter :
 
-Verifier avant chaque session :
+- `.env` ;
+- tokens Discord, GitHub ou API ;
+- identifiants MT5 ;
+- bases SQLite locales ;
+- logs, caches, exports historiques volumineux ;
+- fichiers de session ou credentials locaux.
 
-- compte MT5 connecte au bon serveur JustMarkets Demo ;
-- `LIVE_MODE` voulu ;
-- une seule instance `main.py` ;
-- dashboard ONLINE ;
-- aucun veto Risk Manager / Agent 6.
+## Avertissement
+
+Gold Sniper est un outil de recherche et de simulation. Il ne constitue pas un conseil financier. Toute activation live doit etre precedee d'une validation statistique explicite, reproductible et documentee.

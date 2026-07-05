@@ -109,6 +109,9 @@ class ReplayEngine:
         self._warmup_start_logged = False
         self._warmup_last_time = None
         self._p1_decisions: list[dict[str, Any]] = []
+        # Étape M15: True when the EXECUTION_TF bar closed on the current candle.
+        # Default EXECUTION_TF="1m" → every candle → legacy behaviour.
+        self._execution_bar_closed: bool = True
         self._mtf_builder = MultiTimeframeBuilder()
         self.decisions_path = self.run_dir / "decisions.jsonl"
 
@@ -169,10 +172,26 @@ class ReplayEngine:
 
             if prof and prof.enabled:
                 with prof.section("inject_candle"):
-                    await self._inject_candle(candle, index)
+                    execution_bar_closed = await self._inject_candle(candle, index)
             else:
-                await self._inject_candle(candle, index)
-            await self.blackboard.update_dict("meta.replay", {"phase": phase, "eval_active": eval_active})
+                execution_bar_closed = await self._inject_candle(candle, index)
+            # Throttle: this dict only changes when phase/eval flips — skip the
+            # per-candle async write+lock otherwise (pure speed, same state).
+            if getattr(self, "_last_meta", None) != (phase, eval_active):
+                await self.blackboard.update_dict("meta.replay", {"phase": phase, "eval_active": eval_active})
+                self._last_meta = (phase, eval_active)
+                # SPEED: at warmup→eval transition, freeze the (large, stable)
+                # warmup heap so cyclic-GC stops rescanning it every cycle, and
+                # relax gen0 threshold. Pure GC tuning — zero behaviour change.
+                if eval_active and not getattr(self, "_gc_tuned", False):
+                    self._gc_tuned = True
+                    try:
+                        import gc
+                        gc.collect()
+                        gc.freeze()
+                        gc.set_threshold(50000, 30, 30)
+                    except Exception:
+                        pass
 
             # ── P4: warmup gate — context only, no decisions, no trades ──
             if not eval_active:
@@ -183,44 +202,54 @@ class ReplayEngine:
             # ═══════════════════════════════════════════════════════════════
             # Evaluation-only below this line
             # ═══════════════════════════════════════════════════════════════
-            if prof and prof.enabled:
-                with prof.section("decision_snapshot"):
+            # ── Étape M15: heavy DECISION pipeline only on EXECUTION_TF close ──
+            # Default EXECUTION_TF="1m" → a bar closes every candle → legacy path
+            # runs every candle (zero regression). For "15m" the decision fires
+            # ~once per 15 candles, while fills below run on every 1m candle.
+            if execution_bar_closed:
+                if prof and prof.enabled:
+                    with prof.section("decision_snapshot"):
+                        self._append_event(self._decision_snapshot_event(candle, index, phase, eval_active))
+                else:
                     self._append_event(self._decision_snapshot_event(candle, index, phase, eval_active))
+                await self._call_hook(candle, phase, eval_active)
+
+                # P3-E: profile decision hook
+                _t0 = __import__("time").perf_counter()
+                decision = await self._call_decision_hook(candle, phase, eval_active)
+                _hook_ms = (__import__("time").perf_counter() - _t0) * 1000.0
+                try:
+                    prof = get_profiler()
+                    if prof.enabled:
+                        prof.record_agent("decision_hook", _hook_ms)
+                except Exception:
+                    pass
+
+                # P4: stamp eval_active on decision for trade-manager safety gate
+                decision["eval_active"] = True
+
+                self._record_p1_decision(candle, index, decision, phase, eval_active)
+                if decision.get("signal") or decision.get("trade_signal"):
+                    self._errors.append("P1_REPLAY_FORBIDS_TRADE_SIGNAL")
+
+                scoring_diag = None
+                if getattr(self, "diagnose_scoring", False):
+                    scoring_diag = self._build_scoring_diagnostic(candle, decision, phase, eval_active)
+
+                event = self._decision_event(candle, index, decision, phase, eval_active)
+                if scoring_diag:
+                    event["scoring_diagnostic"] = scoring_diag
+
+                self._append_event(event)
+
+                await self._append_signal_event(candle, index, decision, phase, eval_active)
             else:
-                self._append_event(self._decision_snapshot_event(candle, index, phase, eval_active))
-            await self._call_hook(candle, phase, eval_active)
+                # Non-execution-bar 1m candle: no fresh decision is computed. Pass
+                # a neutral decision so the trade manager only MANAGES open trades
+                # (TP/SL fills on 1m) and opens nothing new.
+                decision = {"eval_active": True, "decision": "WAIT", "_non_execution_bar": True}
 
-            # P3-E: profile decision hook
-            _t0 = __import__("time").perf_counter()
-            decision = await self._call_decision_hook(candle, phase, eval_active)
-            _hook_ms = (__import__("time").perf_counter() - _t0) * 1000.0
-            try:
-                prof = get_profiler()
-                if prof.enabled:
-                    prof.record_agent("decision_hook", _hook_ms)
-            except Exception:
-                pass
-
-            # P4: stamp eval_active on decision for trade-manager safety gate
-            decision["eval_active"] = True
-
-            self._record_p1_decision(candle, index, decision, phase, eval_active)
-            if decision.get("signal") or decision.get("trade_signal"):
-                self._errors.append("P1_REPLAY_FORBIDS_TRADE_SIGNAL")
-
-            scoring_diag = None
-            if getattr(self, "diagnose_scoring", False):
-                scoring_diag = self._build_scoring_diagnostic(candle, decision, phase, eval_active)
-
-            event = self._decision_event(candle, index, decision, phase, eval_active)
-            if scoring_diag:
-                event["scoring_diagnostic"] = scoring_diag
-
-            self._append_event(event)
-
-            await self._append_signal_event(candle, index, decision, phase, eval_active)
-
-            # P3-E/P4.1: profile trade manager
+            # ── Trade manager: EVERY 1m candle (intrabar fill precision kept) ──
             try:
                 _prof = get_profiler()
             except Exception:
@@ -232,23 +261,25 @@ class ReplayEngine:
                     event.setdefault("phase", phase)
                     event.setdefault("eval_active", eval_active)
                     self._append_event(event)
-                with _prof.section("tier_events"):
-                    tier_events = await self._tier_simulation_events(candle, index, decision, phase, eval_active)
-                for event in tier_events:
-                    event.setdefault("phase", phase)
-                    event.setdefault("eval_active", eval_active)
-                    self._append_event(event)
+                if execution_bar_closed:
+                    with _prof.section("tier_events"):
+                        tier_events = await self._tier_simulation_events(candle, index, decision, phase, eval_active)
+                    for event in tier_events:
+                        event.setdefault("phase", phase)
+                        event.setdefault("eval_active", eval_active)
+                        self._append_event(event)
             else:
                 events = await self.trade_manager.on_p1_decision(candle, decision)
                 for event in events:
                     event.setdefault("phase", phase)
                     event.setdefault("eval_active", eval_active)
                     self._append_event(event)
-                tier_events = await self._tier_simulation_events(candle, index, decision, phase, eval_active)
-                for event in tier_events:
-                    event.setdefault("phase", phase)
-                    event.setdefault("eval_active", eval_active)
-                    self._append_event(event)
+                if execution_bar_closed:
+                    tier_events = await self._tier_simulation_events(candle, index, decision, phase, eval_active)
+                    for event in tier_events:
+                        event.setdefault("phase", phase)
+                        event.setdefault("eval_active", eval_active)
+                        self._append_event(event)
 
         if self.compact_event_logging and self._warmup_candles:
             self._append_event(
@@ -332,11 +363,32 @@ class ReplayEngine:
                 continue
             target = self.blackboard._data.setdefault("market_data", {}).setdefault("candles", {}).setdefault(timeframe, [])
             target.extend(bars)
+            # SPEED LEAK FIX: the blackboard pre-creates capped deques only for
+            # 4H/15m/1m. TFs emitted by the MTF builder (5m/30m/1H) landed in
+            # PLAIN LISTS growing unbounded (~225k dicts over 2.4y) — nothing
+            # reads beyond recent bars, but the growing heap raised GC pressure
+            # continuously (the 356→42 c/s decay). Trim to a generous cap.
+            if isinstance(target, list) and len(target) > 2000:
+                del target[: len(target) - 2000]
 
         for timeframe, candles in self._external_candles.items():
             if candles:
                 self._inject_external_timeframe(timeframe, candle["time"])
         await self.blackboard.notify_candle_close("1m", candle)
+
+        # ── Étape M15: did the EXECUTION_TF bar just close on this 1m candle? ──
+        # For EXECUTION_TF="1m" the driver candle IS the execution bar → always
+        # True → decisions fire every candle → identical to legacy behaviour.
+        # For "15m" etc., True only when the MTF builder emitted that TF here.
+        try:
+            from config import EXECUTION_TF as _EXEC_TF
+        except Exception:
+            _EXEC_TF = "1m"
+        if _EXEC_TF == "1m":
+            self._execution_bar_closed = True
+        else:
+            self._execution_bar_closed = bool(emitted.get(_EXEC_TF))
+        return self._execution_bar_closed
 
     def _inject_external_timeframe(self, timeframe: str, current_time: Any) -> None:
         candles = self._external_candles[timeframe]
@@ -402,6 +454,34 @@ class ReplayEngine:
     ) -> None:
         if not isinstance(decision, dict):
             decision = {}
+        if getattr(getattr(self, "runtime_config", None), "fast_replay", False):
+            _slim = {
+                "timestamp": _json_default(candle["time"]),
+                "eval_active": eval_active,
+                "poi_micro_synergy": decision.get("poi_micro_synergy"),
+                "micro_confirmed": decision.get("micro_confirmed"),
+                "micro_inside_poi": decision.get("micro_inside_poi"),
+                "effective_poi_status": decision.get("effective_poi_status"),
+                "decision": decision.get("decision", "UNKNOWN"),
+                "setup_grade": decision.get("setup_grade", "UNKNOWN"),
+                "setup_type": decision.get("setup_type"),
+                "setup_family": decision.get("setup_family"),
+                "scenario_type": decision.get("scenario_type"),
+                "kasper_decision_recommendation": decision.get("kasper_decision_recommendation"),
+                "kasper_grade": decision.get("kasper_grade"),
+                "kasper_error": decision.get("kasper_error"),
+                "readiness_state": decision.get("readiness_state"),
+                "enter_eligible": decision.get("enter_eligible"),
+                "enter_eligibility_reason": decision.get("enter_eligibility_reason"),
+                "enter_eligibility_blockers": decision.get("enter_eligibility_blockers") or [],
+                "risk_allowed": decision.get("risk_allowed"),
+                "risk_reason": decision.get("risk_reason"),
+                "risk_multiplier": decision.get("risk_multiplier", 0.0),
+                "grade_risk_multiplier": decision.get("grade_risk_multiplier"),
+                "effective_risk_pct": decision.get("effective_risk_pct"),
+            }
+            self._p1_decisions.append(_slim)
+            return
         record = {
             "timestamp": _json_default(candle["time"]),
             "bar_index": index,
@@ -543,7 +623,10 @@ class ReplayEngine:
         self._p1_decisions.append(record)
 
     def _decision_snapshot_event(self, candle: dict[str, Any], index: int, phase: str, eval_active: bool) -> dict[str, Any]:
-        data = self.blackboard.get_all()
+        # P4: use targeted reads instead of get_all() to avoid deep-copying the
+        # entire growing blackboard on every candle.
+        bb = self.blackboard
+        data = bb._data
         candles = data.get("market_data", {}).get("candles", {})
         agent_results = data.get("agent_results", {}) or {}
         return {

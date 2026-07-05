@@ -12,6 +12,7 @@ Flow per M1 candle:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -67,6 +68,7 @@ class ReplayEngineV2:
     _metrics: MetricsAggregator | None = None
     _profiler: ProfilerV2 | None = None
     _blackboard: Any = None
+    _loop: Any = None
 
     def __post_init__(self) -> None:
         if isinstance(self.eval_start, str):
@@ -90,6 +92,10 @@ class ReplayEngineV2:
             self._profiler = ProfilerV2()
             self._profiler.start()
 
+        # SimulatedTradeManager.on_p1_decision is async; run() is sync.
+        # Use one persistent loop for the whole replay.
+        self._loop = asyncio.new_event_loop()
+
         t0 = time.perf_counter()
 
         for candle in self.candles_1m:
@@ -107,20 +113,9 @@ class ReplayEngineV2:
             else:
                 self._fs.update(candle)
 
-            # ── Lifecycle scan (manages open trades) ────────────────
-            if self._profiler:
-                with self._profiler.section("trade_lifecycle"):
-                    lifecycle_events = self._lifecycle.on_candle(candle)
-            else:
-                lifecycle_events = self._lifecycle.on_candle(candle)
-
-            for evt in lifecycle_events:
-                self._metrics.record_trade_close(
-                    pnl_r=evt.pnl_r or 0.0,
-                    close_reason=evt.reason or "",
-                )
-
             # ── Warmup gate ─────────────────────────────────────────
+            # No trade activity during warmup. Open positions (if any) are
+            # only ever created during eval, so nothing to manage here.
             if not eval_active:
                 self._metrics.record_candle(eval_active=False)
                 continue
@@ -136,6 +131,11 @@ class ReplayEngineV2:
                 window = self._discovery.scan(self._fs, t, current_price)
 
             if window is None:
+                # No candidate window, but open positions still need TP/SL
+                # management on every eval candle (identical to legacy).
+                self._dispatch_to_trade_manager(
+                    candle, {"decision": "REJECT", "eval_active": True}
+                )
                 continue
 
             self._metrics.record_candidate()
@@ -144,13 +144,16 @@ class ReplayEngineV2:
             # ── Heavy pipeline (only in candidate windows) ──────────
             if self._profiler:
                 with self._profiler.section("agents"):
-                    rec = self._evaluator.evaluate(window, blackboard)
+                    rec = self._evaluator.evaluate(window, blackboard, candle)
             else:
-                rec = self._evaluator.evaluate(window, blackboard)
+                rec = self._evaluator.evaluate(window, blackboard, candle)
 
             # ── Post-eval filtering ─────────────────────────────────
             setup_type = rec.setup_type
             self._discovery.record_setup_type(setup_type or "UNKNOWN")
+
+            # Default: no signal this candle, but still manage open positions.
+            decision_payload: dict[str, Any] = {"decision": "REJECT", "eval_active": True}
 
             if setup_type and not self._discovery.is_tradable_setup(setup_type):
                 self._discovery.record_poi_reaction_skip()
@@ -161,35 +164,26 @@ class ReplayEngineV2:
                     setup_grade=rec.setup_grade,
                     reject_reason="POI_REACTION_DIAGNOSTIC_SKIP",
                 )
-                continue
+            else:
+                # ── Record decision ─────────────────────────────────
+                self._metrics.record_decision(
+                    decision=rec.decision,
+                    setup_type=rec.setup_type,
+                    setup_grade=rec.setup_grade,
+                    reject_reason=rec.reject_reason,
+                    veto_code=rec.veto_code,
+                )
 
-            # ── Record decision ─────────────────────────────────────
-            self._metrics.record_decision(
-                decision=rec.decision,
-                setup_type=rec.setup_type,
-                setup_grade=rec.setup_grade,
-                reject_reason=rec.reject_reason,
-                veto_code=rec.veto_code,
-            )
+                # ── ENTER → hand the REAL payload to the REAL manager ──
+                # SimulatedTradeManager places real SL/TP1/TP2/protected,
+                # applies the cost model and computes real R — exactly the
+                # legacy path. No stub prices, no hardcoded RR.
+                if rec.is_enter and rec.risk_allowed:
+                    decision_payload = dict(rec.p1_payload or {})
+                    decision_payload["decision"] = rec.decision
+                    decision_payload["eval_active"] = True
 
-            # ── ENTER → open trade ──────────────────────────────────
-            if rec.is_enter and rec.risk_allowed:
-                self._metrics.record_trade_open()
-                # Build trade dict for lifecycle tracking
-                trade = {
-                    "ticket": self._metrics.trade_count,
-                    "side": rec.side or "BUY",
-                    "entry_price": current_price,
-                    "sl_price": 0.0,   # filled by trade_manager
-                    "tp1_price": 0.0,
-                    "tp2_price": 0.0,
-                    "protected_sl_price": 0.0,
-                    "risk_r": 1.0,
-                    "tp1_rr": 0.5,
-                    "tp2_rr": 1.5,
-                    "leg1_closed": False,
-                }
-                self._lifecycle.open_trade(trade)
+            self._dispatch_to_trade_manager(candle, decision_payload)
 
         # ── Finalize ──────────────────────────────────────────────────
         if self._profiler:
@@ -206,10 +200,54 @@ class ReplayEngineV2:
         summary["runtime_ms"] = round((time.perf_counter() - t0) * 1000, 1)
         summary["candles_total"] = len(self.candles_1m)
 
+        # ── Real trade truth comes from the SimulatedTradeManager ──────
+        # (identical source to the legacy engine), not from toy counters.
+        if self.trade_manager is not None and hasattr(self.trade_manager, "summary"):
+            tm = self.trade_manager.summary()
+            summary["trade_manager_summary"] = tm
+            tcount = tm.get("total_trades", tm.get("trade_count", 0)) or 0
+            summary["trade_count"] = tcount
+            summary["expectancy_r"] = tm.get("expectancy_R", tm.get("expectancy_r"))
+            summary["state"] = "NO_TRADES" if tcount == 0 else "TRADES"
+
         if self._profiler:
             summary["profiler"] = self._profiler.report()
 
+        # Surface any silently-swallowed pipeline exceptions (root-cause of
+        # all-UNKNOWN windows) so they appear in the report instead of hiding.
+        if self._evaluator is not None and getattr(self._evaluator, "eval_error_count", 0):
+            summary["evaluator_errors"] = {
+                "count": self._evaluator.eval_error_count,
+                "by_type": dict(self._evaluator.eval_errors),
+                "first_trace": self._evaluator.first_error_trace,
+            }
+
+        if self._loop is not None:
+            self._loop.close()
+            self._loop = None
+
         return summary
+
+    # ── Trade manager dispatch ─────────────────────────────────────────
+    def _dispatch_to_trade_manager(
+        self, candle: dict[str, Any], decision: dict[str, Any]
+    ) -> None:
+        """Feed one candle + decision to the real async SimulatedTradeManager.
+
+        Manages open positions (TP/SL) first, then consumes any ENTER signal —
+        exactly as the legacy engine does via ``on_p1_decision``.
+        """
+        tm = self.trade_manager
+        if tm is None or not hasattr(tm, "on_p1_decision"):
+            return
+        section = (
+            self._profiler.section("trade_manager") if self._profiler else None
+        )
+        if section is not None:
+            with section:
+                self._loop.run_until_complete(tm.on_p1_decision(candle, decision))
+        else:
+            self._loop.run_until_complete(tm.on_p1_decision(candle, decision))
 
     def _is_eval(self, t: datetime) -> bool:
         """True if *t* is within the evaluation window."""
