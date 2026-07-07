@@ -58,6 +58,9 @@ SYMBOL = MT5_SYMBOL
 # Identifiant unique du robot pour filtrer nos ordres dans MT5
 MAGIC_NUMBER = 240115  # Format : YYMMDD du premier design (2024-01-15)
 
+# §3: Whitelist demo login — refuse execution if connected account != this
+MT5_DEMO_LOGIN = int(os.getenv("MT5_DEMO_LOGIN", "1200037833") or "1200037833")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. FUSEAUX HORAIRES
 # ─────────────────────────────────────────────────────────────────────────────
@@ -223,6 +226,28 @@ BE_AT_1R = os.environ.get("GS_BE_AT_1R", "1").strip().lower() in ("1","true","ye
 # GS_LOSS_COOLDOWN_MIN: après un SL, blocage des ré-entrées MÊME direction N minutes (0 = off)
 LOSS_BREAKER_MAX_SL_PER_DAY = int(float(os.environ.get("GS_LOSS_BREAKER", "0") or "0"))
 LOSS_COOLDOWN_SAME_SIDE_MIN = int(float(os.environ.get("GS_LOSS_COOLDOWN_MIN", "0") or "0"))
+# Plafond d'exposition CONCURRENTE (la vraie cause des gros DD: empilement de
+# positions même direction ouvertes en même temps, ex. déc-2024 = 3 BUY concurrents
+# perdant ensemble). 0 = illimité. GS_MAX_CONCURRENT=1 → une position à la fois;
+# GS_MAX_CONCURRENT_SAME_SIDE=1 → une seule par direction (autorise 1 BUY + 1 SELL).
+MAX_CONCURRENT_POSITIONS = int(float(os.environ.get("GS_MAX_CONCURRENT", "0") or "0"))
+MAX_CONCURRENT_SAME_SIDE = int(float(os.environ.get("GS_MAX_CONCURRENT_SAME_SIDE", "0") or "0"))
+# ── ROLLING DRAWDOWN GUARD (protection régime perdant multi-jours/mois) ──
+# La vraie cause du fond à 77.98$: hémorragie lente oct-2024→mars-2025 qu'aucun
+# garde court-terme n'attrape. Quand l'équité recule de GS_ROLLING_DD_PCT% depuis
+# son pic, on met les NOUVELLES entrées en pause GS_ROLLING_DD_PAUSE_DAYS jours
+# (le régime perdant passe), puis on rebase le pic et on reprend. Causal (équité
+# réalisée + temps uniquement), non-overfit (règle générale). 0 = off.
+# Prouvé sur confirm_final: seuil 10 / pause 7 → DD 23.8%→11.6%, équité préservée.
+ROLLING_DD_PCT = float(os.environ.get("GS_ROLLING_DD_PCT", "0") or "0")
+ROLLING_DD_PAUSE_DAYS = float(os.environ.get("GS_ROLLING_DD_PAUSE_DAYS", "7") or "7")
+# ── FILTRE QUALITÉ STRUCTURELLE (rr_estimate minimum) ──
+# Hypothèse d'edge validée par année + buckets: seuls les setups à reward:risk
+# structurel élevé tiennent hors-échantillon. rr>=4 = positif en 2024/2025/2026;
+# rr<4 = perdant/bruit OOS. rr_estimate est causal (cible = swing des 20 dernières
+# bougies clôturées / risque = |entrée-SL|), connu à l'entrée, zéro lookahead.
+# 0 = off (garde le gate Kasper 1.5 existant). GS_MIN_RR=4 pour activer le filtre.
+MIN_RR = float(os.environ.get("GS_MIN_RR", "0") or "0")
 
 # ── Compte broker (JustMarkets) ──
 ACCOUNT_LEVERAGE = float(os.environ.get("GS_LEVERAGE", "2000") or "2000")  # 1:2000
@@ -253,6 +278,14 @@ STRATEGY_V2 = os.environ.get("GS_STRATEGY_V2", "0").strip().lower() in (
     "1", "true", "yes", "on"
 )
 
+# ── UNIFIED LIVE DECISION PIPELINE (§2-A) ──────────────────────────────
+# Active le pipeline Kasper/PDE validé dans le runtime live.
+# DÉFAUT OFF (zéro régression). $env:GS_UNIFIED_PIPELINE="1" pour activer.
+# Quand actif: court-circuite le vote legacy dans core/orchestrator.py.
+UNIFIED_PIPELINE = os.environ.get("GS_UNIFIED_PIPELINE", "0").strip().lower() in (
+    "1", "true", "yes", "on"
+)
+
 REGIME_BLOCKED_SET = {
     r.strip().upper()
     for r in os.environ.get("GS_REGIME_BLOCK", "STRONG_UP,STRONG_DOWN").split(",")
@@ -277,7 +310,7 @@ SWING_PIVOT_STRENGTH = 2    # Nombre de bougies de chaque côté pour un swing p
 
 TP1_RR                = 1.0   # TP1 officiel: 1R
 TP2_RR                = 2.0   # TP2 officiel: 2R
-BE_PLUS_RR            = 0.10  # Apres TP1, SL protege a +0.10R
+BE_PLUS_RR            = float(os.environ.get("GS_BE_PLUS_RR", "0.5") or "0.5")  # §2-C: aligne sur replay (0.5R, pas 0.10R)
 BREAKEVEN_RR_TRIGGER  = TP1_RR
 PARTIAL_RR_TRIGGER    = TP1_RR
 PARTIAL_CLOSE_PERCENT = 50    # Pourcentage du volume à fermer en partiel

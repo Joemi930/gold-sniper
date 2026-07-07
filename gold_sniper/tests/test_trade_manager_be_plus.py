@@ -77,7 +77,9 @@ class TestTradeManagerBePlus(unittest.IsolatedAsyncioTestCase):
             await manager.manage_active_trades()
 
         modify = [call for call in gateway.calls if call[0] == BrokerAction.MODIFY_SLTP][0][1]
-        self.assertEqual(modify["sl"], 100.5)
+        # §2-C: BE_PLUS_RR = 0.5 (aligned with replay). Entry=100, SL=95, risk=5.
+        # Expected protected SL = entry + 0.5 * risk = 100 + 2.5 = 102.5
+        self.assertEqual(modify["sl"], 102.5)
         self.assertTrue(board._data["active_trades"][1]["be_plus_activated"])
 
     async def test_sell_tp1_moves_sl_to_be_plus(self) -> None:
@@ -101,7 +103,9 @@ class TestTradeManagerBePlus(unittest.IsolatedAsyncioTestCase):
             await manager.manage_active_trades()
 
         modify = [call for call in gateway.calls if call[0] == BrokerAction.MODIFY_SLTP][0][1]
-        self.assertEqual(modify["sl"], 99.5)
+        # §2-C: BE_PLUS_RR = 0.5. Entry=100, SL=105, risk=5.
+        # Expected protected SL = entry - 0.5 * risk = 100 - 2.5 = 97.5
+        self.assertEqual(modify["sl"], 97.5)
 
     async def test_partial_close_failure_does_not_move_sl(self) -> None:
         gateway = FakeGateway(partial_retcode=0)

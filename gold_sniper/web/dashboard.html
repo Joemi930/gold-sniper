@@ -508,8 +508,32 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg0);color:var
 'use strict';
 
 /* ── CONFIG ─────────────────────────────────────────────────────────────── */
-const WS_URL      = `${location.protocol==='https:'?'wss:':'ws:'}//${location.hostname}:8765/ws`;
-const API_CANDLES = `${location.protocol}//${location.hostname}:8765/api/candles`;
+const PARAMS = new URLSearchParams(location.search);
+const BACKEND_URL = (
+  PARAMS.get('backend') ||
+  localStorage.getItem('GOLD_SNIPER_BACKEND_URL') ||
+  window.GOLD_SNIPER_BACKEND_URL ||
+  ''
+).replace(/\/+$/,'');
+const DASHBOARD_AUTH_TOKEN = (
+  PARAMS.get('token') ||
+  localStorage.getItem('GOLD_SNIPER_DASHBOARD_TOKEN') ||
+  ''
+);
+if(PARAMS.get('backend')) localStorage.setItem('GOLD_SNIPER_BACKEND_URL', BACKEND_URL);
+if(PARAMS.get('token')) localStorage.setItem('GOLD_SNIPER_DASHBOARD_TOKEN', DASHBOARD_AUTH_TOKEN);
+
+function withDashboardToken(url){
+  if(!DASHBOARD_AUTH_TOKEN) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}token=${encodeURIComponent(DASHBOARD_AUTH_TOKEN)}`;
+}
+
+const DEFAULT_HTTP_BASE = `${location.protocol}//${location.hostname}:8765`;
+const HTTP_BASE = BACKEND_URL || DEFAULT_HTTP_BASE;
+const WS_BASE = HTTP_BASE.replace(/^https:/,'wss:').replace(/^http:/,'ws:');
+const WS_URL = withDashboardToken(`${WS_BASE}/ws`);
+const API_CANDLES = withDashboardToken(`${HTTP_BASE}/api/candles`);
 
 /* ── AGENTS META ─────────────────────────────────────────────────────────── */
 const AGENTS_META = [

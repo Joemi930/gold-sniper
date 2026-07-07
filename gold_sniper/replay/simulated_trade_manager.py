@@ -25,6 +25,15 @@ from replay.shadow_live_policy import (
     record_trade_opened,
     risk_pct_for_grade,
 )
+from safety.live_guards import (
+    LossBreakerState,
+    LossCooldownState,
+    RollingDDState,
+    loss_breaker_record_sl,
+    loss_cooldown_record_sl,
+    loss_guard_diag,
+    run_all_live_guards,
+)
 
 TP3_RR = 3.0
 
@@ -102,6 +111,9 @@ class SimulatedTradeManager:
         self._live_tp2_count = 0
         self._live_sl_count = 0
         self._live_protected_sl_count = 0
+        self._dd_state = RollingDDState()
+        self._lb_state = LossBreakerState()
+        self._lc_state = LossCooldownState()
 
     def live_summary(self) -> dict[str, Any]:
         """O(1) subset of summary() for per-candle display updates."""
@@ -312,6 +324,16 @@ class SimulatedTradeManager:
             else 0.0,
             # THE honest risk metric: worst drawdown relative to the running peak.
             "max_drawdown_pct_of_peak": round(self.max_drawdown_pct_peak, 4),
+            # DIAGNOSTIC gardes anti-rechute (prouve si env actives + si ça tire)
+            "loss_guard_diag": {
+                "config_active": getattr(self, "_lg_cfg", None),   # (breaker, cooldown_min) lus depuis config
+                "sl_losses_counted": getattr(self, "_slg_total_counted", 0),
+                "blocks_triggered": getattr(self, "_slg_blocks", 0),
+                "blocks_by_reason": getattr(self, "_lg_by_reason", {}),
+                "suppressed_trade_count": getattr(self, "_lg_suppressed", 0),
+                "suppressed_examples": getattr(self, "_lg_examples", []),
+                "rolling_dd_pauses": getattr(self, "_dd_pause_count", 0),
+            },
             # Profit sweep (sécurisation): equity = capital à risque restant;
             # withdrawn_total = sécurisé hors compte; total_value = vraie valeur.
             "withdrawn_total": round(self.withdrawn_total, 2),
@@ -532,6 +554,22 @@ class SimulatedTradeManager:
                 }
             )
 
+        # Anti-relapse guard AT THE ACTIVATION CHOKE POINT (every open passes here,
+        # market or pending). Placing it upstream in on_p1_decision missed the real
+        # opens (limit fills via _manage_pending_entries). Causal: SL counters are
+        # updated by _manage_triggered_positions earlier in the same candle.
+        _lg = self._entry_block_reason(trade, _iso(candle["time"]))
+        if _lg:
+            self.rejected_count += 1
+            self._lg_suppressed = getattr(self, "_lg_suppressed", 0) + 1
+            if len(getattr(self, "_lg_examples", [])) < 12:
+                self._lg_examples = getattr(self, "_lg_examples", []) + [{"time": _iso(candle["time"]), "side": trade.get("type"), "reason": _lg, "ticket": trade.get("ticket")}]
+            if clear_blackboard:
+                await self.blackboard.write("trade_signals", {})
+            return self._record_event({
+                "event": self._event_name("rejected"),
+                "reason": _lg, "time": _iso(candle["time"]), "source": "LOSS_GUARD",
+            })
         self.active_positions[trade["ticket"]] = trade
         await self._write_active_positions()
         if clear_blackboard:
@@ -555,6 +593,18 @@ class SimulatedTradeManager:
                         "reason": str(exc),
                         "time": _iso(candle["time"]),
                         "signal": signal,
+                    }))
+                    continue
+                _lg = self._entry_block_reason(trade, _iso(candle["time"]))
+                if _lg:
+                    self.pending_entries.pop(pending_id, None)
+                    self.rejected_count += 1
+                    self._lg_suppressed = getattr(self, "_lg_suppressed", 0) + 1
+                    if len(getattr(self, "_lg_examples", [])) < 12:
+                        self._lg_examples = getattr(self, "_lg_examples", []) + [{"time": _iso(candle["time"]), "side": trade.get("type"), "reason": _lg, "ticket": trade.get("ticket"), "pending": True}]
+                    events.append(self._record_event({
+                        "event": self._event_name("rejected"),
+                        "reason": _lg, "time": _iso(candle["time"]), "source": "LOSS_GUARD",
                     }))
                     continue
                 self.pending_entries.pop(pending_id, None)
@@ -1054,7 +1104,7 @@ class SimulatedTradeManager:
         # double-compter les 2 legs d'un même stop. Causal: le SL est traité dans
         # _manage_triggered_positions AVANT _consume_signal du même bougie.
         if leg_num == 1 and reason == "SL":
-            self._track_sl_loss({"reason": "SL", "time": _leg_evt.get("time"), "side": trade.get("type")})
+            self._track_sl_loss({"reason": "SL", "time": _leg_evt.get("time"), "side": trade.get("type"), "ticket": trade.get("ticket")})
         return _leg_evt
 
     def _activate_protected_sl(self, trade: dict[str, Any]) -> None:
@@ -1371,6 +1421,16 @@ class SimulatedTradeManager:
         try:
             if str(event.get("reason") or "") != "SL":
                 return
+            # Dedupe by ticket: a full stop closes BOTH legs (and phases may
+            # re-touch) → count each losing TRADE once, so sl_losses_counted
+            # matches full_sl_count (was 180 vs 60).
+            ticket = event.get("ticket")
+            if ticket is not None:
+                if not hasattr(self, "_slg_seen"):
+                    self._slg_seen = set()
+                if ticket in self._slg_seen:
+                    return
+                self._slg_seen.add(ticket)
             t = str(event.get("time") or "")
             side = str(event.get("side") or event.get("type") or "")
             day = t[:10]
@@ -1378,22 +1438,163 @@ class SimulatedTradeManager:
                 self._slg_day = day
                 self._slg_count = 0
             self._slg_count = getattr(self, "_slg_count", 0) + 1
+            self._slg_total_counted = getattr(self, "_slg_total_counted", 0) + 1
             if not hasattr(self, "_slg_last"):
                 self._slg_last = {}
             self._slg_last[side] = t
+            loss_breaker_record_sl(t, self._lb_state)
+            loss_cooldown_record_sl(t, side, self._lc_state)
         except Exception:
             return
+
+    def _entry_block_reason(self, trade: dict, candle_time: str) -> str | None:
+        """Run the shared live/replay guards and keep replay diagnostics intact."""
+        try:
+            from config import (
+                LOSS_BREAKER_MAX_SL_PER_DAY,
+                LOSS_COOLDOWN_SAME_SIDE_MIN,
+                MAX_CONCURRENT_POSITIONS,
+                MAX_CONCURRENT_SAME_SIDE,
+                MIN_RR,
+                ROLLING_DD_PCT,
+                ROLLING_DD_PAUSE_DAYS,
+            )
+
+            self._lg_cfg = (
+                MIN_RR,
+                MAX_CONCURRENT_POSITIONS,
+                MAX_CONCURRENT_SAME_SIDE,
+                ROLLING_DD_PCT,
+                ROLLING_DD_PAUSE_DAYS,
+                LOSS_BREAKER_MAX_SL_PER_DAY,
+                LOSS_COOLDOWN_SAME_SIDE_MIN,
+            )
+            results = run_all_live_guards(
+                rr_estimate=trade.get("rr_estimate"),
+                active_positions=self.active_positions,
+                side=str(trade.get("type") or ""),
+                equity=self.equity,
+                peak_equity=self.peak_equity,
+                candle_time=candle_time,
+                min_rr=MIN_RR,
+                max_concurrent=MAX_CONCURRENT_POSITIONS,
+                max_concurrent_same_side=MAX_CONCURRENT_SAME_SIDE,
+                rolling_dd_pct=ROLLING_DD_PCT,
+                rolling_dd_pause_days=ROLLING_DD_PAUSE_DAYS,
+                loss_breaker_max=LOSS_BREAKER_MAX_SL_PER_DAY,
+                loss_cooldown_min=LOSS_COOLDOWN_SAME_SIDE_MIN,
+                dd_state=self._dd_state,
+                lb_state=self._lb_state,
+                lc_state=self._lc_state,
+            )
+            if self._dd_state.rebase_equity is not None:
+                self.peak_equity = float(self._dd_state.rebase_equity)
+                self._dd_state.rebase_equity = None
+            diag = loss_guard_diag(results)
+            if not diag["blocked"]:
+                return None
+            reason = str(diag["primary_blocker"])
+            self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+            self._lg_by_reason = getattr(self, "_lg_by_reason", {})
+            self._lg_by_reason[reason] = self._lg_by_reason.get(reason, 0) + 1
+            if reason == "ROLLING_DD_PAUSE":
+                self._dd_pause_count = self._dd_state.pause_count
+                self._dd_pause_until = self._dd_state.pause_until
+            return reason
+        except Exception:
+            return None
+
+    def _min_rr_block(self, trade: dict) -> str | None:
+        """Structural quality filter: reject setups whose reward:risk estimate is
+        below GS_MIN_RR. Validated per-year + per-bucket as the OOS-robust edge
+        (rr>=4 positive in 2024/2025/2026; rr<4 loses OOS). rr_estimate is causal
+        (computed from closed candles + entry/SL at entry). 0 = off."""
+        try:
+            from config import MIN_RR
+            if MIN_RR <= 0:
+                return None
+            rr = trade.get("rr_estimate")
+            if rr is None:
+                return None
+            if float(rr) < MIN_RR:
+                self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+                self._lg_by_reason = getattr(self, "_lg_by_reason", {})
+                self._lg_by_reason["MIN_RR"] = self._lg_by_reason.get("MIN_RR", 0) + 1
+                return "MIN_RR"
+        except Exception:
+            return None
+        return None
+
+    def _rolling_dd_block(self, candle_time: str) -> str | None:
+        """Pause new entries during a rolling drawdown (losing-regime protection).
+
+        When realized equity is >= ROLLING_DD_PCT below its running peak, pause new
+        entries for ROLLING_DD_PAUSE_DAYS, then rebase the peak and resume. Uses only
+        past realized equity + time → causal, no look-ahead. Existing open trades are
+        untouched (they resolve normally); only NEW exposure is gated.
+        """
+        try:
+            from config import ROLLING_DD_PCT, ROLLING_DD_PAUSE_DAYS
+            if ROLLING_DD_PCT <= 0:
+                return None
+            from datetime import datetime, timedelta
+            def _p(x):
+                return datetime.fromisoformat(str(x).replace("Z", "+00:00"))
+            now = _p(candle_time)
+            pause_until = getattr(self, "_dd_pause_until", None)
+            if pause_until is not None and now < pause_until:
+                self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+                self._lg_by_reason = getattr(self, "_lg_by_reason", {})
+                self._lg_by_reason["ROLLING_DD_PAUSE"] = self._lg_by_reason.get("ROLLING_DD_PAUSE", 0) + 1
+                return "ROLLING_DD_PAUSE"
+            if self.peak_equity > 0:
+                dd = (self.peak_equity - self.equity) / self.peak_equity * 100.0
+                if dd >= ROLLING_DD_PCT:
+                    self._dd_pause_until = now + timedelta(days=ROLLING_DD_PAUSE_DAYS)
+                    self.peak_equity = self.equity   # rebase baseline for the resume
+                    self._dd_pause_count = getattr(self, "_dd_pause_count", 0) + 1
+                    self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+                    self._lg_by_reason = getattr(self, "_lg_by_reason", {})
+                    self._lg_by_reason["ROLLING_DD_PAUSE"] = self._lg_by_reason.get("ROLLING_DD_PAUSE", 0) + 1
+                    return "ROLLING_DD_PAUSE"
+        except Exception:
+            return None
+        return None
+
+    def _concurrency_block(self, side: str) -> str | None:
+        """Cap concurrent exposure — the real driver of the big drawdowns
+        (same-direction positions piling up and losing together)."""
+        try:
+            from config import MAX_CONCURRENT_POSITIONS, MAX_CONCURRENT_SAME_SIDE
+            if MAX_CONCURRENT_POSITIONS > 0 and len(self.active_positions) >= MAX_CONCURRENT_POSITIONS:
+                self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+                self._lg_by_reason = getattr(self, "_lg_by_reason", {})
+                self._lg_by_reason["MAX_CONCURRENT"] = self._lg_by_reason.get("MAX_CONCURRENT", 0) + 1
+                return "MAX_CONCURRENT"
+            if MAX_CONCURRENT_SAME_SIDE > 0:
+                same = sum(1 for t in self.active_positions.values() if str(t.get("type")) == str(side))
+                if same >= MAX_CONCURRENT_SAME_SIDE:
+                    self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+                    self._lg_by_reason = getattr(self, "_lg_by_reason", {})
+                    self._lg_by_reason["MAX_CONCURRENT_SAME_SIDE"] = self._lg_by_reason.get("MAX_CONCURRENT_SAME_SIDE", 0) + 1
+                    return "MAX_CONCURRENT_SAME_SIDE"
+        except Exception:
+            return None
+        return None
 
     def _loss_guard_block(self, candle_time: str, side: str) -> str | None:
         """Return a block reason if the anti-relapse guards forbid opening."""
         try:
             from config import LOSS_BREAKER_MAX_SL_PER_DAY, LOSS_COOLDOWN_SAME_SIDE_MIN
+            # Diagnostic echo (persist the ACTIVE config once — proves env vars took effect)
+            self._lg_cfg = (LOSS_BREAKER_MAX_SL_PER_DAY, LOSS_COOLDOWN_SAME_SIDE_MIN)
             day = str(candle_time)[:10]
             if (
                 LOSS_BREAKER_MAX_SL_PER_DAY > 0
                 and getattr(self, "_slg_day", None) == day
                 and getattr(self, "_slg_count", 0) >= LOSS_BREAKER_MAX_SL_PER_DAY
             ):
+                self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
                 return "DAILY_LOSS_BREAKER"
             if LOSS_COOLDOWN_SAME_SIDE_MIN > 0:
                 last = (getattr(self, "_slg_last", {}) or {}).get(str(side))
@@ -1403,6 +1604,7 @@ class SimulatedTradeManager:
                         return datetime.fromisoformat(str(x).replace("Z", "+00:00"))
                     delta_min = (_p(candle_time) - _p(last)).total_seconds() / 60.0
                     if 0 <= delta_min < LOSS_COOLDOWN_SAME_SIDE_MIN:
+                        self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
                         return "LOSS_COOLDOWN_SAME_SIDE"
         except Exception:
             return None
@@ -1563,18 +1765,6 @@ class SimulatedTradeManager:
                     "setup_grade": grade,
                     "setup_type": shadow_signal.get("setup_type"),
                     "source": "P1_SHADOW_DECISION",
-                }))
-                return events
-
-            # Anti-relapse guards (Dec-2024 autopsy: chained same-side re-entries)
-            _lg_reason = self._loss_guard_block(_iso(candle["time"]), str(shadow_signal.get("side") or shadow_signal.get("action") or shadow_signal.get("type") or ""))
-            if _lg_reason:
-                self.rejected_count += 1
-                events.append(self._record_event({
-                    "event": self._event_name("rejected"),
-                    "time": _iso(candle["time"]),
-                    "reason": _lg_reason,
-                    "source": "LOSS_GUARD",
                 }))
                 return events
 

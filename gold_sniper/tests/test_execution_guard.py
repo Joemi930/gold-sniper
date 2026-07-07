@@ -33,11 +33,13 @@ class TestExecutionGuard(unittest.TestCase):
         return ExecutionGuard(board or BlackBoard()).can_send_broker_order("OPEN_ORDER")
 
     def test_non_live_modes_block_broker_writes(self) -> None:
-        for mode in ("REPLAY", "PAPER", "BACKTEST"):
+        # §3: PAPER mode is now ALLOWED (DEMO account with broker writes).
+        # Only REPLAY and BACKTEST are still blocked.
+        for mode in ("REPLAY", "BACKTEST"):
             with self.subTest(mode=mode):
                 decision = self._decision(mode, False)
                 self.assertFalse(decision.allowed)
-                self.assertEqual(decision.reason, "RUN_MODE_NOT_LIVE")
+                self.assertEqual(decision.reason, "RUN_MODE_NOT_LIVE_OR_PAPER")
 
     def test_live_requires_explicit_broker_write_flag(self) -> None:
         decision = self._decision("LIVE", False)
