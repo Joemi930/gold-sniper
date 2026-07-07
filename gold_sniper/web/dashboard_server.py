@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import re
 import time
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
-from aiohttp import web
+from aiohttp import WSMsgType, web
 
 from config import (
     CLOUDFLARE_ENABLED,
@@ -68,6 +69,13 @@ _dashboard_public_url: str | None = None
 
 @web.middleware
 async def dashboard_auth_middleware(request: web.Request, handler) -> web.StreamResponse:
+    # Les avatars et logos sont des ressources publiques non sensibles. Les
+    # protéger par le token casse les balises <img> lorsque l'URL est nettoyée
+    # dans l'historique du navigateur après le premier chargement.
+    if request.path.startswith("/assets/"):
+        response = await handler(request)
+        response.headers.setdefault("Cache-Control", "public, max-age=86400, immutable")
+        return response
     denied = _dashboard_access_denied(request)
     if denied is not None:
         return denied
@@ -96,9 +104,11 @@ async def handle_dashboard(request: web.Request) -> web.StreamResponse:
 
 async def handle_state(request: web.Request) -> web.Response:
     blackboard = request.app["blackboard"]
-    data = sanitize_for_json(blackboard.get_all())
-    data["market"] = build_dashboard_market_state(data)
-    data["agents"] = build_dashboard_agents_state(data)
+    raw_data = blackboard.get_all()
+    data = sanitize_for_json(raw_data)
+    data["market"] = build_dashboard_market_state(raw_data)
+    data["agents"] = build_dashboard_agents_state(raw_data)
+    data["portfolio"] = build_dashboard_portfolio_state(raw_data)
     data["visual_layers"] = VISUAL_LAYERS.get_all_as_dict()
     return json_response(data)
 
@@ -157,11 +167,56 @@ def build_dashboard_agents_state(data: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def build_dashboard_portfolio_state(data: dict[str, Any]) -> dict[str, float]:
+    meta = data.get("meta", {}) or {}
+    account = meta.get("account_info", {}) or {}
+    performance = data.get("performance", {}) or {}
+    daily = data.get("daily_stats", {}) or {}
+    return {
+        "balance": _float(account.get("balance", performance.get("balance", 0.0))),
+        "equity": _float(account.get("equity", performance.get("equity", 0.0))),
+        "margin": _float(account.get("margin", 0.0)),
+        "free_margin": _float(account.get("margin_free", account.get("free_margin", 0.0))),
+        "daily_pnl": _float(
+            performance.get(
+                "daily_pnl",
+                _float(daily.get("realized_pnl", 0.0)) + _float(daily.get("floating_pnl", 0.0)),
+            )
+        ),
+    }
+
+
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
     blackboard = request.app["blackboard"]
     ws = web.WebSocketResponse(heartbeat=10, compress=True)
     await ws.prepare(request)
     update_event = blackboard.dashboard_update_event
+    send_lock = asyncio.Lock()
+
+    async def _send_text(payload: str) -> None:
+        async with send_lock:
+            if not ws.closed:
+                await ws.send_str(payload)
+
+    async def _receive_latency_probes() -> None:
+        async for message in ws:
+            if message.type == WSMsgType.TEXT:
+                try:
+                    probe = json.loads(message.data)
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if probe.get("type") == "ping":
+                    await _send_text(
+                        json.dumps(
+                            {
+                                "type": "pong",
+                                "nonce": str(probe.get("nonce", "")),
+                                "server_ts_ms": int(time.time() * 1000),
+                            }
+                        )
+                    )
+            elif message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}:
+                break
 
     def _build_payload() -> str:
         raw_data = blackboard.get_all()
@@ -173,6 +228,7 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
             "agents": dashboard_agents,
             "orchestrator": sanitize_for_json(raw_data.get("orchestrator", {})),
             "performance": sanitize_for_json(raw_data.get("performance", {})),
+            "portfolio": build_dashboard_portfolio_state(raw_data),
         }
         payload = redact_dashboard_payload(
             sanitize_for_json(
@@ -194,24 +250,29 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
             default=str,
         )
 
+    receiver_task = asyncio.create_task(_receive_latency_probes())
     try:
         # Envoi immediat a la connexion
-        await ws.send_str(_build_payload())
+        await _send_text(_build_payload())
 
         while not ws.closed:
             # On efface AVANT d'attendre pour ne pas rater les mises a jour
             # qui arrivent pendant l'envoi precedent.
             update_event.clear()
             try:
-                await asyncio.wait_for(update_event.wait(), timeout=1.0)
+                await asyncio.wait_for(update_event.wait(), timeout=0.5)
             except asyncio.TimeoutError:
-                pass  # Fallback 1 s pour garantir un heartbeat meme si aucun agent ne publie
+                pass  # Fallback 500 ms pour une interface plus reactive.
             if not ws.closed:
-                await ws.send_str(_build_payload())
+                await _send_text(_build_payload())
     except asyncio.CancelledError:
         raise
     except Exception:
         get_logger().warning("Dashboard websocket ferme sur erreur non bloquante.")
+    finally:
+        receiver_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await receiver_task
     return ws
 
 

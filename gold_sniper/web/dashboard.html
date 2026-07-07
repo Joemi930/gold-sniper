@@ -446,9 +446,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg0);color:var
   <div id="hdr-session" class="hdr-badge" style="color:var(--blue);border-color:var(--blue);background:var(--blue-dim)">—</div>
   <div id="hdr-regime" class="hdr-badge" style="color:var(--purple);border-color:var(--purple);background:var(--purple-dim)">—</div>
   <div class="hdr-right">
-    <div id="hdr-pnl" style="font-family:var(--font-display);font-size:12px;font-weight:700">P&amp;L —</div>
+    <div id="hdr-balance" style="font-family:var(--font-display);font-size:12px;font-weight:700;color:var(--gold)">SOLDE —</div>
     <div class="hdr-sep"></div>
-    <div id="hdr-time" class="hdr-time">--:--:-- UTC</div>
+    <div id="hdr-time" class="hdr-time">--:--:-- KIN</div>
     <div class="conn-dot" id="conn-dot"></div>
     <div id="conn-label" style="font-size:10px;color:var(--text2)">OFFLINE</div>
   </div>
@@ -469,15 +469,15 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg0);color:var
       <section class="mc-card network-large" id="network-section">
         <div class="mc-head"><div><span class="mc-kicker">AGENT COMMUNICATION MAP</span><h2>Intelligence collective en temps réel</h2></div><span class="mc-live"><i></i> LIVE PULSE</span></div>
         <div id="agent-network"><svg id="network-svg" viewBox="0 0 100 100" preserveAspectRatio="none"><line class="network-link" x1="15" y1="24" x2="50" y2="50" stroke="#3b82f6"/><line class="network-link" x1="36" y1="12" x2="50" y2="50" stroke="#8b5cf6"/><line class="network-link" x1="69" y1="14" x2="50" y2="50" stroke="#10b981"/><line class="network-link" x1="88" y1="37" x2="50" y2="50" stroke="#f59e0b"/><line class="network-link" x1="80" y1="78" x2="50" y2="50" stroke="#ef4444"/><line class="network-link" x1="50" y1="89" x2="50" y2="50" stroke="#06b6d4"/><line class="network-link" x1="18" y1="76" x2="50" y2="50" stroke="#84cc16"/></svg>
-<div class="network-agent" id="net-agent_1" style="left:15%;top:24%;--agent-color:#3b82f6"><div class="agent-avatar"><img src="/assets/agent_1.webp"></div><b>Météo</b><small id="net-score-agent_1">0 · WAIT</small></div>
-<div class="network-agent" id="net-agent_2" style="left:36%;top:12%;--agent-color:#8b5cf6"><div class="agent-avatar"><img src="/assets/agent_2.webp"></div><b>Cartographe</b><small id="net-score-agent_2">0 · WAIT</small></div>
-<div class="network-agent" id="net-agent_3" style="left:69%;top:14%;--agent-color:#10b981"><div class="agent-avatar"><img src="/assets/agent_3.webp"></div><b>Liquidité</b><small id="net-score-agent_3">0 · WAIT</small></div>
-<div class="network-agent" id="net-agent_4" style="left:88%;top:37%;--agent-color:#f59e0b"><div class="agent-avatar"><img src="/assets/agent_4.webp"></div><b>Fibonacci</b><small id="net-score-agent_4">0 · WAIT</small></div>
+<div class="network-agent" id="net-agent_1" style="left:15%;top:24%;--agent-color:#3b82f6"><div class="agent-avatar"><img src="/assets/agent_1.webp?v=3"></div><b>Météo</b><small id="net-score-agent_1">0 · WAIT</small></div>
+<div class="network-agent" id="net-agent_2" style="left:36%;top:12%;--agent-color:#8b5cf6"><div class="agent-avatar"><img src="/assets/agent_2.webp?v=3"></div><b>Cartographe</b><small id="net-score-agent_2">0 · WAIT</small></div>
+<div class="network-agent" id="net-agent_3" style="left:69%;top:14%;--agent-color:#10b981"><div class="agent-avatar"><img src="/assets/agent_3.webp?v=3"></div><b>Liquidité</b><small id="net-score-agent_3">0 · WAIT</small></div>
+<div class="network-agent" id="net-agent_4" style="left:88%;top:37%;--agent-color:#f59e0b"><div class="agent-avatar"><img src="/assets/agent_4.webp?v=3"></div><b>Fibonacci</b><small id="net-score-agent_4">0 · WAIT</small></div>
 
-<div class="network-agent" id="net-agent_5" style="left:80%;top:78%;--agent-color:#ef4444"><div class="agent-avatar"><img src="/assets/agent_5.webp"></div><b>Microscope</b><small id="net-score-agent_5">0 · WAIT</small></div>
-<div class="network-agent" id="net-agent_6" style="left:50%;top:89%;--agent-color:#06b6d4"><div class="agent-avatar"><img src="/assets/agent_6.webp"></div><b>Journaliste</b><small id="net-score-agent_6">0 · WAIT</small></div>
-<div class="network-agent" id="net-agent_7" style="left:18%;top:76%;--agent-color:#84cc16"><div class="agent-avatar"><img src="/assets/agent_7.webp"></div><b>Chronos</b><small id="net-score-agent_7">0 · WAIT</small></div>
-<div class="network-orchestrator"><img src="/assets/orchestrator.webp" alt="Orchestrateur"><b>ORCHESTRATOR</b><small id="network-decision">INITIALISATION</small></div></div>
+<div class="network-agent" id="net-agent_5" style="left:80%;top:78%;--agent-color:#ef4444"><div class="agent-avatar"><img src="/assets/agent_5.webp?v=3"></div><b>Microscope</b><small id="net-score-agent_5">0 · WAIT</small></div>
+<div class="network-agent" id="net-agent_6" style="left:50%;top:89%;--agent-color:#06b6d4"><div class="agent-avatar"><img src="/assets/agent_6.webp?v=3"></div><b>Journaliste</b><small id="net-score-agent_6">0 · WAIT</small></div>
+<div class="network-agent" id="net-agent_7" style="left:18%;top:76%;--agent-color:#84cc16"><div class="agent-avatar"><img src="/assets/agent_7.webp?v=3"></div><b>Chronos</b><small id="net-score-agent_7">0 · WAIT</small></div>
+<div class="network-orchestrator"><img src="/assets/orchestrator.webp?v=3" alt="Orchestrateur"><b>ORCHESTRATOR</b><small id="network-decision">INITIALISATION</small></div></div>
       </section>
       <section class="mc-card live-position" id="live-section">
         <div class="mc-head"><span class="mc-kicker">LIVE POSITION</span><span class="trade-side" id="live-side">NO TRADE</span></div>
@@ -587,10 +587,13 @@ const AGENTS_META = [
   { id:'agent_7', name:'Chronos',     role:'Sessions & Kill Zones',   color:'#84cc16', glowHex:'132,204,22',  icon:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>` },
 ];
 
-const AGENT_AVATARS={agent_1:'/assets/agent_1.webp',agent_2:'/assets/agent_2.webp',agent_3:'/assets/agent_3.webp',agent_4:'/assets/agent_4.webp',agent_5:'/assets/agent_5.webp',agent_6:'/assets/agent_6.webp',agent_7:'/assets/agent_7.webp'};
+const AGENT_AVATARS={agent_1:'/assets/agent_1.webp?v=3',agent_2:'/assets/agent_2.webp?v=3',agent_3:'/assets/agent_3.webp?v=3',agent_4:'/assets/agent_4.webp?v=3',agent_5:'/assets/agent_5.webp?v=3',agent_6:'/assets/agent_6.webp?v=3',agent_7:'/assets/agent_7.webp?v=3'};
 
 /* ── STATE ───────────────────────────────────────────────────────────────── */
 let ws, wsRetry=0, wsRetryTimer=null;
+let latencyTimer=null, pingSequence=0;
+const pingStartedAt=new Map();
+const latencySamples=[];
 let lastPrice=0;
 let agentScores={};
 let brainAnim;
@@ -810,7 +813,7 @@ function updateOrchestrator(orch){
 }
 
 /* ── METRICS ─────────────────────────────────────────────────────────────── */
-function updateMetrics(market,perf,orch){
+function updateMetrics(market,perf,orch,portfolio={}){
   if(!market||!perf)return;
   const set=(id,val,cls)=>{const el=document.getElementById(id);if(el){el.textContent=val;if(cls)el.className='metric-val '+cls}};
 
@@ -822,12 +825,13 @@ function updateMetrics(market,perf,orch){
   set('m-spread',spread!=null?`${Number(spread).toFixed(1)} pts`:'—',spread>35?'dn':'');
   set('m-trades',perf.total_trades||0,'gold');
   const wr=perf.winrate;set('m-winrate',wr!=null?`${wr.toFixed(0)}%`:'—',wr!=null&&wr>=55?'up':wr!=null&&wr<45?'dn':'');
-  const pnl=perf.daily_pnl||0;
+  const pnl=Number(portfolio.daily_pnl??perf.daily_pnl??0);
   set('m-pnl',`${pnl>=0?'+':''}${pnl.toFixed(2)}$`,pnl>=0?'up':'dn');
-  const eq=perf.equity;set('m-equity',eq!=null?`${eq.toFixed(2)}$`:'—','gold');
+  const eq=Number(portfolio.equity??perf.equity??0);set('m-equity',eq>0?`${eq.toFixed(2)}$`:'—','gold');
 
-  const pnlHdr=document.getElementById('hdr-pnl');
-  if(pnlHdr){pnlHdr.textContent=`P&L ${pnl>=0?'+':''}${pnl.toFixed(2)}$`;pnlHdr.style.color=pnl>=0?'var(--green)':'var(--red)'}
+  const balance=Number(portfolio.balance??0);
+  const balanceHdr=document.getElementById('hdr-balance');
+  if(balanceHdr){balanceHdr.textContent=balance>0?`SOLDE ${balance.toFixed(2)}$`:'SOLDE —';balanceHdr.style.color='var(--gold)'}
 
   document.getElementById('sb-total').textContent=perf.total_trades||0;
   if(market.spread_points!=null)document.getElementById('hdr-spread').textContent=`spr ${Number(market.spread_points).toFixed(1)}`;
@@ -856,6 +860,27 @@ function addLogEntry(decision,score,strategy){
 }
 
 /* ── WEBSOCKET ───────────────────────────────────────────────────────────── */
+function renderLatency(rttMs){
+  latencySamples.push(rttMs);
+  while(latencySamples.length>7)latencySamples.shift();
+  const sorted=[...latencySamples].sort((a,b)=>a-b);
+  const median=sorted[Math.floor(sorted.length/2)]||0;
+  const value=Math.max(0,Math.round(median));
+  const color=value<=250?'var(--green)':value<=700?'var(--gold)':'var(--red)';
+  const sb=document.getElementById('sb-latency');
+  const stream=document.getElementById('stream-latency');
+  if(sb){sb.textContent=`${value} ms`;sb.style.color=color}
+  if(stream){stream.textContent=`${value} ms`;stream.style.color=color}
+}
+
+function sendLatencyPing(){
+  if(!ws||ws.readyState!==WebSocket.OPEN)return;
+  const nonce=String(++pingSequence);
+  pingStartedAt.set(nonce,performance.now());
+  ws.send(JSON.stringify({type:'ping',nonce}));
+  for(const [key] of pingStartedAt){if(Number(key)<pingSequence-12)pingStartedAt.delete(key)}
+}
+
 function connectWS(){
   if(!WS_URL){
     const dot=document.getElementById('conn-dot');
@@ -871,27 +896,36 @@ function connectWS(){
   ws.onopen=()=>{
     wsRetry=0;
     clearTimeout(wsRetryTimer);
+    clearInterval(latencyTimer);
+    latencySamples.length=0;
+    pingStartedAt.clear();
     const dot=document.getElementById('conn-dot');
     const lbl=document.getElementById('conn-label');
     dot.className='conn-dot live';
     lbl.textContent='ONLINE';
     lbl.style.color='var(--green)';
     document.getElementById('sb-latency').textContent='-- ms';
+    sendLatencyPing();
+    latencyTimer=setInterval(sendLatencyPing,3000);
   };
 
   ws.onmessage=({data})=>{
     try{
       const msg=JSON.parse(data);
-      if(msg.ts_ms||msg.ts){
-        const sentAt=msg.ts_ms||msg.ts*1000;
-        const latencyMs=Math.max(0,Date.now()-sentAt);
-        document.getElementById('sb-latency').textContent=`${latencyMs} ms`;const ml=document.getElementById('stream-latency');if(ml)ml.textContent=`${latencyMs} ms`;
+      if(msg.type==='pong'){
+        const started=pingStartedAt.get(String(msg.nonce));
+        if(started!=null){
+          pingStartedAt.delete(String(msg.nonce));
+          renderLatency(performance.now()-started);
+        }
+        return;
       }
       if(msg.type==='full_state') processState(msg.data,msg.trades||{},msg.logs||[]);
     }catch(e){}
   };
 
   ws.onclose=ws.onerror=()=>{
+    clearInterval(latencyTimer);
     const dot=document.getElementById('conn-dot');
     const lbl=document.getElementById('conn-label');
     dot.className='conn-dot';
@@ -908,6 +942,7 @@ function processState(data,trades={},logs=[]){
   const agents=data.agents||{};
   const orch=data.orchestrator||{};
   const perf=data.performance||{};
+  const portfolio=data.portfolio||{};
 
   /* Agents */
   AGENTS_META.forEach(a=>{
@@ -918,20 +953,21 @@ function processState(data,trades={},logs=[]){
   });
 
   updateOrchestrator(orch);
-  updateMetrics(market,perf,orch);
+  updateMetrics(market,perf,orch,portfolio);
   addLogEntry(orch.decision,orch.final_score||0,orch.strategy);
   updateMissionUI(orch,agents,trades,logs);
 }
 
 /* ── CLOCK ───────────────────────────────────────────────────────────────── */
 function startClock(){
-  setInterval(()=>{
-    const n=new Date();
-    const h=String(n.getUTCHours()).padStart(2,'0');
-    const m=String(n.getUTCMinutes()).padStart(2,'0');
-    const s=String(n.getUTCSeconds()).padStart(2,'0');
-    document.getElementById('hdr-time').textContent=`${h}:${m}:${s} UTC`;
-  },1000);
+  const formatter=new Intl.DateTimeFormat('fr-FR',{
+    timeZone:'Africa/Kinshasa',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false
+  });
+  const tick=()=>{
+    document.getElementById('hdr-time').textContent=`${formatter.format(new Date())} KIN`;
+  };
+  tick();
+  setInterval(tick,1000);
 }
 
 document.body.dataset.mobileView='home';
