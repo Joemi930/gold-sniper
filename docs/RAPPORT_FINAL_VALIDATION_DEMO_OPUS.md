@@ -1,18 +1,18 @@
-# Gold Sniper — Rapport de validation DÉMO après redémarrage et correctifs Dashboard
+# Gold Sniper — Rapport final de certification DÉMO
 
 **Destinataire :** Opus, architecte suprême
 **Date d’exécution :** 7 juillet 2026
 **Branche :** `P1-Gold_sniper_trading_and_optimisation`
 **Dépôt :** `Joemi930/gold-sniper`
-**Périmètre :** validation locale PAPER/DEMO, redémarrage Windows réel et correctifs Dashboard post-redémarrage.
+**Périmètre :** certification complète PAPER/DEMO, redémarrage Windows, Dashboard, Cloudflare, Discord, MT5 et Google Drive.
 
 ## 1. Conclusion exécutive
 
 Le pipeline PAPER, MT5 démo, le Dashboard Cloudflare, Discord, les watchdogs et l’autostart par tâche planifiée ont été validés avant puis après un véritable redémarrage Windows. La tâche s’est exécutée automatiquement avec un résultat Windows `0`, puis `pc_manager.py`, `watchdog.py`, `main.py`, MT5 et Cloudflare ont été relancés en arrière-plan.
 
-Après le redémarrage, trois défauts visibles ont été signalés puis corrigés : chargement des avatars/logos, mesure de latence sur téléphone et affichage du solde MT5. Google Drive reste volontairement différé à une phase ultérieure.
+Après le redémarrage, les défauts visibles du Dashboard ont été corrigés : avatars/logos, session persistante après actualisation, mesure de latence dédiée et affichage du solde MT5. Google Drive a ensuite été authentifié et validé.
 
-Une réserve externe subsiste : Google Drive n’est pas authentifié, car `gold_sniper/data/credentials.json` et `gold_sniper/data/drive_token.json` sont absents. Aucun succès Drive n’est inventé.
+Aucune réserve opérationnelle ne subsiste dans le périmètre DÉMO demandé. Les fichiers OAuth Google restent uniquement dans `gold_sniper/data`, dossier ignoré par Git.
 
 Les clés Finnhub et FMP sont présentes, mais les endpoints économiques répondent respectivement HTTP 403 et HTTP 402. La chaîne reste opérationnelle grâce au fallback ForexFactory/cache local, testé avec succès.
 
@@ -178,6 +178,7 @@ Un lancement manuel de cette tâche a été réalisé après arrêt complet de l
 - Dashboard local/public et WebSocket validés après ce lancement caché.
 
 Le véritable redémarrage Windows a ensuite été exécuté. La tâche planifiée a démarré à l’ouverture de session, avec dernier résultat `0`, puis toute la pile a retrouvé l’état `engine_ready` en mode `PAPER`.
+
 ## 5. Intégrations externes
 
 ### Finnhub
@@ -203,19 +204,26 @@ Le comportement fail-safe reste conforme : si les fournisseurs premium refusent 
 
 ### Google Drive
 
-Test réel tenté, résultat :
+L’intégration Google Drive est validée en conditions réelles :
+
+- OAuth Desktop autorisé par le propriétaire ;
+- `drive_token.json` généré automatiquement ;
+- dossier `GoldSniper_V3_Backups` créé ou retrouvé ;
+- premier upload réel réussi ;
+- seconde synchronisation réussie sans nouvelle ouverture du navigateur ;
+- trois fichiers distants contrôlés par taille et empreinte MD5 ;
+- lecture descendante d’un rapport et comparaison binaire avec le fichier local : identiques.
+
+Fichiers validés :
 
 ```text
-credentials.json introuvable
-gold_sniper/data/credentials.json
+2026-07-07__data__memory.db
+2026-07-07__logs__reports__daily_report_2026-07-07_184311.txt
+2026-07-07__logs__reports__daily_report_2026-07-07_220000.txt
 ```
 
-Les dépendances Google sont installées et le module gère proprement l’échec, mais l’upload réel nécessite encore :
+La synchronisation quotidienne reste planifiée à `23:00` dans le fuseau `Africa/Kinshasa`.
 
-1. un OAuth Client Desktop Google dans `gold_sniper/data/credentials.json` ;
-2. une validation utilisateur dans le navigateur au premier lancement ;
-3. la création automatique de `drive_token.json` ;
-4. un nouveau test d’upload et de lecture.
 ## 6. État actuel laissé sur le PC
 
 La pile est actuellement lancée en arrière-plan par la tâche Windows :
@@ -241,9 +249,9 @@ La tâche Windows affiche une dernière exécution le 7 juillet 2026 à 19:21:25
 
 ## 8. Statut de certification
 
-**Statut après reboot : PILE PAPER/DEMO ET AUTOSTART VALIDÉS, CORRECTIFS DASHBOARD DÉPLOYÉS.**
+**GOLD SNIPER EST MAINTENANT OPÉRATIONNEL POUR LA DÉMO.**
 
-La réserve restante est Google Drive, explicitement reportée par décision du propriétaire. La certification sans réserve de cette intégration attendra la configuration OAuth et un test réel d’upload/lecture.
+Cette certification couvre le moteur PAPER, le compte MT5 démo, les agents, le Dashboard, Cloudflare, Discord, l’autostart Windows, les watchdogs, ForexFactory et Google Drive.
 
 ## 9. Correctifs Dashboard post-redémarrage
 
