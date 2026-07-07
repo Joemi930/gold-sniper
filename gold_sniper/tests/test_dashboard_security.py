@@ -89,6 +89,30 @@ class TestDashboardSecurity(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("123456", body)
         self.assertNotIn("BrokerLive", body)
 
+    async def test_token_query_sets_refresh_cookie(self) -> None:
+        with patch.object(dashboard, "DASHBOARD_PUBLIC", True), patch.object(dashboard, "DASHBOARD_TOKEN", "ok"):
+            client = await self._client(BlackBoard())
+            first = await client.get("/?token=ok", headers={"X-Forwarded-Proto": "https"})
+            self.assertEqual(first.status, 200)
+            cookie = first.cookies.get(dashboard.DASHBOARD_COOKIE_NAME)
+            self.assertIsNotNone(cookie)
+            self.assertEqual(cookie.value, "ok")
+            refreshed = await client.get(
+                "/",
+                headers={"Cookie": f"{dashboard.DASHBOARD_COOKIE_NAME}=ok"},
+            )
+            self.assertEqual(refreshed.status, 200)
+
+    async def test_dedicated_latency_websocket_returns_pong(self) -> None:
+        with patch.object(dashboard, "DASHBOARD_PUBLIC", False):
+            client = await self._client(BlackBoard())
+            ws = await client.ws_connect("/ws/latency")
+            await ws.send_json({"type": "ping", "nonce": "latency"})
+            message = await ws.receive_json()
+            self.assertEqual(message.get("type"), "pong")
+            self.assertEqual(message.get("nonce"), "latency")
+            await ws.close()
+
     async def test_websocket_ping_returns_pong(self) -> None:
         with patch.object(dashboard, "DASHBOARD_PUBLIC", False):
             client = await self._client(BlackBoard())

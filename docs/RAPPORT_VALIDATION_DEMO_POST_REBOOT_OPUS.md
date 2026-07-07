@@ -269,3 +269,35 @@ Durée : 50.59 s
 ```
 
 Les nouveaux tests couvrent les assets publics, l’exposition sûre du solde sans identité de compte et le `ping/pong` WebSocket.
+
+## 10. Correctifs persistants du lien Cloudflare et de la latence
+
+### 10.1 Actualisation sans perte du token
+
+Le premier accès avec `?token=...` crée désormais un cookie de session Dashboard :
+
+- `HttpOnly` ;
+- `Secure` derrière Cloudflare ;
+- `SameSite=Lax` ;
+- valable 30 jours sur le domaine du tunnel courant.
+
+Le token peut ensuite être retiré de la barre d’adresse sans casser une actualisation. Un test public réel a confirmé : premier chargement HTTP 200, cookie émis, puis actualisation de `/` sans token HTTP 200.
+
+### 10.2 Invalidation des anciens tunnels
+
+Lors d’une relance, tous les processus `cloudflared` liés au port Dashboard sont arrêtés avant la création du nouveau tunnel. Le test de rotation a confirmé : nouveau lien actif, ancien lien renvoyant Cloudflare `530`, donc inutilisable.
+
+### 10.3 Canal de latence séparé
+
+La latence utilise maintenant un WebSocket léger dédié `/ws/latency`, isolé des messages `full_state`. Le flux principal est limité à un fallback d’une seconde et les logs transmis sont réduits à 12 entrées. Le contrôle public a mesuré cinq RTT de `218.5`, `234.5`, `230.1`, `230.6` et `249.1 ms`, soit une médiane de `230.6 ms` depuis le PC via Cloudflare.
+
+Ces changements sont chargés depuis les fichiers du projet à chaque nouveau démarrage et à chaque nouveau tunnel.
+
+### 10.4 Suite automatisée après ces correctifs
+
+```text
+1700 passed
+636 warnings
+37 subtests passed
+Durée : 72.65 s
+```

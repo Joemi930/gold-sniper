@@ -575,6 +575,7 @@ function withDashboardToken(url){
 const HTTP_BASE = `${location.protocol}//${location.host}`.replace(/\/+$/,'');
 const WS_BASE = HTTP_BASE.replace(/^https:/,'wss:').replace(/^http:/,'ws:');
 const WS_URL = withDashboardToken(`${WS_BASE}/ws`);
+const LATENCY_WS_URL = withDashboardToken(`${WS_BASE}/ws/latency`);
 
 /* ── AGENTS META ─────────────────────────────────────────────────────────── */
 const AGENTS_META = [
@@ -591,7 +592,7 @@ const AGENT_AVATARS={agent_1:'/assets/agent_1.webp?v=3',agent_2:'/assets/agent_2
 
 /* ── STATE ───────────────────────────────────────────────────────────────── */
 let ws, wsRetry=0, wsRetryTimer=null;
-let latencyTimer=null, pingSequence=0;
+let latencyWs=null, latencyRetryTimer=null, latencyTimer=null, pingSequence=0;
 const pingStartedAt=new Map();
 const latencySamples=[];
 let lastPrice=0;
@@ -874,11 +875,38 @@ function renderLatency(rttMs){
 }
 
 function sendLatencyPing(){
-  if(!ws||ws.readyState!==WebSocket.OPEN)return;
+  if(!latencyWs||latencyWs.readyState!==WebSocket.OPEN)return;
   const nonce=String(++pingSequence);
   pingStartedAt.set(nonce,performance.now());
-  ws.send(JSON.stringify({type:'ping',nonce}));
+  latencyWs.send(JSON.stringify({type:'ping',nonce}));
   for(const [key] of pingStartedAt){if(Number(key)<pingSequence-12)pingStartedAt.delete(key)}
+}
+
+function connectLatencyWS(){
+  clearTimeout(latencyRetryTimer);
+  if(latencyWs){try{latencyWs.close()}catch(e){}}
+  latencyWs=new WebSocket(LATENCY_WS_URL);
+  latencyWs.onopen=()=>{
+    latencySamples.length=0;
+    pingStartedAt.clear();
+    clearInterval(latencyTimer);
+    sendLatencyPing();
+    latencyTimer=setInterval(sendLatencyPing,3000);
+  };
+  latencyWs.onmessage=({data})=>{
+    try{
+      const msg=JSON.parse(data);
+      if(msg.type!=='pong')return;
+      const started=pingStartedAt.get(String(msg.nonce));
+      if(started==null)return;
+      pingStartedAt.delete(String(msg.nonce));
+      renderLatency(performance.now()-started);
+    }catch(e){}
+  };
+  latencyWs.onclose=latencyWs.onerror=()=>{
+    clearInterval(latencyTimer);
+    latencyRetryTimer=setTimeout(connectLatencyWS,3000);
+  };
 }
 
 function connectWS(){
@@ -896,36 +924,23 @@ function connectWS(){
   ws.onopen=()=>{
     wsRetry=0;
     clearTimeout(wsRetryTimer);
-    clearInterval(latencyTimer);
-    latencySamples.length=0;
-    pingStartedAt.clear();
     const dot=document.getElementById('conn-dot');
     const lbl=document.getElementById('conn-label');
     dot.className='conn-dot live';
     lbl.textContent='ONLINE';
     lbl.style.color='var(--green)';
     document.getElementById('sb-latency').textContent='-- ms';
-    sendLatencyPing();
-    latencyTimer=setInterval(sendLatencyPing,3000);
+    connectLatencyWS();
   };
 
   ws.onmessage=({data})=>{
     try{
       const msg=JSON.parse(data);
-      if(msg.type==='pong'){
-        const started=pingStartedAt.get(String(msg.nonce));
-        if(started!=null){
-          pingStartedAt.delete(String(msg.nonce));
-          renderLatency(performance.now()-started);
-        }
-        return;
-      }
       if(msg.type==='full_state') processState(msg.data,msg.trades||{},msg.logs||[]);
     }catch(e){}
   };
 
   ws.onclose=ws.onerror=()=>{
-    clearInterval(latencyTimer);
     const dot=document.getElementById('conn-dot');
     const lbl=document.getElementById('conn-label');
     dot.className='conn-dot';

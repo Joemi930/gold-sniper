@@ -36,6 +36,7 @@ SECRET_ASSIGNMENT_RE = re.compile(
     re.IGNORECASE,
 )
 REDACTED = "[REDACTED]"
+DASHBOARD_COOKIE_NAME = "gold_sniper_dashboard_session"
 SENSITIVE_KEY_PARTS = (
     "token",
     "password",
@@ -69,9 +70,6 @@ _dashboard_public_url: str | None = None
 
 @web.middleware
 async def dashboard_auth_middleware(request: web.Request, handler) -> web.StreamResponse:
-    # Les avatars et logos sont des ressources publiques non sensibles. Les
-    # protéger par le token casse les balises <img> lorsque l'URL est nettoyée
-    # dans l'historique du navigateur après le premier chargement.
     if request.path.startswith("/assets/"):
         response = await handler(request)
         response.headers.setdefault("Cache-Control", "public, max-age=86400, immutable")
@@ -79,7 +77,22 @@ async def dashboard_auth_middleware(request: web.Request, handler) -> web.Stream
     denied = _dashboard_access_denied(request)
     if denied is not None:
         return denied
-    return await handler(request)
+    response = await handler(request)
+    query_token = request.query.get("token", "").strip()
+    if DASHBOARD_PUBLIC and query_token == DASHBOARD_TOKEN:
+        forwarded_https = request.headers.get("X-Forwarded-Proto", "").lower() == "https"
+        response.set_cookie(
+            DASHBOARD_COOKIE_NAME,
+            DASHBOARD_TOKEN,
+            max_age=60 * 60 * 24 * 30,
+            httponly=True,
+            secure=request.secure or forwarded_https,
+            samesite="Lax",
+            path="/",
+        )
+    if request.path == "/":
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return response
 
 
 def create_dashboard_app(blackboard=BLACKBOARD) -> web.Application:
@@ -91,6 +104,7 @@ def create_dashboard_app(blackboard=BLACKBOARD) -> web.Application:
     app.router.add_get("/api/agents", handle_agents)
     app.router.add_get("/api/candles", handle_candles_history)
     app.router.add_get("/ws", websocket_handler)
+    app.router.add_get("/ws/latency", latency_websocket_handler)
     if ASSETS_PATH.exists():
         app.router.add_static("/assets", ASSETS_PATH, show_index=False)
     return app
@@ -186,6 +200,29 @@ def build_dashboard_portfolio_state(data: dict[str, Any]) -> dict[str, float]:
     }
 
 
+async def latency_websocket_handler(request: web.Request) -> web.WebSocketResponse:
+    """Dedicated lightweight RTT channel, isolated from full-state traffic."""
+    ws = web.WebSocketResponse(heartbeat=15, compress=False)
+    await ws.prepare(request)
+    async for message in ws:
+        if message.type == WSMsgType.TEXT:
+            try:
+                probe = json.loads(message.data)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if probe.get("type") == "ping":
+                await ws.send_json(
+                    {
+                        "type": "pong",
+                        "nonce": str(probe.get("nonce", "")),
+                        "server_ts_ms": int(time.time() * 1000),
+                    }
+                )
+        elif message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}:
+            break
+    return ws
+
+
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
     blackboard = request.app["blackboard"]
     ws = web.WebSocketResponse(heartbeat=10, compress=True)
@@ -238,7 +275,7 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                     "state": build_state_summary(raw_data),
                     "trades": build_trades_payload(raw_data),
                     "agents": build_agents_payload(raw_data),
-                    "logs": read_recent_logs(limit=40),
+                    "logs": read_recent_logs(limit=12),
                     "ts": int(time.time()),
                     "ts_ms": int(time.time() * 1000),
                 }
@@ -260,9 +297,9 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
             # qui arrivent pendant l'envoi precedent.
             update_event.clear()
             try:
-                await asyncio.wait_for(update_event.wait(), timeout=0.5)
+                await asyncio.wait_for(update_event.wait(), timeout=1.0)
             except asyncio.TimeoutError:
-                pass  # Fallback 500 ms pour une interface plus reactive.
+                pass  # Fallback 1 s pour limiter le trafic mobile.
             if not ws.closed:
                 await _send_text(_build_payload())
     except asyncio.CancelledError:
@@ -645,6 +682,7 @@ def _extract_dashboard_token(request: web.Request) -> str:
     return (
         request.headers.get("X-Dashboard-Token", "")
         or request.query.get("token", "")
+        or request.cookies.get(DASHBOARD_COOKIE_NAME, "")
         or ""
     ).strip()
 
