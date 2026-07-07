@@ -4,6 +4,8 @@ tools/dev_archive/
 # Secrets and local environment
 .env
 *.env
+.env.runtime
+gold_sniper/.env.runtime
 *.secret
 *secret*
 *token*
@@ -30,6 +32,7 @@ __pycache__/
 htmlcov/
 
 # Logs, replay artifacts, and generated events
+/data/
 *.log
 *.tmp
 *.jsonl
@@ -134,3 +137,8 @@ gold_sniper/replay_app/__pycache__/
 # Local handoff/profiling scratch files
 _handoff_*
 prof*.out
+# Local source artwork (optimized copies live in gold_sniper/web/assets)
+docs/ChatGPT Image *.png
+docs/avatar_orchestrateur_gold_sniper.png
+docs/logo.jpg
+.vercel

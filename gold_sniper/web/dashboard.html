@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gold Sniper V3.2 · Operations Center</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 :root{
   --bg0:#020812;--bg1:#050f1e;--bg2:#081529;--bg3:#0d1f38;
@@ -379,6 +378,60 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg0);color:var
   .metrics-scroll{grid-template-columns:1fr}
   .log-detail{white-space:normal}
 }
+
+#panel-command{overflow:auto;padding:14px;background:var(--bg0)}
+.command-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(285px,.48fr);gap:14px;min-height:100%}
+.mc-card{background:var(--bg1);border:1px solid var(--border2);border-radius:17px;padding:16px;overflow:hidden}
+.mc-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.mc-kicker{font:700 9px var(--font-display);letter-spacing:2px;color:var(--text3)}
+
+.mc-head h2{font:700 14px var(--font-display);margin:5px 0 0}.mc-live{font:700 9px var(--font-display);color:var(--green);border:1px solid rgba(0,255,138,.3);border-radius:12px;padding:6px 9px}
+.network-large{grid-row:span 2;min-height:510px}#agent-network{height:430px;position:relative;margin-top:10px;border-radius:15px;overflow:hidden;background:radial-gradient(circle at center,rgba(244,181,63,.11),transparent 34%)}
+#network-svg{position:absolute;inset:0;width:100%;height:100%}.network-link{stroke-width:.35;opacity:.42;stroke-dasharray:2 2}
+.network-orchestrator{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:118px;height:118px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#151007;border:3px solid var(--gold2);box-shadow:0 0 0 12px rgba(244,181,63,.06),0 0 34px rgba(244,181,63,.2);z-index:4}
+.network-orchestrator img{width:66px;height:66px;object-fit:cover;border-radius:50%}.network-orchestrator b{font:700 8px var(--font-display);margin-top:4px}.network-orchestrator small{font-size:7px;color:var(--gold);max-width:95px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.network-agent{position:absolute;transform:translate(-50%,-50%);width:90px;text-align:center;z-index:5}.network-agent .agent-avatar{width:58px;height:58px;margin:auto;background:var(--bg3)}
+.network-agent .agent-avatar img,.agent-avatar img{width:100%;height:100%;border-radius:50%;object-fit:cover}.network-agent b{display:block;font:700 8px var(--font-display);margin-top:5px}.network-agent small{display:block;color:var(--text3);font-size:7px;margin-top:2px}
+.network-agent.hot .agent-avatar{box-shadow:0 0 22px var(--agent-color);animation:agentFloat 2.8s ease-in-out infinite}@keyframes agentFloat{50%{transform:translateY(-4px)}}
+.live-position{min-height:308px}.trade-side{font:700 9px var(--font-display);padding:6px 9px;border-radius:10px;border:1px solid var(--border2);color:var(--text2)}
+.live-symbol-row{display:flex;align-items:flex-start;justify-content:space-between;margin:19px 0}.live-symbol-row h2{font:900 24px var(--font-display);margin:0}.live-symbol-row small{color:var(--text3)}#live-r{font:900 25px var(--font-display);color:var(--green)}
+.trade-levels{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.trade-levels div{background:rgba(2,8,18,.7);border:1px solid var(--border);padding:8px;border-radius:10px}.trade-levels span{display:block;font-size:8px;color:var(--text3)}.trade-levels b{font-size:10px}
+
+.position-track{height:65px;position:relative;margin:14px 2px}.track-base,.track-fill{position:absolute;left:3%;right:4%;top:21px;height:7px;border-radius:8px;background:#263247}.track-fill{right:auto;left:27%;width:0;background:var(--green);transition:width .5s}
+.position-track i{position:absolute;top:14px;transform:translateX(-50%);width:20px;height:20px;border:4px solid var(--bg1);border-radius:50%;background:var(--c)}.position-track label{position:absolute;top:42px;transform:translateX(-50%);font-size:7px;color:var(--text3)}
+.trade-chips{display:flex;gap:6px;flex-wrap:wrap}.trade-chips span{font-size:8px;border:1px solid var(--border2);border-radius:8px;padding:5px 7px;color:var(--text2)}
+.decision-stream{min-height:188px}.decision-stream #mission-events{display:grid;gap:6px;margin-top:10px}.mission-event{display:grid;grid-template-columns:48px 72px 1fr;gap:7px;padding:7px;background:var(--bg0);border-radius:9px;font-size:8px}.mission-event time{color:var(--text3)}
+.mobile-nav{display:none}.agent-avatar{overflow:hidden}
+
+@media(max-width:900px){#app{grid-template-columns:1fr}#panel-agents{display:none}#panel-command{order:1;padding:10px}.command-grid{grid-template-columns:1fr}.network-large{min-height:350px}.network-large #agent-network{height:285px}.live-position{min-height:285px}#panel-right{order:2}.mobile-nav{position:fixed;display:grid;grid-template-columns:repeat(5,1fr);left:8px;right:8px;bottom:8px;height:62px;background:rgba(5,15,30,.96);border:1px solid var(--border2);border-radius:18px;z-index:120;padding:5px}.mobile-nav button{border:0;background:transparent;color:var(--text3);font-size:9px}.mobile-nav button strong{display:block;font-size:16px;color:inherit}.mobile-nav button.active{color:var(--gold);background:var(--gold-dim);border-radius:12px}#statusbar{bottom:76px}}
+
+
+@media(max-width:900px){
+  body{padding-bottom:82px}
+  #app{display:block;height:auto;overflow:visible}
+  #panel-command,#panel-agents,#panel-right{display:none!important;width:100%;height:auto;overflow:visible}
+  body[data-mobile-view="home"] #panel-command,
+  body[data-mobile-view="trade"] #panel-command,
+  body[data-mobile-view="agents"] #panel-agents,
+  body[data-mobile-view="orch"] #panel-right,
+  body[data-mobile-view="logs"] #panel-right{display:block!important}
+  body[data-mobile-view="home"] #live-section{display:none}
+  body[data-mobile-view="trade"] #network-section,
+  body[data-mobile-view="trade"] #stream-section{display:none}
+
+  body[data-mobile-view="agents"] #panel-agents{position:static;padding:12px 12px 96px}
+  body[data-mobile-view="orch"] #log-section{display:none}
+  body[data-mobile-view="logs"] #orch-section,
+  body[data-mobile-view="logs"] .metrics-scroll{display:none}
+  body[data-mobile-view="logs"] #log-section{display:block;min-height:72vh}
+  #statusbar{display:none}
+  .network-agent{width:66px}
+  .network-agent .agent-avatar{width:44px;height:44px}
+  .network-orchestrator{width:88px;height:88px}
+  .network-orchestrator img{width:48px;height:48px}
+}
+
 </style>
 </head>
 <body>
@@ -410,41 +463,30 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg0);color:var
     <!-- Agents injectés par JS -->
   </div>
 
-  <!-- CENTER : CHART -->
-  <div id="panel-chart">
-    <div id="chart-toolbar">
-      <button class="tf-btn active" onclick="setTF('1m')">1M</button>
-      <button class="tf-btn" onclick="setTF('5m')">5M</button>
-      <button class="tf-btn" onclick="setTF('15m')">15M</button>
-      <div class="hdr-sep"></div>
-      <div class="layer-toggles">
-        <div class="ltog on" data-layer="ob" style="--ltog-color:#00ff8a" onclick="toggleLayer('ob',this)">OB</div>
-        <div class="ltog on" data-layer="fvg" style="--ltog-color:#f4b53f" onclick="toggleLayer('fvg',this)">FVG</div>
-        <div class="ltog on" data-layer="liq" style="--ltog-color:#f4b53f" onclick="toggleLayer('liq',this)">LIQ</div>
-        <div class="ltog on" data-layer="fib" style="--ltog-color:#f4b53f" onclick="toggleLayer('fib',this)">FIB</div>
-        <div class="ltog on" data-layer="choch" style="--ltog-color:#00ff8a" onclick="toggleLayer('choch',this)">CHoCH</div>
-        <div class="ltog on" data-layer="kz" style="--ltog-color:#00d4ff" onclick="toggleLayer('kz',this)">KZ</div>
-        <div class="ltog on" data-layer="vp" style="--ltog-color:#ff3d6a" onclick="toggleLayer('vp',this)">VP</div>
-      </div>
-      <div class="kz-legend">
-        <div class="kz-dot" style="background:rgba(0,212,255,.5)"></div><div class="kz-lbl">LDN</div>
-        <div class="kz-dot" style="background:rgba(255,61,106,.4)"></div><div class="kz-lbl">NY</div>
-        <div class="kz-dot" style="background:rgba(168,85,247,.4)"></div><div class="kz-lbl">OVL</div>
-      </div>
-      <div class="chart-meta" id="chart-meta">XAUUSD · — bougies</div>
-    </div>
-    <div id="chart-wrapper">
-      <div id="chart-container"></div>
-      <div id="zones-overlay"></div>
-      <div class="scan-line"></div>
-      <div id="ohlc-tooltip">
-        <div class="ohlc-row">
-          <span class="ohlc-key">O</span><span class="ohlc-val" id="tt-o">—</span>
-          <span class="ohlc-key">H</span><span class="ohlc-val" id="tt-h" style="color:var(--green)">—</span>
-          <span class="ohlc-key">L</span><span class="ohlc-val" id="tt-l" style="color:var(--red)">—</span>
-          <span class="ohlc-key">C</span><span class="ohlc-val" id="tt-c">—</span>
-        </div>
-      </div>
+  <!-- CENTER : GOLD SNIPER COMMAND CENTER -->
+  <div id="panel-command">
+    <div class="command-grid">
+      <section class="mc-card network-large" id="network-section">
+        <div class="mc-head"><div><span class="mc-kicker">AGENT COMMUNICATION MAP</span><h2>Intelligence collective en temps réel</h2></div><span class="mc-live"><i></i> LIVE PULSE</span></div>
+        <div id="agent-network"><svg id="network-svg" viewBox="0 0 100 100" preserveAspectRatio="none"><line class="network-link" x1="15" y1="24" x2="50" y2="50" stroke="#3b82f6"/><line class="network-link" x1="36" y1="12" x2="50" y2="50" stroke="#8b5cf6"/><line class="network-link" x1="69" y1="14" x2="50" y2="50" stroke="#10b981"/><line class="network-link" x1="88" y1="37" x2="50" y2="50" stroke="#f59e0b"/><line class="network-link" x1="80" y1="78" x2="50" y2="50" stroke="#ef4444"/><line class="network-link" x1="50" y1="89" x2="50" y2="50" stroke="#06b6d4"/><line class="network-link" x1="18" y1="76" x2="50" y2="50" stroke="#84cc16"/></svg>
+<div class="network-agent" id="net-agent_1" style="left:15%;top:24%;--agent-color:#3b82f6"><div class="agent-avatar"><img src="/assets/agent_1.webp"></div><b>Météo</b><small id="net-score-agent_1">0 · WAIT</small></div>
+<div class="network-agent" id="net-agent_2" style="left:36%;top:12%;--agent-color:#8b5cf6"><div class="agent-avatar"><img src="/assets/agent_2.webp"></div><b>Cartographe</b><small id="net-score-agent_2">0 · WAIT</small></div>
+<div class="network-agent" id="net-agent_3" style="left:69%;top:14%;--agent-color:#10b981"><div class="agent-avatar"><img src="/assets/agent_3.webp"></div><b>Liquidité</b><small id="net-score-agent_3">0 · WAIT</small></div>
+<div class="network-agent" id="net-agent_4" style="left:88%;top:37%;--agent-color:#f59e0b"><div class="agent-avatar"><img src="/assets/agent_4.webp"></div><b>Fibonacci</b><small id="net-score-agent_4">0 · WAIT</small></div>
+
+<div class="network-agent" id="net-agent_5" style="left:80%;top:78%;--agent-color:#ef4444"><div class="agent-avatar"><img src="/assets/agent_5.webp"></div><b>Microscope</b><small id="net-score-agent_5">0 · WAIT</small></div>
+<div class="network-agent" id="net-agent_6" style="left:50%;top:89%;--agent-color:#06b6d4"><div class="agent-avatar"><img src="/assets/agent_6.webp"></div><b>Journaliste</b><small id="net-score-agent_6">0 · WAIT</small></div>
+<div class="network-agent" id="net-agent_7" style="left:18%;top:76%;--agent-color:#84cc16"><div class="agent-avatar"><img src="/assets/agent_7.webp"></div><b>Chronos</b><small id="net-score-agent_7">0 · WAIT</small></div>
+<div class="network-orchestrator"><img src="/assets/orchestrator.webp" alt="Orchestrateur"><b>ORCHESTRATOR</b><small id="network-decision">INITIALISATION</small></div></div>
+      </section>
+      <section class="mc-card live-position" id="live-section">
+        <div class="mc-head"><span class="mc-kicker">LIVE POSITION</span><span class="trade-side" id="live-side">NO TRADE</span></div>
+        <div class="live-symbol-row"><div><h2 id="live-symbol">XAUUSD.m</h2><small id="live-strategy">UNIFIED KASPER / PDE</small></div><strong id="live-r">0.00R</strong></div>
+        <div class="trade-levels"><div><span>ENTRY</span><b id="lv-entry">—</b></div><div><span>SL</span><b id="lv-sl">—</b></div><div><span>TP1</span><b id="lv-tp1">—</b></div><div><span>TP2</span><b id="lv-tp2">—</b></div></div>
+        <div class="position-track"><div class="track-base"></div><div class="track-fill" id="track-fill"></div><i style="left:3%;--c:var(--red)"></i><i style="left:27%;--c:var(--gold)"></i><i style="left:68%;--c:var(--green)"></i><i style="left:96%;--c:var(--green)"></i><label style="left:3%">SL</label><label style="left:27%">ENTRY</label><label style="left:68%">TP1</label><label style="left:96%">TP2</label></div>
+        <div class="trade-chips"><span>BE +0.5R</span><span>TRAILING READY</span><span id="live-pnl">P&amp;L —</span></div>
+      </section>
+      <section class="mc-card decision-stream" id="stream-section"><div class="mc-head"><span class="mc-kicker">DECISION STREAM</span><span id="stream-latency">— ms</span></div><div id="mission-events"></div></section>
     </div>
   </div>
 
@@ -501,6 +543,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg0);color:var
   </div>
 </div>
 
+<nav class="mobile-nav" id="mobile-nav"><button data-target="network-section" class="active"><strong>●</strong>Home</button><button data-target="panel-agents"><strong>✦</strong>Agents</button><button data-target="live-section"><strong>◆</strong>Trade</button><button data-target="orch-section"><strong>O</strong>Orch</button><button data-target="log-section"><strong>≡</strong>Logs</button></nav>
+
 <!-- ══════════════════════════════════════════════════════════════════
      JAVASCRIPT
 ══════════════════════════════════════════════════════════════════ -->
@@ -509,19 +553,18 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg0);color:var
 
 /* ── CONFIG ─────────────────────────────────────────────────────────────── */
 const PARAMS = new URLSearchParams(location.search);
-const BACKEND_URL = (
-  PARAMS.get('backend') ||
-  localStorage.getItem('GOLD_SNIPER_BACKEND_URL') ||
-  window.GOLD_SNIPER_BACKEND_URL ||
-  ''
-).replace(/\/+$/,'');
+const BOOT_TOKEN = PARAMS.get('token') || '';
 const DASHBOARD_AUTH_TOKEN = (
-  PARAMS.get('token') ||
+  BOOT_TOKEN ||
   localStorage.getItem('GOLD_SNIPER_DASHBOARD_TOKEN') ||
   ''
 );
-if(PARAMS.get('backend')) localStorage.setItem('GOLD_SNIPER_BACKEND_URL', BACKEND_URL);
-if(PARAMS.get('token')) localStorage.setItem('GOLD_SNIPER_DASHBOARD_TOKEN', DASHBOARD_AUTH_TOKEN);
+if(BOOT_TOKEN){
+  localStorage.setItem('GOLD_SNIPER_DASHBOARD_TOKEN', DASHBOARD_AUTH_TOKEN);
+  const clean = new URL(location.href);
+  clean.searchParams.delete('token');
+  history.replaceState(null,'',clean.pathname + clean.search + clean.hash);
+}
 
 function withDashboardToken(url){
   if(!DASHBOARD_AUTH_TOKEN) return url;
@@ -529,11 +572,9 @@ function withDashboardToken(url){
   return `${url}${sep}token=${encodeURIComponent(DASHBOARD_AUTH_TOKEN)}`;
 }
 
-const DEFAULT_HTTP_BASE = `${location.protocol}//${location.hostname}:8765`;
-const HTTP_BASE = BACKEND_URL || DEFAULT_HTTP_BASE;
+const HTTP_BASE = `${location.protocol}//${location.host}`.replace(/\/+$/,'');
 const WS_BASE = HTTP_BASE.replace(/^https:/,'wss:').replace(/^http:/,'ws:');
 const WS_URL = withDashboardToken(`${WS_BASE}/ws`);
-const API_CANDLES = withDashboardToken(`${HTTP_BASE}/api/candles`);
 
 /* ── AGENTS META ─────────────────────────────────────────────────────────── */
 const AGENTS_META = [
@@ -546,13 +587,12 @@ const AGENTS_META = [
   { id:'agent_7', name:'Chronos',     role:'Sessions & Kill Zones',   color:'#84cc16', glowHex:'132,204,22',  icon:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>` },
 ];
 
+const AGENT_AVATARS={agent_1:'/assets/agent_1.webp',agent_2:'/assets/agent_2.webp',agent_3:'/assets/agent_3.webp',agent_4:'/assets/agent_4.webp',agent_5:'/assets/agent_5.webp',agent_6:'/assets/agent_6.webp',agent_7:'/assets/agent_7.webp'};
+
 /* ── STATE ───────────────────────────────────────────────────────────────── */
-let chart, candleSeries, volumeSeries;
 let ws, wsRetry=0, wsRetryTimer=null;
-let lastPrice=0, lastCandles=[];
+let lastPrice=0;
 let agentScores={};
-let visualLayers={};
-let layerVis={ob:true,fvg:true,liq:true,fib:true,choch:true,kz:true,vp:true};
 let brainAnim;
 
 /* ── INIT AGENTS ─────────────────────────────────────────────────────────── */
@@ -569,7 +609,7 @@ function buildAgentPanel(){
       <div class="agent-top">
         <div class="agent-avatar" id="av-${a.id}" style="border-color:${a.color}40;color:${a.color}">
           <div class="agent-pulse" style="border-color:${a.color}"></div>
-          ${a.icon}
+          <img src="${AGENT_AVATARS[a.id]}" alt="${a.name}" onerror="this.style.display='none'">
         </div>
         <div class="agent-info">
           <div class="agent-name" style="color:${a.color}">${a.name}</div>
@@ -628,298 +668,21 @@ function updateAgentCard(agentId, score, direction, reason, hf){
   }
 }
 
-/* ── CHART INIT ──────────────────────────────────────────────────────────── */
-function initChart(){
-  const container=document.getElementById('chart-container');
-  chart=LightweightCharts.createChart(container,{
-    width:container.clientWidth,height:container.clientHeight,
-    layout:{background:{type:'solid',color:'#020812'},textColor:'#607090',fontSize:11,fontFamily:'Share Tech Mono,monospace'},
-    grid:{vertLines:{color:'rgba(255,255,255,.03)'},horzLines:{color:'rgba(255,255,255,.03)'}},
-    crosshair:{mode:LightweightCharts.CrosshairMode.Normal,vertLine:{color:'#607090',width:1,style:3},horzLine:{color:'#607090',width:1,style:3}},
-    rightPriceScale:{borderColor:'#0d1f38',textColor:'#607090',scaleMargins:{top:.1,bottom:.2}},
-    timeScale:{borderColor:'#0d1f38',timeVisible:true,secondsVisible:false,
-      tickMarkFormatter:(t)=>{const d=new Date(t*1e3);return`${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`}},
-  });
 
-  candleSeries=chart.addCandlestickSeries({
-    upColor:'#00ff8a',downColor:'#ff3d6a',borderUpColor:'#00ff8a',borderDownColor:'#ff3d6a',wickUpColor:'#00c96b',wickDownColor:'#cc3055',
-    autoscaleInfoProvider:(original)=>{
-      const res=original();
-      if(!res||!res.priceRange)return res;
-      let min=res.priceRange.minValue;
-      let max=res.priceRange.maxValue;
-      Object.values(visualLayers||{}).forEach(layers=>{
-        if(!Array.isArray(layers))return;
-        layers.forEach(layer=>{
-          ['price_top','price_bottom','price'].forEach(k=>{
-            const v=Number(layer[k]);
-            if(Number.isFinite(v)&&v>0){min=Math.min(min,v);max=Math.max(max,v)}
-          });
-        });
-      });
-      const pad=Math.max((max-min)*0.04,0.5);
-      return {priceRange:{minValue:min-pad,maxValue:max+pad}};
-    },
-  });
+function updateMissionUI(orch,agents,trades,logs){
+ const dec=document.getElementById('network-decision');if(dec)dec.textContent=(orch.decision||'WAIT')+' '+(orch.setup_grade||'');
+ AGENTS_META.forEach(a=>{const x=agents[a.id]||{},sc=Number(x.score||0),n=document.getElementById(`net-${a.id}`),v=document.getElementById(`net-score-${a.id}`);if(n)n.classList.toggle('hot',sc>=60&&x.hard_filter_pass!==false);if(v)v.textContent=`${sc.toFixed(0)} · ${x.veto?'VETO':(x.direction||'WAIT')}`});
+ const t=((trades||{}).open_trades||[])[0],side=document.getElementById('live-side'),r=document.getElementById('live-r');
+ if(!t){side.textContent='NO TRADE';r.textContent='0.00R';r.style.color='var(--text3)';['lv-entry','lv-sl','lv-tp1','lv-tp2'].forEach(id=>document.getElementById(id).textContent='—');document.getElementById('track-fill').style.width='0';document.getElementById('live-pnl').textContent='P&L —';renderMissionEvents(orch,agents,logs);return}
+ const dir=String(t.direction||t.type||'').toUpperCase(),buy=['BUY','LONG'].includes(dir),entry=Number(t.entry||t.entry_price||0),sl=Number(t.sl||t.current_sl||0),tp1=Number(t.tp1||t.tp||0),tp2=Number(t.tp2||t.tp||0),cur=Number(t.current_price||entry),risk=Math.abs(entry-sl)||1,rv=(buy?cur-entry:entry-cur)/risk;
 
-  volumeSeries=chart.addHistogramSeries({
-    priceScaleId:'vol',priceFormat:{type:'volume'},
-  });
-  chart.priceScale('vol').applyOptions({scaleMargins:{top:.85,bottom:0}});
-
-  /* Crosshair tooltip */
-  chart.subscribeCrosshairMove(param=>{
-    const tt=document.getElementById('ohlc-tooltip');
-    if(!param.time||!param.seriesData.has(candleSeries)){tt.style.display='none';return}
-    const c=param.seriesData.get(candleSeries);
-    if(!c)return;
-    document.getElementById('tt-o').textContent=c.open.toFixed(2);
-    document.getElementById('tt-h').textContent=c.high.toFixed(2);
-    document.getElementById('tt-l').textContent=c.low.toFixed(2);
-    const cc=document.getElementById('tt-c');
-    cc.textContent=c.close.toFixed(2);
-    cc.style.color=c.close>=c.open?'var(--green)':'var(--red)';
-    tt.style.display='block';
-  });
-
-  /* Resize */
-  const ro=new ResizeObserver(()=>{
-    chart.applyOptions({width:container.clientWidth,height:container.clientHeight});
-    requestAnimationFrame(renderZoneOverlays);
-  });
-  ro.observe(container);
-
-  /* Subscribe to price scale + time scale changes to re-render overlays */
-  chart.timeScale().subscribeVisibleTimeRangeChange(()=>requestAnimationFrame(renderZoneOverlays));
-  const rightScale=chart.priceScale('right');
-  if(rightScale&&typeof rightScale.subscribeVisiblePriceRangeChange==='function'){
-    rightScale.subscribeVisiblePriceRangeChange(()=>requestAnimationFrame(renderZoneOverlays));
-  }
-
-  loadInitialCandles();
+ side.textContent=buy?'BUY ACTIVE':'SELL ACTIVE';side.style.color=buy?'var(--green)':'var(--red)';r.textContent=`${rv>=0?'+':''}${rv.toFixed(2)}R`;r.style.color=rv>=0?'var(--green)':'var(--red)';
+ const show=(id,v)=>document.getElementById(id).textContent=v>0?v.toFixed(2):'—';show('lv-entry',entry);show('lv-sl',sl);show('lv-tp1',tp1);show('lv-tp2',tp2);
+ document.getElementById('track-fill').style.width=`${Math.max(0,Math.min(69,((cur-entry)/(Math.abs(tp2-entry)||1))*69))}%`;document.getElementById('live-pnl').textContent=`P&L ${Number(t.pnl||0).toFixed(2)}$`;document.getElementById('live-strategy').textContent=t.strategy||orch.strategy||'UNIFIED KASPER / PDE';renderMissionEvents(orch,agents,logs);
 }
 
-/* ── LOAD CANDLES ────────────────────────────────────────────────────────── */
-async function loadInitialCandles(){
-  try{
-    const r=await fetch(API_CANDLES);
-    const d=await r.json();
-    const cs=d.candles||[];
-    if(cs.length){
-      candleSeries.setData(cs);
-      volumeSeries.setData(cs.map(c=>({time:c.time,value:c.volume||0,color:c.close>=c.open?'rgba(0,255,138,.12)':'rgba(255,61,106,.12)'})));
-      chart.timeScale().scrollToRealTime();
-      document.getElementById('chart-meta').textContent=`XAUUSD 1M · ${cs.length} bougies`;
-      lastCandles=cs;
-    }
-  }catch(e){console.warn('Candles fetch error:',e)}
-}
+function renderMissionEvents(orch,agents,logs){const out=[];if(orch.decision)out.push(['NOW','ORCH',`${orch.decision} · ${orch.setup_grade||''}`]);AGENTS_META.forEach(a=>{const x=agents[a.id]||{};if(x.reason)out.push(['NOW',a.name,String(x.reason).slice(0,80)])});(logs||[]).slice(-2).forEach(x=>out.push(['LOG',x.level||'INFO',x.message||x.msg||'event']));document.getElementById('mission-events').innerHTML=out.slice(0,6).map(e=>`<div class="mission-event"><time>${e[0]}</time><b>${e[1]}</b><span>${e[2]}</span></div>`).join('')||'<div class="mission-event"><span>En attente de télémétrie…</span></div>'}
 
-function updateCandle(c){
-  if(!c||!c.time) return;
-  candleSeries.update(c);
-  volumeSeries.update({time:c.time,value:c.volume||0,color:c.close>=c.open?'rgba(0,255,138,.12)':'rgba(255,61,106,.12)'});
-
-  const hp=document.getElementById('hdr-price');
-  const isUp=c.close>lastPrice;
-  hp.textContent=c.close.toFixed(2);
-  hp.className='hdr-price '+(isUp?'up':'dn');
-  lastPrice=c.close;
-}
-
-/* ── ZONE OVERLAYS ───────────────────────────────────────────────────────── */
-/*
-  We render all visual layer zones as absolutely-positioned divs over the chart.
-  Each frame we recalculate pixel coordinates from price+time → pixel.
-  This approach is 100% compatible with all TradingView LC versions.
-*/
-
-let pendingZoneRender=false;
-function scheduleZoneRender(){
-  if(!pendingZoneRender){
-    pendingZoneRender=true;
-    requestAnimationFrame(()=>{pendingZoneRender=false;renderZoneOverlays()});
-  }
-}
-
-function priceToY(price){
-  if(!candleSeries)return null;
-  return candleSeries.priceToCoordinate(price);
-}
-function timeToX(t){
-  if(!chart)return null;
-  return chart.timeScale().timeToCoordinate(t);
-}
-function chartWidth(){return document.getElementById('chart-container').clientWidth}
-function chartHeight(){return document.getElementById('chart-container').clientHeight}
-function visibleFill(color,minAlpha=.16){
-  return String(color||'').replace(/rgba\(([^,]+),([^,]+),([^,]+),([^)]+)\)/,(m,r,g,b,a)=>{
-    const alpha=Math.max(parseFloat(a)||0,minAlpha);
-    return `rgba(${r},${g},${b},${alpha})`;
-  })||color;
-}
-
-function renderZoneOverlays(){
-  const overlay=document.getElementById('zones-overlay');
-  overlay.innerHTML='';
-  if(!chart||!candleSeries) return;
-  const W=chartWidth(), H=chartHeight();
-  const now=Math.floor(Date.now()/1e3);
-  const farFuture=now+7*86400;
-
-  /* ── KILL ZONES (time backgrounds) ──────────────────────────────────── */
-  if(layerVis.kz){
-    const today=new Date();
-    const day=today.getUTCDate();
-    const mo=today.getUTCMonth();
-    const yr=today.getUTCFullYear();
-
-    const kzDefs=[
-      {h0:7,h1:10,color:'rgba(0,212,255,.06)',label:'LDN'},
-      {h0:12,h1:15,color:'rgba(255,61,106,.05)',label:'NY'},
-      {h0:12,h1:16,color:'rgba(168,85,247,.04)',label:'OVL'},
-    ];
-    kzDefs.forEach(kz=>{
-      const t0=Date.UTC(yr,mo,day,kz.h0,0,0)/1e3;
-      const t1=Date.UTC(yr,mo,day,kz.h1,0,0)/1e3;
-      let x0=timeToX(t0), x1=timeToX(t1);
-      if(x0===null&&x1===null)return;
-      x0=x0??0; x1=x1??W;
-      if(x1<=x0)return;
-      const d=document.createElement('div');
-      d.className='kz-bg';
-      d.style.cssText=`left:${x0}px;width:${x1-x0}px;background:${kz.color};border-left:1px solid ${kz.color.replace(/[\d.]+\)$/,'0.4)')};`;
-      overlay.appendChild(d);
-    });
-  }
-
-  /* ── ORDER BLOCKS & FVG (price rectangles) ───────────────────────────── */
-  const agent2Layers=(visualLayers.agent_2||[]);
-  agent2Layers.forEach(layer=>{
-    if(!layer.price_top||!layer.price_bottom)return;
-    const isOB=layer.label&&layer.label.toLowerCase().includes('ob');
-    const isFVG=layer.label&&layer.label.toLowerCase().includes('fvg');
-    if(isOB&&!layerVis.ob)return;
-    if(isFVG&&!layerVis.fvg)return;
-
-    const y1=priceToY(layer.price_top);
-    const y2=priceToY(layer.price_bottom);
-    if(y1===null||y2===null)return;
-    const x1=layer.time_start?timeToX(layer.time_start):0;
-    const x2=layer.time_end?timeToX(layer.time_end):W+200;
-    const x0=Math.max(x1??0,0);
-    const x9=Math.min(x2??W+200,W+200);
-    if(x9<=x0)return;
-
-    const top=Math.min(y1,y2), h=Math.abs(y2-y1);
-    if(h<1)return;
-
-    const d=document.createElement('div');
-    d.className='zone-rect';
-    d.style.cssText=`top:${top}px;height:${h}px;left:${x0}px;width:${x9-x0}px;background:${visibleFill(layer.color,isFVG ? .18 : .16)};border-color:${layer.border_color};`;
-    const lbl=document.createElement('div');
-    lbl.className='zone-label';
-    lbl.style.color=layer.border_color;
-    lbl.textContent=layer.label||'';
-    d.appendChild(lbl);
-    overlay.appendChild(d);
-  });
-
-  /* ── FIBONACCI OTE ──────────────────────────────────────────────────── */
-  if(layerVis.fib){
-    const fib4=(visualLayers.agent_4||[]);
-    fib4.forEach(layer=>{
-      if(layer.layer_type==='rectangle'){
-        const y1=priceToY(layer.price_top), y2=priceToY(layer.price_bottom);
-        if(y1===null||y2===null)return;
-        const top=Math.min(y1,y2), h=Math.abs(y2-y1);
-        if(h<1)return;
-        const d=document.createElement('div');
-        d.className='zone-rect';
-        d.style.cssText=`top:${top}px;height:${h}px;left:0;width:${W+200}px;background:${visibleFill(layer.color,.16)};border-color:${layer.border_color};border-left:none;border-right:none;`;
-        const lbl=document.createElement('div');
-        lbl.className='zone-label';
-        lbl.style.color=layer.border_color;
-        lbl.textContent=layer.label||'';
-        d.appendChild(lbl);
-        overlay.appendChild(d);
-      }
-      if(layer.layer_type==='hline'){
-        const y=priceToY(layer.price);
-        if(y===null)return;
-        drawHLine(overlay,y,W,layer.color,layer.style,layer.width,layer.label);
-      }
-    });
-  }
-
-  /* ── LIQUIDITÉ EQH/EQL ───────────────────────────────────────────────── */
-  if(layerVis.liq){
-    const liq3=(visualLayers.agent_3||[]).filter(l=>l.layer_type==='hline');
-    liq3.forEach(layer=>{
-      const y=priceToY(layer.price);
-      if(y===null)return;
-      drawHLine(overlay,y,W,layer.color,layer.style,layer.width,layer.label);
-    });
-    /* Asian Range */
-    const asian=(visualLayers.agent_3||[]).filter(l=>l.layer_type==='rectangle');
-    asian.forEach(layer=>{
-      const y1=priceToY(layer.price_top), y2=priceToY(layer.price_bottom);
-      if(y1===null||y2===null)return;
-      const top=Math.min(y1,y2), h=Math.abs(y2-y1);
-      if(h<1)return;
-      const x1=layer.time_start?timeToX(layer.time_start):0;
-      const x2=layer.time_end?timeToX(layer.time_end):W;
-      const x0=Math.max(x1??0,0), x9=Math.min(x2??W,W);
-      if(x9<=x0)return;
-      const d=document.createElement('div');
-      d.className='zone-rect';
-      d.style.cssText=`top:${top}px;height:${h}px;left:${x0}px;width:${x9-x0}px;background:${visibleFill(layer.color,.14)};border-color:${layer.border_color};`;
-      overlay.appendChild(d);
-    });
-  }
-
-  /* ── VOLUME PROFILE ──────────────────────────────────────────────────── */
-  if(layerVis.vp){
-    const vp7=(visualLayers.agent_7||[]).filter(l=>l.layer_type==='hline');
-    vp7.forEach(layer=>{
-      const y=priceToY(layer.price);
-      if(y===null)return;
-      const isPOC=layer.label&&layer.label.includes('POC');
-      drawHLine(overlay,y,W,layer.color,layer.style,isPOC?2:1,layer.label);
-    });
-  }
-
-  /* ── CHoCH MARKERS ───────────────────────────────────────────────────── */
-  if(layerVis.choch){
-    const a5=(visualLayers.agent_5||[]).filter(l=>l.layer_type==='hline');
-    a5.forEach(layer=>{
-      const y=priceToY(layer.price);
-      if(y===null)return;
-      drawHLine(overlay,y,W,layer.color,'solid',2,layer.label);
-    });
-    const a5markers=(visualLayers.agent_5||[]).filter(l=>l.layer_type==='marker');
-    a5markers.forEach(m=>{
-      const x=timeToX(m.time), y=priceToY(m.price);
-      if(x===null||y===null)return;
-      const dot=document.createElement('div');
-      dot.style.cssText=`position:absolute;width:10px;height:10px;border-radius:50%;background:${m.color};left:${x-5}px;top:${y-5}px;box-shadow:0 0 6px ${m.color};`;
-      overlay.appendChild(dot);
-    });
-  }
-}
-
-function drawHLine(overlay,y,W,color,style,width,label){
-  const line=document.createElement('div');
-  const dash=style==='dashed'?'8px 4px':style==='dotted'?'2px 4px':null;
-  line.style.cssText=`position:absolute;left:0;top:${y}px;width:${W}px;height:${width||1}px;background:${dash?'transparent':color};${dash?`border-top:${width||1}px dashed ${color};`:''};`;
-  if(label){
-    const lbl=document.createElement('span');
-    lbl.style.cssText=`position:absolute;right:4px;top:-10px;font-size:9px;color:${color};font-family:var(--font-data);white-space:nowrap;`;
-    lbl.textContent=label;
-    line.appendChild(lbl);
-  }
-  overlay.appendChild(line);
-}
 
 /* ── ORCHESTRATOR BRAIN CANVAS ───────────────────────────────────────────── */
 function initBrainCanvas(){
@@ -1092,15 +855,16 @@ function addLogEntry(decision,score,strategy){
   while(feed.children.length>50)feed.removeChild(feed.lastChild);
 }
 
-/* ── LAYER TOGGLES ───────────────────────────────────────────────────────── */
-function toggleLayer(key,el){
-  layerVis[key]=!layerVis[key];
-  el.classList.toggle('on',layerVis[key]);
-  scheduleZoneRender();
-}
-
 /* ── WEBSOCKET ───────────────────────────────────────────────────────────── */
 function connectWS(){
+  if(!WS_URL){
+    const dot=document.getElementById('conn-dot');
+    const lbl=document.getElementById('conn-label');
+    dot.className='conn-dot';
+    lbl.textContent='BACKEND À CONFIGURER';
+    lbl.style.color='var(--gold)';
+    return;
+  }
   if(ws){try{ws.close()}catch(e){}}
   ws=new WebSocket(WS_URL);
 
@@ -1118,11 +882,12 @@ function connectWS(){
   ws.onmessage=({data})=>{
     try{
       const msg=JSON.parse(data);
-      if(msg.ts){
-        const latencyMs=Math.max(0,Date.now()-msg.ts*1000);
-        document.getElementById('sb-latency').textContent=`${latencyMs} ms`;
+      if(msg.ts_ms||msg.ts){
+        const sentAt=msg.ts_ms||msg.ts*1000;
+        const latencyMs=Math.max(0,Date.now()-sentAt);
+        document.getElementById('sb-latency').textContent=`${latencyMs} ms`;const ml=document.getElementById('stream-latency');if(ml)ml.textContent=`${latencyMs} ms`;
       }
-      if(msg.type==='full_state') processState(msg.data);
+      if(msg.type==='full_state') processState(msg.data,msg.trades||{},msg.logs||[]);
     }catch(e){}
   };
 
@@ -1138,22 +903,11 @@ function connectWS(){
   };
 }
 
-function processState(data){
+function processState(data,trades={},logs=[]){
   const market=data.market||{};
   const agents=data.agents||{};
   const orch=data.orchestrator||{};
   const perf=data.performance||{};
-
-  /* Candles */
-  const candles=data.candles_1m||[];
-  if(candles.length) updateCandle(candles[candles.length-1]);
-
-  /* Visual layers */
-  if(data.visual_layers){
-    visualLayers=data.visual_layers;
-    if(candleSeries)candleSeries.applyOptions({});
-    scheduleZoneRender();
-  }
 
   /* Agents */
   AGENTS_META.forEach(a=>{
@@ -1166,11 +920,7 @@ function processState(data){
   updateOrchestrator(orch);
   updateMetrics(market,perf,orch);
   addLogEntry(orch.decision,orch.final_score||0,orch.strategy);
-}
-
-/* ── TIMEFRAME (placeholder) ─────────────────────────────────────────────── */
-function setTF(tf){
-  document.querySelectorAll('.tf-btn').forEach(b=>b.classList.toggle('active',b.textContent===tf.toUpperCase()));
+  updateMissionUI(orch,agents,trades,logs);
 }
 
 /* ── CLOCK ───────────────────────────────────────────────────────────────── */
@@ -1184,84 +934,28 @@ function startClock(){
   },1000);
 }
 
-/* ── MOCK DATA (for offline preview / dev) ───────────────────────────────── */
-function injectMockData(){
-  const mock={
-    market:{current_price:3418.55,spread_points:22,regime:'TRENDING',session:'LONDON',dxy_bias:'BEARISH',pearson_dxy_gold:-0.72},
-    agents:{
-      agent_1:{score:88,direction:'LONG',hard_filter_pass:true,reason:'MTF_ALIGNED_LONG'},
-      agent_2:{score:82,direction:'LONG',hard_filter_pass:true,reason:'FRESH_OB_87pts'},
-      agent_3:{score:75,direction:'LONG',hard_filter_pass:true,reason:'SWEEP_SSL_CONFIRMED'},
-      agent_4:{score:91,direction:'LONG',hard_filter_pass:true,reason:'IN_OTE_ZONE 94%'},
-      agent_5:{score:87,direction:'LONG',hard_filter_pass:true,reason:'AMD_COMPLETE_CHoCH'},
-      agent_6:{score:100,direction:null,hard_filter_pass:true,reason:'CLEAR'},
-      agent_7:{score:100,direction:null,hard_filter_pass:true,reason:'LONDON_OPEN'},
-    },
-    orchestrator:{final_score:87.4,decision:'EXECUTE',direction:'LONG',strategy:'LONDON_OPEN_SWEEP_REVERSAL'},
-    performance:{total_trades:12,winrate:66.7,daily_pnl:47.80,equity:1047.80},
-    visual_layers:{
-      agent_2:[
-        {layer_type:'rectangle',id:'ob1',time_start:1700000000,time_end:null,price_top:3415.00,price_bottom:3411.20,color:'rgba(16,185,129,.15)',border_color:'rgba(16,185,129,.7)',label:'OB Bull 87pts'},
-        {layer_type:'rectangle',id:'fvg1',time_start:1700001000,time_end:null,price_top:3420.50,price_bottom:3418.80,color:'rgba(250,204,21,.06)',border_color:'rgba(250,204,21,.3)',label:'FVG'},
-      ],
-      agent_3:[
-        {layer_type:'hline',id:'eqh1',time_start:1699990000,price:3425.00,color:'rgba(250,204,21,.8)',style:'dashed',width:1,label:'BSL 3425.00'},
-        {layer_type:'hline',id:'eql1',time_start:1699990000,price:3408.50,color:'rgba(250,204,21,.8)',style:'dashed',width:1,label:'SSL 3408.50'},
-      ],
-      agent_4:[
-        {layer_type:'rectangle',id:'ote',time_start:1699980000,time_end:null,price_top:3420.00,price_bottom:3411.50,color:'rgba(245,158,11,.10)',border_color:'rgba(245,158,11,.5)',label:'OTE Zone'},
-        {layer_type:'hline',id:'sweet',time_start:1699980000,price:3415.30,color:'rgba(245,158,11,.9)',style:'dashed',width:2,label:'70.5% Sweet Spot'},
-        {layer_type:'hline',id:'eq',time_start:1699980000,price:3422.00,color:'rgba(148,163,184,.5)',style:'dashed',width:1,label:'EQ 50%'},
-      ],
-      agent_5:[
-        {layer_type:'hline',id:'choch',time_start:1700003000,price:3416.80,color:'rgba(0,255,138,.9)',style:'solid',width:2,label:'CHoCH ▲ @ 3416.80'},
-        {layer_type:'marker',id:'sw',time:1700002500,price:3412.10,color:'rgba(59,130,246,1)',shape:'circle',label:'Sweep 1M'},
-      ],
-      agent_7:[
-        {layer_type:'hline',id:'poc',time_start:1699900000,price:3416.00,color:'rgba(255,61,106,.85)',style:'solid',width:2,label:'POC 3416.00'},
-        {layer_type:'hline',id:'vah',time_start:1699900000,price:3424.50,color:'rgba(0,255,138,.6)',style:'dashed',width:1,label:'VAH 3424.50'},
-        {layer_type:'hline',id:'val',time_start:1699900000,price:3409.00,color:'rgba(255,61,106,.6)',style:'dashed',width:1,label:'VAL 3409.00'},
-      ],
-    },
-    candles_1m:[],
-  };
+document.body.dataset.mobileView='home';
+document.querySelectorAll('#mobile-nav button').forEach(btn=>btn.addEventListener('click',()=>{
+  document.querySelectorAll('#mobile-nav button').forEach(x=>x.classList.remove('active'));
+  btn.classList.add('active');
+  const target=btn.dataset.target;
+  document.body.dataset.mobileView=target==='panel-agents'?'agents':target==='live-section'?'trade':target==='orch-section'?'orch':target==='log-section'?'logs':'home';
+  window.scrollTo({top:0,behavior:'smooth'});
+}));
 
-  /* Generate mock candles */
-  const now=Math.floor(Date.now()/1e3);
-  let price=3400;
-  for(let i=200;i>=0;i--){
-    const t=now-i*60;
-    const o=price+(Math.random()-.5)*2;
-    const h=o+Math.random()*3;
-    const l=o-Math.random()*3;
-    const c=l+(h-l)*Math.random();
-    price=c;
-    mock.candles_1m.push({time:t,open:o,high:h,low:l,close:c,volume:Math.random()*500+100});
-  }
-
-  processState(mock);
-  /* Simulate live ticks */
-  let lp=mock.candles_1m[mock.candles_1m.length-1].close;
-  setInterval(()=>{
-    const t=Math.floor(Date.now()/1e3);
-    lp+=((Math.random()-.5)*0.8);
-    updateCandle({time:Math.floor(t/60)*60,open:lp-0.3,high:lp+0.8,low:lp-0.8,close:lp,volume:200});
-    scheduleZoneRender();
-  },1500);
-}
 
 /* ── BOOT ────────────────────────────────────────────────────────────────── */
 window.addEventListener('DOMContentLoaded',()=>{
   buildAgentPanel();
-  initChart();
   initBrainCanvas();
   startClock();
   connectWS();
 
-  /* Si pas de connexion WS après 2s, injecter mock data pour la démo */
+  /* Offline mode stays explicit: never display synthetic market data in production. */
   setTimeout(()=>{
     if(!ws||ws.readyState!==WebSocket.OPEN){
-      injectMockData();
+      const label=document.getElementById('conn-label');
+      if(label){label.textContent='OFFLINE';label.style.color='var(--red)';}
     }
   },2000);
 });

@@ -1,9 +1,12 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from safety.research_branch_guard import current_git_branch, research_shadow_only_enabled
 
 if os.getenv("GOLD_SNIPER_SKIP_DOTENV", "0") != "1":
-    load_dotenv()
+    _CONFIG_DIR = Path(__file__).resolve().parent
+    load_dotenv(_CONFIG_DIR / ".env")
+    load_dotenv(_CONFIG_DIR / ".env.runtime", override=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GOLD SNIPER v3.1 — CONFIGURATION GLOBALE

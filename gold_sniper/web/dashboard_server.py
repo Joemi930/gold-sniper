@@ -7,6 +7,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from urllib.parse import quote
 
 from aiohttp import web
 
@@ -26,6 +27,7 @@ from utils.discord_notifier import _notifier_from_config
 
 
 HTML_PATH = Path(__file__).parent / "dashboard.html"
+ASSETS_PATH = Path(__file__).parent / "assets"
 CLOUDFLARE_URL_RE = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
 BEARER_TOKEN_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 SECRET_ASSIGNMENT_RE = re.compile(
@@ -81,6 +83,8 @@ def create_dashboard_app(blackboard=BLACKBOARD) -> web.Application:
     app.router.add_get("/api/agents", handle_agents)
     app.router.add_get("/api/candles", handle_candles_history)
     app.router.add_get("/ws", websocket_handler)
+    if ASSETS_PATH.exists():
+        app.router.add_static("/assets", ASSETS_PATH, show_index=False)
     return app
 
 
@@ -155,7 +159,7 @@ def build_dashboard_agents_state(data: dict[str, Any]) -> dict[str, Any]:
 
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
     blackboard = request.app["blackboard"]
-    ws = web.WebSocketResponse(heartbeat=20)
+    ws = web.WebSocketResponse(heartbeat=10, compress=True)
     await ws.prepare(request)
     update_event = blackboard.dashboard_update_event
 
@@ -169,8 +173,6 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
             "agents": dashboard_agents,
             "orchestrator": sanitize_for_json(raw_data.get("orchestrator", {})),
             "performance": sanitize_for_json(raw_data.get("performance", {})),
-            "visual_layers": VISUAL_LAYERS.get_all_as_dict(),
-            "candles_1m": _get_recent_candles_1m(blackboard, limit=200),
         }
         payload = redact_dashboard_payload(
             sanitize_for_json(
@@ -181,8 +183,8 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                     "trades": build_trades_payload(raw_data),
                     "agents": build_agents_payload(raw_data),
                     "logs": read_recent_logs(limit=40),
-                    "visual_layers": dashboard_data["visual_layers"],
                     "ts": int(time.time()),
+                    "ts_ms": int(time.time() * 1000),
                 }
             )
         )
@@ -298,6 +300,16 @@ def is_dashboard_running() -> bool:
 
 def get_dashboard_session() -> dict[str, Any]:
     return {"runner": _dashboard_runner, "public_url": _dashboard_public_url}
+
+
+def build_dashboard_access_url(backend_url: str | None) -> str | None:
+    """Return the primary Cloudflare dashboard URL with its access token."""
+    if not backend_url:
+        return None
+    if not DASHBOARD_TOKEN:
+        return backend_url
+    separator = "&" if "?" in backend_url else "?"
+    return f"{backend_url}{separator}token={quote(DASHBOARD_TOKEN, safe='')}"
 
 
 async def bootstrap_dashboard(blackboard, launch_cloudflare: bool = True) -> str | None:

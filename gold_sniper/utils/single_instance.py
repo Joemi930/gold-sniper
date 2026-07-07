@@ -113,6 +113,9 @@ def prepare_clean_stack_start() -> None:
     terminate_duplicate_watchdogs()
     for pid in find_pids("watchdog.py", "main.py"):
         _force_kill(pid)
+    deadline = time.monotonic() + 15.0
+    while find_pids("watchdog.py", "main.py") and time.monotonic() < deadline:
+        time.sleep(0.25)
     clear_stack_artifacts()
     cleanup_before_tunnel(settle_seconds=1.5, include_listeners=True)
 

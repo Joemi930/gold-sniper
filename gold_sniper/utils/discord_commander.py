@@ -400,6 +400,8 @@ class DiscordCommander:
             try:
                 row = conn.execute("SELECT COUNT(*) FROM trades").fetchone()
                 count = int(row[0]) if row else 0
+            except sqlite3.Error:
+                count = 0
             finally:
                 conn.close()
         if count < 50 and (not args or args[0].lower() != "confirm"):
