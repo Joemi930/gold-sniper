@@ -188,7 +188,7 @@ def main() -> int:
     parser.add_argument("--days", type=int, default=2)
     parser.add_argument("--warmup", type=int, default=1440)
     parser.add_argument("--step", type=int, default=15)
-    parser.add_argument("--risk-scale", type=float, default=3.0)
+    parser.add_argument("--risk-scale", type=float, default=6.0)
     parser.add_argument("--max-divergences", type=int, default=5)
     return asyncio.run(run(parser.parse_args()))
 
