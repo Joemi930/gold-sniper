@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 MANAGER_LOCK = ROOT_DIR / "data" / "pc_manager.lock"
@@ -141,7 +143,6 @@ def can_start_bot_stack() -> bool:
 
 
 def _force_kill(pid: int) -> None:
-    import subprocess
     import sys
 
     if not _pid_alive(pid):
@@ -152,6 +153,7 @@ def _force_kill(pid: int) -> None:
                 ["taskkill", "/PID", str(pid), "/F", "/T"],
                 capture_output=True,
                 timeout=10,
+                creationflags=CREATE_NO_WINDOW,
             )
             deadline = time.monotonic() + 5.0
             while _pid_alive(pid) and time.monotonic() < deadline:

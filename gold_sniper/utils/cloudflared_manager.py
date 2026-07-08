@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
 
 try:
     from config import CLOUDFLARED_PATH, DASHBOARD_PORT
@@ -26,6 +27,7 @@ def _force_kill_pid(pid: int) -> None:
                 ["taskkill", "/PID", str(pid), "/F", "/T"],
                 capture_output=True,
                 timeout=15,
+                creationflags=CREATE_NO_WINDOW,
             )
         else:
             import os

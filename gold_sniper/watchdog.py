@@ -10,6 +10,8 @@ import json
 import os
 import signal
 import subprocess
+
+CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
 import sys
 import time
 from datetime import datetime, timezone
@@ -138,6 +140,7 @@ def _stop_main(grace_seconds: float = 15.0) -> None:
                     ["taskkill", "/PID", str(proc.pid), "/F", "/T"],
                     capture_output=True,
                     timeout=10,
+                    creationflags=CREATE_NO_WINDOW,
                 )
             else:
                 proc.terminate()

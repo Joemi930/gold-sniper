@@ -309,3 +309,96 @@ Ces changements sont chargés depuis les fichiers du projet à chaque nouveau d�
 37 subtests passed
 Durée : 72.65 s
 ```
+
+## 11. Correction finale de l’autostart et suppression des fenêtres visibles
+
+### 11.1 Incident constaté
+
+Après extinction/allumage du PC, la tâche Windows s’était bien exécutée avec un résultat `0`, mais Gold Sniper n’était plus actif plusieurs heures plus tard. La cause était architecturale : la tâche lançait un script VBS qui démarrait directement le PC Manager, sans superviseur persistant capable de le relancer si ce dernier quittait après une coupure réseau ou un échec prolongé de reconnexion Discord.
+
+### 11.2 Superviseur d’autostart permanent
+
+Le fichier `scripts/gold_sniper_guard.py` a été ajouté. Il fonctionne exclusivement via `pythonw.exe` et assure :
+
+- un délai global de trois minutes après le démarrage Windows ;
+- une instance unique protégée par `data/guard.lock` ;
+- une vérification du PC Manager toutes les 20 secondes ;
+- une relance automatique si le PC Manager disparaît ;
+- un intervalle minimal de 45 secondes entre deux relances ;
+- le nettoyage des anciens fichiers `pc_manager.lock` et `pc_manager.pid` lorsqu’aucun vrai PC Manager n’est actif.
+
+Le VBS déjà appelé par la tâche planifiée lance désormais ce superviseur au lieu de lancer directement le PC Manager. Cette modification s’applique automatiquement au prochain démarrage sans recréer la tâche Windows.
+### 11.3 Suppression des fenêtres et pop-ups
+
+Les processus de fond utilisent désormais systématiquement le mode Windows `CREATE_NO_WINDOW` :
+
+- lancement et arrêt de Cloudflare ;
+- `taskkill` du PC Manager, du watchdog et des nettoyeurs d’instances ;
+- contrôle Git de la branche de recherche ;
+- lancement du watchdog et de `main.py` ;
+- lancement du superviseur et du PC Manager via `pythonw.exe`.
+
+Un contrôle Windows réel a confirmé `MainWindowHandle = 0` pour :
+
+```text
+gold_sniper_guard.py
+pc_manager.py
+watchdog.py
+main.py
+cloudflared.exe
+terminal64.exe
+```
+
+Aucune fenêtre Gold Sniper, Cloudflare, Python, PowerShell ou MT5 ne doit donc apparaître pendant le démarrage normal.
+
+### 11.4 Tests de récupération
+
+La tâche `GoldSniper_PCManager` a été exécutée manuellement après nettoyage des verrous :
+
+- dernier résultat Windows : `0` ;
+- superviseur démarré en arrière-plan ;
+- PC Manager, MT5, watchdog, moteur et Cloudflare démarrés ;
+- Discord reconnecté ;
+- Dashboard et heartbeat rétablis.
+Un crash volontaire du PC Manager a ensuite été injecté :
+
+```text
+ancien PID : 14508
+nouveau PID : 29252
+```
+
+Le superviseur a relancé automatiquement le PC Manager sans interrompre le watchdog, `main.py`, MT5 ou le tunnel Cloudflare. Une seconde exécution de la tâche planifiée n’a pas créé de doublon : une seule instance du superviseur et une seule instance du PC Manager sont restées actives.
+
+### 11.5 Tests automatisés après correction
+
+```text
+1705 tests réussis
+636 avertissements
+37 sous-tests réussis
+88 comparaisons live/replay
+0 divergence
+```
+
+**Statut : autostart persistant, récupération du PC Manager et exécution sans fenêtre validés.**
+
+### 11.6 Tâche primaire de supervision
+
+Une nouvelle tâche utilisateur `GoldSniper_Guard` a été enregistrée avec succès. Contrairement à l’ancienne tâche, elle exécute directement le superviseur avec `pythonw.exe` et reste en état `En cours` tant que celui-ci est actif.
+
+Configuration confirmée dans le XML Windows :
+
+```text
+Déclencheur : ouverture de session utilisateur
+Délai : 3 minutes
+Action : pythonw.exe scripts\gold_sniper_guard.py
+Working directory : racine du projet
+Hidden : true
+StartWhenAvailable : true
+ExecutionTimeLimit : désactivée
+RestartOnFailure : 999 tentatives, intervalle 1 minute
+MultipleInstances : IgnoreNew
+```
+
+L’ancienne tâche `GoldSniper_PCManager` est conservée comme secours. Son VBS attend désormais 30 secondes supplémentaires avant de tenter le lancement du même superviseur ; le verrou `guard.lock` empêche tout doublon.
+
+Au dernier contrôle, `GoldSniper_Guard` était en état `En cours`, le moteur était en phase `engine_ready`, le mode était `PAPER` et le heartbeat avait moins de deux secondes.
