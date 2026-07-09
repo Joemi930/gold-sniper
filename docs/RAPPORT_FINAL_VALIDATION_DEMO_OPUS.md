@@ -402,3 +402,37 @@ MultipleInstances : IgnoreNew
 L’ancienne tâche `GoldSniper_PCManager` est conservée comme secours. Son VBS attend désormais 30 secondes supplémentaires avant de tenter le lancement du même superviseur ; le verrou `guard.lock` empêche tout doublon.
 
 Au dernier contrôle, `GoldSniper_Guard` était en état `En cours`, le moteur était en phase `engine_ready`, le mode était `PAPER` et le heartbeat avait moins de deux secondes.
+
+
+## 12. Validation finale du calendrier économique
+
+Le spam Discord `NEWS FEED DOWN` provenait d'une confusion entre un calendrier valide mais vide et une panne réelle de toutes les sources. La correction finale impose désormais :
+
+- distinction explicite entre calendrier vide et feed indisponible ;
+- une seule alerte Discord par incident réel ;
+- réarmement de l'alerte uniquement après rétablissement ;
+- cooldown des fournisseurs qui retournent `401`, `402` ou `403` ;
+- cache ForexFactory conservé comme source gratuite principale et résiliente.
+
+Validation réelle du 9 juillet 2026 :
+
+```text
+SOURCE=FOREXFACTORY
+FEED_ALIVE=True
+EVENTS=0
+WARNINGS=2
+LAST_ERROR=None
+```
+
+Le résultat `EVENTS=0` signifie qu'aucun événement pertinent n'était présent dans la fenêtre chargée ; ce n'est plus interprété comme une panne. L'utilisateur a également confirmé plus d'une heure sans nouvelle alerte répétitive.
+
+La nouvelle `FMP_TOKEN` a été chargée puis testée, mais FMP a répondu `HTTP 401`. Finnhub reste également indisponible sur l'endpoint calendrier avec l'offre actuelle. Ces fournisseurs ne bloquent plus l'Agent 6 : ForexFactory est la source opérationnelle, le feed est vivant et le mode `ASSUME HOSTILE` ne s'active que si toutes les sources et le cache deviennent réellement indisponibles.
+
+Tests ciblés après correction :
+
+```text
+5 tests réussis
+0 échec
+```
+
+**Statut final du calendrier : opérationnel via ForexFactory, alerte anti-spam validée.**
