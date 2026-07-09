@@ -59,8 +59,11 @@ BLACKOUT_WINDOWS = {
     "MEDIUM": {"before": 15, "after": 10},
     "LOW": {"before": 0, "after": 0},
 }
-CALENDAR_CACHE_TTL = timedelta(hours=24)
+CALENDAR_CACHE_TTL = timedelta(minutes=15)
 HIGH_IMPACT_FORCE_REFRESH_WINDOW = timedelta(minutes=90)
+HIGH_IMPACT_REFRESH_TTL = timedelta(minutes=5)
+PROVIDER_TRANSIENT_RETRY_TTL = timedelta(minutes=15)
+PROVIDER_AUTH_RETRY_TTL = timedelta(hours=6)
 
 
 def _ensure_utc(value: datetime) -> datetime:
@@ -235,6 +238,9 @@ class AgentSentinelle:
         self.cache_updated_at: datetime | None = None
         self.feed_alive = True
         self.last_error: str | None = None
+        self.provider_warnings: list[str] = []
+        self._feed_down_alert_sent = False
+        self._source_retry_after: dict[str, datetime] = {}
         self._sent_pre_event_alerts: set[tuple[str, int]] = set()
         self._sent_result_alerts: set[str] = set()
 
@@ -309,44 +315,71 @@ class AgentSentinelle:
             await asyncio.sleep(5)
 
     async def refresh_events(self, force: bool = False, now: datetime | None = None) -> list:
-        """Recupere Finnhub puis fallback local/scraper en cas d'indisponibilite."""
+        """Rafraichit le calendrier sans confondre calendrier vide et source en panne."""
         now = _ensure_utc(now or datetime.now(timezone.utc))
-        cache_is_fresh = self.cache_updated_at and (now - self.cache_updated_at) < CALENDAR_CACHE_TTL
+        cache_age = (now - self.cache_updated_at) if self.cache_updated_at else None
+        cache_is_fresh = cache_age is not None and cache_age < CALENDAR_CACHE_TTL
         high_soon = has_high_impact_event_within(self.events_cache, now)
-        if not force and cache_is_fresh and not high_soon:
+        high_cache_is_fresh = cache_age is not None and cache_age < HIGH_IMPACT_REFRESH_TTL
+        if not force and cache_is_fresh and (not high_soon or high_cache_is_fresh):
             return self.events_cache
         if high_soon:
-            self.logger.warning("Agent 6: HIGH impact <90 min detecte dans le cache, refresh Finnhub force")
+            self.logger.info("Agent 6: HIGH impact <90 min, refresh limite a une fois toutes les 5 min")
 
-        errors = []
+        errors: list[str] = []
         for source_name, fetcher in (
             ("FINNHUB", self._fetch_finnhub),
             ("FMP", self._fetch_fmp),
         ):
+            retry_after = self._source_retry_after.get(source_name)
+            if retry_after and now < retry_after:
+                errors.append(f"{source_name}: cooldown jusqu'a {retry_after.isoformat()}")
+                continue
             try:
                 events = await fetcher(now)
-                self.events_cache = events
-                self.cache_updated_at = now
-                self.feed_alive = True
-                self.calendar_source = source_name
-                self.last_error = None
+                self._mark_feed_success(source_name, events, now)
                 return events
             except Exception as exc:
-                errors.append(f"{source_name}: {exc}")
+                message = f"{source_name}: {exc}"
+                errors.append(message)
+                self._source_retry_after[source_name] = now + self._retry_ttl_for_error(str(exc))
 
-        self.feed_alive = False
-        self.last_error = "; ".join(errors)
-        fallback_events = await self._fallback_calendar(now)
-        if fallback_events:
-            self.events_cache = fallback_events
-            self.cache_updated_at = now
-            self.feed_alive = True
-            self.calendar_source = "FOREXFACTORY"
+        fallback_events, fallback_ok = await self._fallback_calendar(now)
+        if fallback_ok:
+            self.provider_warnings = errors
+            self._mark_feed_success("FOREXFACTORY", fallback_events, now, clear_warnings=False)
             return self.events_cache
 
+        self.feed_alive = False
+        self.provider_warnings = errors
+        self.last_error = "; ".join(errors) or "Aucune source calendrier disponible"
         self.calendar_source = "CACHE"
         await self._notify_feed_down_once()
         return self.events_cache
+
+    def _retry_ttl_for_error(self, message: str) -> timedelta:
+        upper = str(message).upper()
+        if any(token in upper for token in ("HTTP 401", "HTTP 402", "HTTP 403", "TOKEN MANQUANT")):
+            return PROVIDER_AUTH_RETRY_TTL
+        return PROVIDER_TRANSIENT_RETRY_TTL
+
+    def _mark_feed_success(
+        self,
+        source_name: str,
+        events: list,
+        now: datetime,
+        *,
+        clear_warnings: bool = True,
+    ) -> None:
+        self.events_cache = list(events or [])
+        self.cache_updated_at = now
+        self.feed_alive = True
+        self.calendar_source = source_name
+        self.last_error = None
+        self._feed_down_alert_sent = False
+        self._source_retry_after.pop(source_name, None)
+        if clear_warnings:
+            self.provider_warnings = []
 
     async def _fetch_finnhub(self, now: datetime) -> list:
         """Fetch depuis Finnhub calendar/economic gratuit."""
@@ -395,18 +428,19 @@ class AgentSentinelle:
         events = [normalize_calendar_event(event, now) for event in raw_events or []]
         return [event for event in events if is_gold_relevant_event(event)]
 
-    async def _fallback_calendar(self, now: datetime) -> list:
-        """Fallback scraper existant si disponible; sinon conserve le cache."""
+    async def _fallback_calendar(self, now: datetime) -> tuple[list, bool]:
+        """Retourne (evenements, source_joignable), meme si aucun evenement futur."""
         if EconomicCalendarScraper is None:
-            return self.events_cache
+            return self.events_cache, False
         try:
             scraper = EconomicCalendarScraper()
             raw_events = await scraper.fetch_next_major_events()
             events = [normalize_calendar_event(event, now) for event in raw_events or []]
-            return [event for event in events if is_gold_relevant_event(event)]
+            relevant = [event for event in events if is_gold_relevant_event(event)]
+            return relevant, bool(getattr(scraper, "last_fetch_ok", False))
         except Exception as exc:
-            self.last_error = f"{self.last_error}; fallback={exc}"
-            return self.events_cache
+            self.logger.warning(f"Fallback ForexFactory indisponible: {exc}")
+            return self.events_cache, False
 
     async def check_and_update_blackboard(self, now: datetime | None = None) -> dict:
         """Evalue le calendrier et alerte les autres agents via le Blackboard."""
@@ -519,6 +553,7 @@ class AgentSentinelle:
                 "reason": state["reason"],
                 "calendar_source": self.calendar_source,
                 "last_error": self.last_error,
+                "provider_warnings": list(self.provider_warnings),
             },
         )
         await self.bb.update_dict(
@@ -566,11 +601,12 @@ class AgentSentinelle:
         )
 
     async def _notify_feed_down_once(self) -> None:
-        """Notifie Discord si la source calendrier tombe."""
-        if not self.discord:
+        """Notifie Discord une seule fois par incident de source calendrier."""
+        if self._feed_down_alert_sent or not self.discord:
             return
         try:
             await self.discord.notify_news_feed_down()
+            self._feed_down_alert_sent = True
         except Exception:
             pass
 
