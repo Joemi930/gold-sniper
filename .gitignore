@@ -17,6 +17,7 @@ gold_sniper/data/drive_token.json
 gold_sniper/data/*.lock
 gold_sniper/data/*.pid
 gold_sniper/data/*_state.json
+gold_sniper/data/agent6_feed_down_alert.json
 gold_sniper/data/discord_inbox*
 gold_sniper/data/lifecycle*
 gold_sniper/data/pc_presence_msg_*.json

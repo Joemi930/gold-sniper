@@ -71,22 +71,32 @@ class EconomicCalendarScraper:
                         self.last_fetch_ok = True
                         self.last_error = None
                         return events
-                    if response.status == 429:
-                        self.logger.warning("⚠️ ForexFactory a renvoyé 429 (Rate Limit).")
+                    if response.status != 200:
+                        self.logger.warning(f"ForexFactory a renvoyé le statut {response.status}.")
                         if cache_file.exists():
-                            self.logger.info("📅 Fallback sur l'ancien cache local.")
-                            events = self._parse_xml(cache_file.read_text(encoding="utf-8"), now)
-                            self.last_fetch_ok = True
-                            self.last_error = "HTTP 429; stale cache used"
-                            return events
-                    self.last_fetch_ok = False
-                    self.last_error = f"HTTP {response.status}"
-                    self.logger.warning(f"ForexFactory a renvoyé le statut {response.status}.")
-                    return []
+                            self.logger.info("📅 Fallback sur l'ancien cache local ForexFactory.")
+                            try:
+                                events = self._parse_xml(cache_file.read_text(encoding="utf-8"), now)
+                                self.last_fetch_ok = True
+                                self.last_error = f"HTTP {response.status}; stale cache used"
+                                return events
+                            except Exception as e:
+                                self.logger.warning(f"Erreur cache ForexFactory stale: {e}")
+                        self.last_fetch_ok = False
+                        self.last_error = f"HTTP {response.status}"
+                        return []
         except Exception as e:
-            self.last_fetch_ok = False
             self.last_error = f"{type(e).__name__}: {e}"
             self.logger.error(f"Erreur lors de la récupération du calendrier ForexFactory: {e}")
+            if cache_file.exists():
+                try:
+                    self.logger.info("📅 Fallback sur le cache ForexFactory apres exception réseau.")
+                    events = self._parse_xml(cache_file.read_text(encoding="utf-8"), now)
+                    self.last_fetch_ok = True
+                    return events
+                except Exception as cache_exc:
+                    self.logger.warning(f"Erreur cache ForexFactory apres exception: {cache_exc}")
+            self.last_fetch_ok = False
             return []
 
     def _parse_xml(self, content: str, now: datetime) -> list:

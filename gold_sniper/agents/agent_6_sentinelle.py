@@ -1,4 +1,6 @@
 import asyncio
+import json
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -64,6 +66,8 @@ HIGH_IMPACT_FORCE_REFRESH_WINDOW = timedelta(minutes=90)
 HIGH_IMPACT_REFRESH_TTL = timedelta(minutes=5)
 PROVIDER_TRANSIENT_RETRY_TTL = timedelta(minutes=15)
 PROVIDER_AUTH_RETRY_TTL = timedelta(hours=6)
+FEED_DOWN_ALERT_STATE_PATH = Path(__file__).resolve().parents[1] / "data" / "agent6_feed_down_alert.json"
+FEED_DOWN_ALERT_COOLDOWN = timedelta(hours=6)
 
 
 def _ensure_utc(value: datetime) -> datetime:
@@ -601,12 +605,29 @@ class AgentSentinelle:
         )
 
     async def _notify_feed_down_once(self) -> None:
-        """Notifie Discord une seule fois par incident de source calendrier."""
+        """Notifie Discord une seule fois par incident, meme apres redemarrage."""
         if self._feed_down_alert_sent or not self.discord:
             return
+        now = datetime.now(timezone.utc)
+        try:
+            if FEED_DOWN_ALERT_STATE_PATH.exists():
+                payload = json.loads(FEED_DOWN_ALERT_STATE_PATH.read_text(encoding="utf-8"))
+                last_raw = payload.get("last_alert_utc")
+                if last_raw:
+                    last = _parse_event_time(last_raw, now)
+                    if now - last < FEED_DOWN_ALERT_COOLDOWN:
+                        self._feed_down_alert_sent = True
+                        return
+        except Exception:
+            pass
         try:
             await self.discord.notify_news_feed_down()
             self._feed_down_alert_sent = True
+            FEED_DOWN_ALERT_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            FEED_DOWN_ALERT_STATE_PATH.write_text(
+                json.dumps({"last_alert_utc": now.isoformat(), "last_error": self.last_error}, ensure_ascii=False),
+                encoding="utf-8",
+            )
         except Exception:
             pass
 
