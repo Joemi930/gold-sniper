@@ -29,7 +29,9 @@ from utils.discord_notifier import _notifier_from_config
 
 HTML_PATH = Path(__file__).parent / "dashboard.html"
 ASSETS_PATH = Path(__file__).parent / "assets"
-CLOUDFLARE_URL_RE = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
+# (?!api\.) : cloudflared logue https://api.trycloudflare.com (endpoint API),
+# qui n'est PAS l'URL publique du tunnel (faux positif observe le 09/07 14:53).
+CLOUDFLARE_URL_RE = re.compile(r"https://(?!api\.)[a-zA-Z0-9-]+\.trycloudflare\.com")
 BEARER_TOKEN_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 SECRET_ASSIGNMENT_RE = re.compile(
     r"\b([A-Z0-9_]*(?:TOKEN|PASSWORD|SECRET|API_KEY|ACCOUNT|SERVER)[A-Z0-9_]*)=([^\s,;]+)",

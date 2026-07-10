@@ -93,6 +93,15 @@ async def send_scheduled_report(
     notifier = notifier or _notifier_from_config()
     text = build_report(blackboard, report_type)
     report_path = save_report_file(text, report_type)
+    if report_type == "daily":
+        # Fichiers d'analyse officiels (summary.json + report.md), dates,
+        # ecrits AVANT le sync Drive de 23:00 pour l'archivage mensuel.
+        try:
+            from utils.daily_summary import write_daily_files
+
+            await asyncio.to_thread(write_daily_files, blackboard)
+        except Exception as exc:
+            get_logger().warning(f"Generation summary/report.md echouee: {exc}")
     channel = "reports"
     if report_type == "weekly":
         await notifier.send_embed(

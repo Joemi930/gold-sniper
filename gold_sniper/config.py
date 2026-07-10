@@ -468,5 +468,11 @@ PYTHON_BIN = os.getenv(
     r"C:\Users\tetej\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe",
 )
 CLOUDFLARE_TUNNEL_TIMEOUT = float(os.getenv("CLOUDFLARE_TUNNEL_TIMEOUT", "120"))
+# Lien public permanent affiche a l'utilisateur (front Vercel). Si defini, c'est
+# CE lien qui est poste dans le salon d'alertes (jamais l'URL ephemere du tunnel).
+DASHBOARD_PERMANENT_URL = os.getenv("DASHBOARD_PERMANENT_URL", "").strip()
+# Base backend permanente (tunnel Cloudflare nomme) que le front Vercel interroge
+# pour les donnees live (/api/*, /ws). Vide = same-origin (dashboard local).
+DASHBOARD_BACKEND_URL = os.getenv("DASHBOARD_BACKEND_URL", "").strip()
 BOOT_READY_TIMEOUT = float(os.getenv("BOOT_READY_TIMEOUT", "180"))
 AGENT_DASHBOARD_PULSE_SEC = float(os.getenv("AGENT_DASHBOARD_PULSE_SEC", "10"))

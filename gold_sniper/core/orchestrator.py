@@ -603,6 +603,17 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
                 "last_updated": now,
             })
 
+            # ── Setup surveille (affichage dashboard, lecture seule) ─────────
+            # Ne peut JAMAIS casser la boucle de decision (try/except).
+            try:
+                from utils.pending_setup import build_pending_setup
+
+                await blackboard.update_dict("orchestrator", {
+                    "pending_setup": build_pending_setup(blackboard, decision),
+                })
+            except Exception as exc:
+                logger.debug("pending_setup build failed: %s", exc)
+
             # ── Émettre le signal de trade si EXECUTE ────────────────────────
             if decision["decision"] in {"EXECUTE", "EXCEPTIONAL_OVERRIDE"}:
                 control = blackboard._data.get("control", {})

@@ -226,8 +226,24 @@ async def async_main(blackboard: BlackBoard, stop_event: threading.Event) -> Non
     if public_url and "trycloudflare.com" in public_url:
         write_bot_ready(public_url, phase=PHASE_CLOUDFLARE_READY)
         mark_engine_ready(public_url)
+        # Met a jour la coquille Vercel (lien permanent) si le tunnel a change.
+        # Optionnel (VERCEL_TOKEN), jamais bloquant.
+        try:
+            from utils.vercel_publisher import publish_backend_url_if_changed
+
+            asyncio.create_task(publish_backend_url_if_changed(public_url))
+        except Exception as exc:
+            logger.debug(f"Vercel publisher indisponible: {exc}")
         notifier = _notifier_from_config()
-        access_url = build_dashboard_access_url(public_url) or public_url
+        # Poste le lien PERMANENT (Vercel) si configure — stable a chaque boot ;
+        # sinon l'URL tunnel (ephemere) en repli. Evite le spam de liens changeants.
+        from config import DASHBOARD_PERMANENT_URL
+
+        access_url = (
+            DASHBOARD_PERMANENT_URL
+            or build_dashboard_access_url(public_url)
+            or public_url
+        )
         await notifier.notify_system_start(
             mode="LIVE" if LIVE_MODE else "PAPER",
             symbol=SYMBOL,

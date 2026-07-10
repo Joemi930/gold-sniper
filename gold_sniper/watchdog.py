@@ -28,7 +28,12 @@ KILL_FLAG = ROOT_DIR / "kill_flag.txt"
 MAIN_PATH = ROOT_DIR / "main.py"
 MAX_RESTARTS = 5
 STARTUP_GRACE_SECONDS = 45.0
-HEARTBEAT_CRITICAL_SECONDS = 30.0
+# 120s : le recalcul MTF a la cloture 15m peut bloquer la boucle asyncio > 30s
+# (cause des ~60 faux restarts/jour du 07-09/07). Un vrai hang reste detecte.
+HEARTBEAT_CRITICAL_SECONDS = 120.0
+# Uptime au-dela duquel un run est considere stable -> reset du compteur
+# de restarts (sinon 5 restarts cumules sur plusieurs jours epuisent le watchdog).
+STABLE_UPTIME_RESET_SECONDS = 600.0
 POLL_SECONDS = 2.0
 BACKOFF_SECONDS = (2, 5, 10, 20, 30)
 
@@ -219,6 +224,9 @@ def run() -> int:
             _stop_main(grace_seconds=0.0)
             _write_state("watchdog_stopped", restart_count)
             return 0
+        uptime_at_exit = time.monotonic() - started_at
+        if uptime_at_exit >= STABLE_UPTIME_RESET_SECONDS:
+            restart_count = 0
         restart_count += 1
         _write_state("restart_pending", restart_count, reason=last_reason)
         if restart_count > MAX_RESTARTS:

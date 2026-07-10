@@ -394,7 +394,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg0);color:var
 .network-agent{position:absolute;transform:translate(-50%,-50%);width:90px;text-align:center;z-index:5}.network-agent .agent-avatar{width:58px;height:58px;margin:auto;background:var(--bg3)}
 .network-agent .agent-avatar img,.agent-avatar img{width:100%;height:100%;border-radius:50%;object-fit:cover}.network-agent b{display:block;font:700 8px var(--font-display);margin-top:5px}.network-agent small{display:block;color:var(--text3);font-size:7px;margin-top:2px}
 .network-agent.hot .agent-avatar{box-shadow:0 0 22px var(--agent-color);animation:agentFloat 2.8s ease-in-out infinite}@keyframes agentFloat{50%{transform:translateY(-4px)}}
-.live-position{min-height:308px}.trade-side{font:700 9px var(--font-display);padding:6px 9px;border-radius:10px;border:1px solid var(--border2);color:var(--text2)}
+.live-position{min-height:308px}#live-section{display:contents}#live-container{display:contents}.live-position+.live-position{margin-top:12px}.pending-setup{border-style:dashed}.pending-setup .mc-kicker{color:var(--gold)}.pending-chip-missing{color:var(--red)!important;border-color:var(--red)!important}.trade-side{font:700 9px var(--font-display);padding:6px 9px;border-radius:10px;border:1px solid var(--border2);color:var(--text2)}
 .live-symbol-row{display:flex;align-items:flex-start;justify-content:space-between;margin:19px 0}.live-symbol-row h2{font:900 24px var(--font-display);margin:0}.live-symbol-row small{color:var(--text3)}#live-r{font:900 25px var(--font-display);color:var(--green)}
 .trade-levels{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.trade-levels div{background:rgba(2,8,18,.7);border:1px solid var(--border);padding:8px;border-radius:10px}.trade-levels span{display:block;font-size:8px;color:var(--text3)}.trade-levels b{font-size:10px}
 
@@ -479,13 +479,15 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg0);color:var
 <div class="network-agent" id="net-agent_7" style="left:18%;top:76%;--agent-color:#84cc16"><div class="agent-avatar"><img src="/assets/agent_7.webp?v=3"></div><b>Chronos</b><small id="net-score-agent_7">0 · WAIT</small></div>
 <div class="network-orchestrator"><img src="/assets/orchestrator.webp?v=3" alt="Orchestrateur"><b>ORCHESTRATOR</b><small id="network-decision">INITIALISATION</small></div></div>
       </section>
-      <section class="mc-card live-position" id="live-section">
-        <div class="mc-head"><span class="mc-kicker">LIVE POSITION</span><span class="trade-side" id="live-side">NO TRADE</span></div>
-        <div class="live-symbol-row"><div><h2 id="live-symbol">XAUUSD.m</h2><small id="live-strategy">UNIFIED KASPER / PDE</small></div><strong id="live-r">0.00R</strong></div>
-        <div class="trade-levels"><div><span>ENTRY</span><b id="lv-entry">—</b></div><div><span>SL</span><b id="lv-sl">—</b></div><div><span>TP1</span><b id="lv-tp1">—</b></div><div><span>TP2</span><b id="lv-tp2">—</b></div></div>
-        <div class="position-track"><div class="track-base"></div><div class="track-fill" id="track-fill"></div><i style="left:3%;--c:var(--red)"></i><i style="left:27%;--c:var(--gold)"></i><i style="left:68%;--c:var(--green)"></i><i style="left:96%;--c:var(--green)"></i><label style="left:3%">SL</label><label style="left:27%">ENTRY</label><label style="left:68%">TP1</label><label style="left:96%">TP2</label></div>
-        <div class="trade-chips"><span>BE +0.5R</span><span>TRAILING READY</span><span id="live-pnl">P&amp;L —</span></div>
+      <div id="live-section">
+      <div id="live-container"></div>
+      <section class="mc-card pending-setup" id="pending-section" style="display:none">
+        <div class="mc-head"><span class="mc-kicker">TRADE EN ATTENTE</span><span class="trade-side" id="pending-badge">—</span></div>
+        <div class="live-symbol-row"><div><h2 id="pending-title">Aucun setup surveillé</h2><small id="pending-readiness">—</small></div><strong id="pending-grade">—</strong></div>
+        <div class="trade-levels"><div><span>ENTRÉE</span><b id="pd-entry">—</b></div><div><span>SL</span><b id="pd-sl">—</b></div><div><span>TP1</span><b id="pd-tp1">—</b></div><div><span>TP2</span><b id="pd-tp2">—</b></div></div>
+        <div class="trade-chips" id="pending-missing"></div>
       </section>
+      </div>
       <section class="mc-card decision-stream" id="stream-section"><div class="mc-head"><span class="mc-kicker">DECISION STREAM</span><span id="stream-latency">— ms</span></div><div id="mission-events"></div></section>
     </div>
   </div>
@@ -572,7 +574,9 @@ function withDashboardToken(url){
   return `${url}${sep}token=${encodeURIComponent(DASHBOARD_AUTH_TOKEN)}`;
 }
 
-const HTTP_BASE = `${location.protocol}//${location.host}`.replace(/\/+$/,'');
+// Backend live : window.GS_BACKEND (injecte sur Vercel -> tunnel nomme permanent)
+// sinon same-origin (dashboard servi localement par le PC).
+const HTTP_BASE = ((typeof window!=='undefined' && window.GS_BACKEND) || `${location.protocol}//${location.host}`).replace(/\/+$/,'');
 const WS_BASE = HTTP_BASE.replace(/^https:/,'wss:').replace(/^http:/,'ws:');
 const WS_URL = withDashboardToken(`${WS_BASE}/ws`);
 const LATENCY_WS_URL = withDashboardToken(`${WS_BASE}/ws/latency`);
@@ -676,13 +680,47 @@ function updateAgentCard(agentId, score, direction, reason, hf){
 function updateMissionUI(orch,agents,trades,logs){
  const dec=document.getElementById('network-decision');if(dec)dec.textContent=(orch.decision||'WAIT')+' '+(orch.setup_grade||'');
  AGENTS_META.forEach(a=>{const x=agents[a.id]||{},sc=Number(x.score||0),n=document.getElementById(`net-${a.id}`),v=document.getElementById(`net-score-${a.id}`);if(n)n.classList.toggle('hot',sc>=60&&x.hard_filter_pass!==false);if(v)v.textContent=`${sc.toFixed(0)} · ${x.veto?'VETO':(x.direction||'WAIT')}`});
- const t=((trades||{}).open_trades||[])[0],side=document.getElementById('live-side'),r=document.getElementById('live-r');
- if(!t){side.textContent='NO TRADE';r.textContent='0.00R';r.style.color='var(--text3)';['lv-entry','lv-sl','lv-tp1','lv-tp2'].forEach(id=>document.getElementById(id).textContent='—');document.getElementById('track-fill').style.width='0';document.getElementById('live-pnl').textContent='P&L —';renderMissionEvents(orch,agents,logs);return}
- const dir=String(t.direction||t.type||'').toUpperCase(),buy=['BUY','LONG'].includes(dir),entry=Number(t.entry||t.entry_price||0),sl=Number(t.sl||t.current_sl||0),tp1=Number(t.tp1||t.tp||0),tp2=Number(t.tp2||t.tp||0),cur=Number(t.current_price||entry),risk=Math.abs(entry-sl)||1,rv=(buy?cur-entry:entry-cur)/risk;
+ const list=((trades||{}).open_trades||[]);renderPositions(list,orch);renderPending((orch||{}).pending_setup||null);renderMissionEvents(orch,agents,logs);
+}
 
- side.textContent=buy?'BUY ACTIVE':'SELL ACTIVE';side.style.color=buy?'var(--green)':'var(--red)';r.textContent=`${rv>=0?'+':''}${rv.toFixed(2)}R`;r.style.color=rv>=0?'var(--green)':'var(--red)';
- const show=(id,v)=>document.getElementById(id).textContent=v>0?v.toFixed(2):'—';show('lv-entry',entry);show('lv-sl',sl);show('lv-tp1',tp1);show('lv-tp2',tp2);
- document.getElementById('track-fill').style.width=`${Math.max(0,Math.min(69,((cur-entry)/(Math.abs(tp2-entry)||1))*69))}%`;document.getElementById('live-pnl').textContent=`P&L ${Number(t.pnl||0).toFixed(2)}$`;document.getElementById('live-strategy').textContent=t.strategy||orch.strategy||'UNIFIED KASPER / PDE';renderMissionEvents(orch,agents,logs);
+function posCardHTML(t,orch){
+ const dir=String(t.direction||t.type||'').toUpperCase(),buy=['BUY','LONG'].includes(dir);
+ const entry=Number(t.entry||t.entry_price||0),sl=Number(t.sl||t.current_sl||0),tp1=Number(t.tp1||t.tp||0),tp2=Number(t.tp2||t.tp||0),cur=Number(t.current_price||entry);
+ const risk=Math.abs(entry-sl)||1,rv=(buy?cur-entry:entry-cur)/risk;
+ const fill=Math.max(0,Math.min(69,((cur-entry)/(Math.abs(tp2-entry)||1))*69));
+ const f=v=>v>0?v.toFixed(2):'—';
+ return `<section class="mc-card live-position">
+  <div class="mc-head"><span class="mc-kicker">LIVE POSITION</span><span class="trade-side" style="color:${buy?'var(--green)':'var(--red)'}">${buy?'BUY ACTIVE':'SELL ACTIVE'}</span></div>
+  <div class="live-symbol-row"><div><h2>XAUUSD.m</h2><small>${(t.strategy||(orch||{}).strategy||'UNIFIED KASPER / PDE')}</small></div><strong style="color:${rv>=0?'var(--green)':'var(--red)'}">${rv>=0?'+':''}${rv.toFixed(2)}R</strong></div>
+  <div class="trade-levels"><div><span>ENTRY</span><b>${f(entry)}</b></div><div><span>SL</span><b>${f(sl)}</b></div><div><span>TP1</span><b>${f(tp1)}</b></div><div><span>TP2</span><b>${f(tp2)}</b></div></div>
+  <div class="position-track"><div class="track-base"></div><div class="track-fill" style="width:${fill}%"></div><i style="left:3%;--c:var(--red)"></i><i style="left:27%;--c:var(--gold)"></i><i style="left:68%;--c:var(--green)"></i><i style="left:96%;--c:var(--green)"></i><label style="left:3%">SL</label><label style="left:27%">ENTRY</label><label style="left:68%">TP1</label><label style="left:96%">TP2</label></div>
+  <div class="trade-chips"><span>BE +0.5R</span><span>TRAILING READY</span><span>P&amp;L ${Number(t.pnl||0).toFixed(2)}$</span></div>
+ </section>`;
+}
+
+function renderPositions(list,orch){
+ const box=document.getElementById('live-container');if(!box)return;
+ if(!list.length){box.innerHTML=`<section class="mc-card live-position"><div class="mc-head"><span class="mc-kicker">LIVE POSITION</span><span class="trade-side">NO TRADE</span></div><div class="live-symbol-row"><div><h2>XAUUSD.m</h2><small>${((orch||{}).strategy)||'UNIFIED KASPER / PDE'}</small></div><strong style="color:var(--text3)">0.00R</strong></div><div class="trade-levels"><div><span>ENTRY</span><b>—</b></div><div><span>SL</span><b>—</b></div><div><span>TP1</span><b>—</b></div><div><span>TP2</span><b>—</b></div></div><div class="trade-chips"><span>EN ATTENTE</span></div></section>`;return}
+ box.innerHTML=list.map(t=>posCardHTML(t,orch)).join('');
+}
+
+function renderPending(ps){
+ const sec=document.getElementById('pending-section');if(!sec)return;
+ if(!ps||!ps.active){sec.style.display='none';return}
+ sec.style.display='';
+ const dir=String(ps.direction||'').toUpperCase(),buy=['BUY','LONG'].includes(dir);
+ const f=v=>(v!==null&&v!==undefined&&!isNaN(v)&&Number(v)>0)?Number(v).toFixed(2):'—';
+ const badge=document.getElementById('pending-badge');badge.textContent=buy?'BUY VISÉ':'SELL VISÉ';badge.style.color=buy?'var(--green)':'var(--red)';
+ document.getElementById('pending-grade').textContent=ps.grade||'—';
+ const entry=f(ps.entry);
+ document.getElementById('pending-title').textContent=entry==='—'?'Setup surveillé':`Attend le prix ${entry}`;
+ document.getElementById('pending-readiness').textContent=(ps.readiness||'WAIT_FOR_TRIGGER').replace(/_/g,' ');
+ document.getElementById('pd-entry').textContent=entry;
+ document.getElementById('pd-sl').textContent=f(ps.sl)+(ps.sl_is_estimate?'*':'');
+ document.getElementById('pd-tp1').textContent=f(ps.tp1);
+ document.getElementById('pd-tp2').textContent=f(ps.tp2);
+ const miss=(ps.missing_confirmations||[]);
+ document.getElementById('pending-missing').innerHTML=miss.length?miss.map(m=>`<span class="pending-chip-missing">${String(m).replace(/_/g,' ')}</span>`).join(''):'<span>Prêt — attend le déclencheur</span>';
 }
 
 function renderMissionEvents(orch,agents,logs){const out=[];if(orch.decision)out.push(['NOW','ORCH',`${orch.decision} · ${orch.setup_grade||''}`]);AGENTS_META.forEach(a=>{const x=agents[a.id]||{};if(x.reason)out.push(['NOW',a.name,String(x.reason).slice(0,80)])});(logs||[]).slice(-2).forEach(x=>out.push(['LOG',x.level||'INFO',x.message||x.msg||'event']));document.getElementById('mission-events').innerHTML=out.slice(0,6).map(e=>`<div class="mission-event"><time>${e[0]}</time><b>${e[1]}</b><span>${e[2]}</span></div>`).join('')||'<div class="mission-event"><span>En attente de télémétrie…</span></div>'}
