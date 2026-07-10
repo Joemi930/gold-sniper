@@ -3,10 +3,32 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+
+
+def _graded_active() -> bool:
+    """Whether Kasper graded-entry mode is enabled (diagnostic)."""
+    try:
+        from gold_sniper.strategy.kasper_scenario_engine import graded_entry_enabled
+
+        return graded_entry_enabled()
+    except Exception:
+        return False
+
+
+def _first_kasper_exception() -> str:
+    import builtins as _b
+
+    return str(getattr(_b, "_KASPER_FIRST_EXC_DESC", "") or "")
+
+
+def _first_kasper_traceback() -> str:
+    import builtins as _b
+
+    return str(getattr(_b, "_KASPER_FIRST_EXC_TB", "") or "")
 from statistics import median
 from typing import Any
 
-from gold_sniper.strategy.readiness_risk_gate_contract import evaluate_readiness_risk_gate
+from strategy.readiness_risk_gate_contract import evaluate_readiness_risk_gate
 
 
 GRADES = ("A_PLUS", "A", "B", "C", "D")
@@ -136,6 +158,55 @@ def _summary_from_windows(windows: list[dict[str, Any]]) -> dict[str, Any]:
     return aggregate
 
 
+def _monthly_breakdown(close_events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Per-month P&L breakdown for continuous multi-month runs.
+
+    Buckets closed trades by YYYY-MM (from the close event time) so a single
+    continuous replay still exposes per-regime robustness — positive in EACH
+    month, not one great month masking the others.
+    """
+    import datetime as _dt
+
+    buckets: dict[str, dict[str, Any]] = {}
+    for ev in close_events:
+        raw = ev.get("time") or ev.get("close_time") or ev.get("timestamp") or ev.get("exit_time")
+        ym = None
+        try:
+            if isinstance(raw, (int, float)):
+                ym = _dt.datetime.utcfromtimestamp(float(raw)).strftime("%Y-%m")
+            elif isinstance(raw, str) and len(raw) >= 7:
+                ym = raw[:7]  # ISO 'YYYY-MM...'
+        except Exception:
+            ym = None
+        if not ym:
+            ym = "unknown"
+        b = buckets.setdefault(ym, {"trades": 0, "wins": 0, "losses": 0, "sum_R": 0.0, "sum_pnl": 0.0})
+        b["trades"] += 1
+        pnl = _safe_float(ev.get("pnl"))
+        rmv = _safe_float(ev.get("r_multiple"))
+        if pnl is not None:
+            b["sum_pnl"] += float(pnl)
+            if float(pnl) > 0:
+                b["wins"] += 1
+            elif float(pnl) < 0:
+                b["losses"] += 1
+        if rmv is not None:
+            b["sum_R"] += float(rmv)
+    out: dict[str, Any] = {}
+    for ym, b in sorted(buckets.items()):
+        n = b["trades"] or 1
+        out[ym] = {
+            "trades": b["trades"],
+            "wins": b["wins"],
+            "losses": b["losses"],
+            "win_rate": round(100.0 * b["wins"] / n, 2),
+            "net_expectancy_R": round(b["sum_R"] / n, 4),
+            "sum_R": round(b["sum_R"], 4),
+            "pnl_pct": round(b["sum_pnl"], 4),
+        }
+    return out
+
+
 def _summary_from_decisions_and_events(decisions: list[dict[str, Any]], events: list[dict[str, Any]]) -> dict[str, Any]:
     open_events = [event for event in events if str(event.get("event") or "") in {"open", "tier_trade_open"}]
     close_events = [event for event in events if str(event.get("event") or "") in {"close", "tier_trade_close"}]
@@ -163,6 +234,27 @@ def _summary_from_decisions_and_events(decisions: list[dict[str, Any]], events: 
         "trades_by_grade": _events_by_grade(open_events),
         "performance_by_grade": _performance_by_grade(decisions, events),
         "decision_distribution": dict(Counter(str(item.get("decision") or "UNKNOWN") for item in decisions).most_common()),
+        # Kasper-level diagnostics (distinct from setup/OB grade above). These
+        # reveal what the Kasper scenario engine ACTUALLY decided — and whether
+        # graded-entry mode is live during evaluation.
+        "kasper_graded_entry_active": _graded_active(),
+        "kasper_decision_distribution": dict(Counter(str(item.get("kasper_decision_recommendation") or "NONE") for item in decisions).most_common()),
+        "kasper_grade_distribution": dict(Counter(str(item.get("kasper_grade") or "NONE") for item in decisions).most_common()),
+        "kasper_error_count": sum(1 for item in decisions if item.get("kasper_error")),
+        "kasper_scenario_type_distribution": dict(Counter(str(item.get("scenario_type") or "NONE") for item in decisions).most_common()),
+        "kasper_first_exception": _first_kasper_exception(),
+        "kasper_first_exception_traceback": _first_kasper_traceback(),
+        # For candles where the PDE proposed an ENTER, what did Kasper say?
+        "enter_candidate_kasper_decisions": dict(Counter(
+            str(item.get("kasper_decision_recommendation") or "NONE")
+            for item in decisions
+            if str(item.get("decision") or "").upper().startswith("ENTER")
+        ).most_common()),
+        "enter_candidate_kasper_grades": dict(Counter(
+            str(item.get("kasper_grade") or "NONE")
+            for item in decisions
+            if str(item.get("decision") or "").upper().startswith("ENTER")
+        ).most_common()),
         "readiness_distribution": dict(Counter(str(item.get("readiness_state") or "UNKNOWN") for item in decisions).most_common()),
         # P2-E Phase 7A: setup taxonomy
         "setup_type_distribution": dict(Counter(str(item.get("setup_type") or "UNKNOWN") for item in decisions).most_common()),
@@ -247,6 +339,7 @@ def _summary_from_decisions_and_events(decisions: list[dict[str, Any]], events: 
         "r_values": r_values,
     }
     summary.update(_performance_ratios(summary, r_values))
+    summary["monthly_breakdown"] = _monthly_breakdown(close_events)
     summary["trade_frequency_per_day"] = None
     summary["diagnostic"] = _diagnostic(summary)
     summary["performance_status"] = _performance_status(

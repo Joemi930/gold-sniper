@@ -31,6 +31,7 @@ class Agent1Context:
     draw_on_liquidity: str = "unknown"
     confidence: float = 0.0
     invalid_reason: Optional[str] = None
+    primary_regime: str = "UNKNOWN"  # V2: RANGE / WEAK_UP / WEAK_DOWN / STRONG_UP / STRONG_DOWN
 
 
 # ── Agent 2 – POI / cartographe ───────────────────────────────────────
@@ -256,6 +257,7 @@ def from_existing_agent1_context(ctx: dict | None) -> Agent1Context:
         draw_on_liquidity=_safe_str(ctx.get("draw_on_liquidity"), "unknown"),
         confidence=_safe_float(ctx.get("confidence") or ctx.get("score")),
         invalid_reason=ctx.get("invalid_reason"),
+        primary_regime=_safe_str(ctx.get("primary_regime"), "UNKNOWN").upper(),
     )
 
 
@@ -313,7 +315,26 @@ def from_existing_agent2_context(poi: dict | None) -> Agent2POIContext:
             tradable=_safe_bool(
                 selected.get("tradable")
                 or poi.get("poi_available")
-                or selected.get("execution_readiness") == "READY",
+                or selected.get("execution_readiness") == "READY"
+                # Honor the system-wide resolved POI status. Every other
+                # consumer (decision_pipeline, readiness, signal inventory)
+                # uses effective_poi_status; Kasper was the only gate reading
+                # the raw status, so micro-synergy-revalidated POIs
+                # (RECOVERABLE_REJECTED → READY_FOR_TRIGGER) were treated as
+                # untradable here and rejected. This is a consistency fix, not
+                # a threshold change.
+                or str(
+                    poi.get("effective_poi_status")
+                    or (poi.get("poi_micro_synergy") or {}).get("effective_poi_status")
+                    or ""
+                ).upper()
+                in {
+                    "READY",
+                    "READY_FOR_TRIGGER",
+                    "EXECUTABLE",
+                    "SYNERGY_READY",
+                    "SYNERGY_READY_FOR_TRIGGER",
+                },
                 default=False,
             ),
             mitigation_depth=_safe_optional_float(

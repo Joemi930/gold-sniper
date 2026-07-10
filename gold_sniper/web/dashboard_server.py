@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import re
 import time
@@ -7,8 +8,9 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from urllib.parse import quote
 
-from aiohttp import web
+from aiohttp import WSMsgType, web
 
 from config import (
     CLOUDFLARE_ENABLED,
@@ -26,13 +28,17 @@ from utils.discord_notifier import _notifier_from_config
 
 
 HTML_PATH = Path(__file__).parent / "dashboard.html"
-CLOUDFLARE_URL_RE = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
+ASSETS_PATH = Path(__file__).parent / "assets"
+# (?!api\.) : cloudflared logue https://api.trycloudflare.com (endpoint API),
+# qui n'est PAS l'URL publique du tunnel (faux positif observe le 09/07 14:53).
+CLOUDFLARE_URL_RE = re.compile(r"https://(?!api\.)[a-zA-Z0-9-]+\.trycloudflare\.com")
 BEARER_TOKEN_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 SECRET_ASSIGNMENT_RE = re.compile(
     r"\b([A-Z0-9_]*(?:TOKEN|PASSWORD|SECRET|API_KEY|ACCOUNT|SERVER)[A-Z0-9_]*)=([^\s,;]+)",
     re.IGNORECASE,
 )
 REDACTED = "[REDACTED]"
+DASHBOARD_COOKIE_NAME = "gold_sniper_dashboard_session"
 SENSITIVE_KEY_PARTS = (
     "token",
     "password",
@@ -66,10 +72,29 @@ _dashboard_public_url: str | None = None
 
 @web.middleware
 async def dashboard_auth_middleware(request: web.Request, handler) -> web.StreamResponse:
+    if request.path.startswith("/assets/"):
+        response = await handler(request)
+        response.headers.setdefault("Cache-Control", "public, max-age=86400, immutable")
+        return response
     denied = _dashboard_access_denied(request)
     if denied is not None:
         return denied
-    return await handler(request)
+    response = await handler(request)
+    query_token = request.query.get("token", "").strip()
+    if DASHBOARD_PUBLIC and query_token == DASHBOARD_TOKEN:
+        forwarded_https = request.headers.get("X-Forwarded-Proto", "").lower() == "https"
+        response.set_cookie(
+            DASHBOARD_COOKIE_NAME,
+            DASHBOARD_TOKEN,
+            max_age=60 * 60 * 24 * 30,
+            httponly=True,
+            secure=request.secure or forwarded_https,
+            samesite="Lax",
+            path="/",
+        )
+    if request.path == "/":
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return response
 
 
 def create_dashboard_app(blackboard=BLACKBOARD) -> web.Application:
@@ -81,6 +106,9 @@ def create_dashboard_app(blackboard=BLACKBOARD) -> web.Application:
     app.router.add_get("/api/agents", handle_agents)
     app.router.add_get("/api/candles", handle_candles_history)
     app.router.add_get("/ws", websocket_handler)
+    app.router.add_get("/ws/latency", latency_websocket_handler)
+    if ASSETS_PATH.exists():
+        app.router.add_static("/assets", ASSETS_PATH, show_index=False)
     return app
 
 
@@ -92,9 +120,11 @@ async def handle_dashboard(request: web.Request) -> web.StreamResponse:
 
 async def handle_state(request: web.Request) -> web.Response:
     blackboard = request.app["blackboard"]
-    data = sanitize_for_json(blackboard.get_all())
-    data["market"] = build_dashboard_market_state(data)
-    data["agents"] = build_dashboard_agents_state(data)
+    raw_data = blackboard.get_all()
+    data = sanitize_for_json(raw_data)
+    data["market"] = build_dashboard_market_state(raw_data)
+    data["agents"] = build_dashboard_agents_state(raw_data)
+    data["portfolio"] = build_dashboard_portfolio_state(raw_data)
     data["visual_layers"] = VISUAL_LAYERS.get_all_as_dict()
     return json_response(data)
 
@@ -153,11 +183,79 @@ def build_dashboard_agents_state(data: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def build_dashboard_portfolio_state(data: dict[str, Any]) -> dict[str, float]:
+    meta = data.get("meta", {}) or {}
+    account = meta.get("account_info", {}) or {}
+    performance = data.get("performance", {}) or {}
+    daily = data.get("daily_stats", {}) or {}
+    return {
+        "balance": _float(account.get("balance", performance.get("balance", 0.0))),
+        "equity": _float(account.get("equity", performance.get("equity", 0.0))),
+        "margin": _float(account.get("margin", 0.0)),
+        "free_margin": _float(account.get("margin_free", account.get("free_margin", 0.0))),
+        "daily_pnl": _float(
+            performance.get(
+                "daily_pnl",
+                _float(daily.get("realized_pnl", 0.0)) + _float(daily.get("floating_pnl", 0.0)),
+            )
+        ),
+    }
+
+
+async def latency_websocket_handler(request: web.Request) -> web.WebSocketResponse:
+    """Dedicated lightweight RTT channel, isolated from full-state traffic."""
+    ws = web.WebSocketResponse(heartbeat=15, compress=False)
+    await ws.prepare(request)
+    async for message in ws:
+        if message.type == WSMsgType.TEXT:
+            try:
+                probe = json.loads(message.data)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if probe.get("type") == "ping":
+                await ws.send_json(
+                    {
+                        "type": "pong",
+                        "nonce": str(probe.get("nonce", "")),
+                        "server_ts_ms": int(time.time() * 1000),
+                    }
+                )
+        elif message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}:
+            break
+    return ws
+
+
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
     blackboard = request.app["blackboard"]
-    ws = web.WebSocketResponse(heartbeat=20)
+    ws = web.WebSocketResponse(heartbeat=10, compress=True)
     await ws.prepare(request)
     update_event = blackboard.dashboard_update_event
+    send_lock = asyncio.Lock()
+
+    async def _send_text(payload: str) -> None:
+        async with send_lock:
+            if not ws.closed:
+                await ws.send_str(payload)
+
+    async def _receive_latency_probes() -> None:
+        async for message in ws:
+            if message.type == WSMsgType.TEXT:
+                try:
+                    probe = json.loads(message.data)
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if probe.get("type") == "ping":
+                    await _send_text(
+                        json.dumps(
+                            {
+                                "type": "pong",
+                                "nonce": str(probe.get("nonce", "")),
+                                "server_ts_ms": int(time.time() * 1000),
+                            }
+                        )
+                    )
+            elif message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}:
+                break
 
     def _build_payload() -> str:
         raw_data = blackboard.get_all()
@@ -169,8 +267,7 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
             "agents": dashboard_agents,
             "orchestrator": sanitize_for_json(raw_data.get("orchestrator", {})),
             "performance": sanitize_for_json(raw_data.get("performance", {})),
-            "visual_layers": VISUAL_LAYERS.get_all_as_dict(),
-            "candles_1m": _get_recent_candles_1m(blackboard, limit=200),
+            "portfolio": build_dashboard_portfolio_state(raw_data),
         }
         payload = redact_dashboard_payload(
             sanitize_for_json(
@@ -180,9 +277,9 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                     "state": build_state_summary(raw_data),
                     "trades": build_trades_payload(raw_data),
                     "agents": build_agents_payload(raw_data),
-                    "logs": read_recent_logs(limit=40),
-                    "visual_layers": dashboard_data["visual_layers"],
+                    "logs": read_recent_logs(limit=12),
                     "ts": int(time.time()),
+                    "ts_ms": int(time.time() * 1000),
                 }
             )
         )
@@ -192,9 +289,10 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
             default=str,
         )
 
+    receiver_task = asyncio.create_task(_receive_latency_probes())
     try:
         # Envoi immediat a la connexion
-        await ws.send_str(_build_payload())
+        await _send_text(_build_payload())
 
         while not ws.closed:
             # On efface AVANT d'attendre pour ne pas rater les mises a jour
@@ -203,13 +301,17 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
             try:
                 await asyncio.wait_for(update_event.wait(), timeout=1.0)
             except asyncio.TimeoutError:
-                pass  # Fallback 1 s pour garantir un heartbeat meme si aucun agent ne publie
+                pass  # Fallback 1 s pour limiter le trafic mobile.
             if not ws.closed:
-                await ws.send_str(_build_payload())
+                await _send_text(_build_payload())
     except asyncio.CancelledError:
         raise
     except Exception:
         get_logger().warning("Dashboard websocket ferme sur erreur non bloquante.")
+    finally:
+        receiver_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await receiver_task
     return ws
 
 
@@ -298,6 +400,16 @@ def is_dashboard_running() -> bool:
 
 def get_dashboard_session() -> dict[str, Any]:
     return {"runner": _dashboard_runner, "public_url": _dashboard_public_url}
+
+
+def build_dashboard_access_url(backend_url: str | None) -> str | None:
+    """Return the primary Cloudflare dashboard URL with its access token."""
+    if not backend_url:
+        return None
+    if not DASHBOARD_TOKEN:
+        return backend_url
+    separator = "&" if "?" in backend_url else "?"
+    return f"{backend_url}{separator}token={quote(DASHBOARD_TOKEN, safe='')}"
 
 
 async def bootstrap_dashboard(blackboard, launch_cloudflare: bool = True) -> str | None:
@@ -572,6 +684,7 @@ def _extract_dashboard_token(request: web.Request) -> str:
     return (
         request.headers.get("X-Dashboard-Token", "")
         or request.query.get("token", "")
+        or request.cookies.get(DASHBOARD_COOKIE_NAME, "")
         or ""
     ).strip()
 

@@ -16,12 +16,16 @@ from typing import Any
 
 # ── Grade → risk % of current equity ──────────────────────────────────────────
 # These are shadow/replay-only and MUST NOT replace risk_allocator global mapping.
+# Base scalping: A+ 1% / A 0.75% / B 0.5%. La doctrine intraday (A+ 10% / A 7.5% /
+# B 5%) s'active via $env:GS_RISK_SCALE="10" — réversible, testable, sans toucher au code.
+import os as _os
+_RISK_SCALE = float(_os.environ.get("GS_RISK_SCALE", "1.0") or "1.0")
 GRADE_RISK_PCT: dict[str, float] = {
-    "A_PLUS": 1.00,
-    "A+": 1.00,
-    "A": 0.75,
-    "B": 0.50,
-    "C_CONFIRMED": 0.25,
+    "A_PLUS": 1.00 * _RISK_SCALE,
+    "A+": 1.00 * _RISK_SCALE,
+    "A": 0.75 * _RISK_SCALE,
+    "B": 0.50 * _RISK_SCALE,
+    "C_CONFIRMED": 0.25 * _RISK_SCALE,
     "C": 0.00,
     "D": 0.00,
     "UNKNOWN": 0.00,
@@ -320,6 +324,22 @@ def compute_shadow_position_size(
     volume = round(risk_cash / effective_risk_points, 6)
     if volume <= 0.0:
         raise ValueError("VOLUME_ZERO")
+
+    # ── Levier broker (JustMarkets 1:2000): plafond de marge ──
+    # marge requise = volume × contract_size × prix / levier. Le volume est
+    # plafonné pour que la marge requise ne dépasse jamais l'équité disponible.
+    # Modélise la contrainte réelle du compte au lieu de supposer une marge infinie.
+    try:
+        from config import ACCOUNT_LEVERAGE, XAUUSD_CONTRACT_SIZE
+        _price = float(entry) if float(entry) > 0 else 0.0
+        if _price > 0 and ACCOUNT_LEVERAGE > 0:
+            _max_vol = (float(equity) * float(ACCOUNT_LEVERAGE)) / (float(XAUUSD_CONTRACT_SIZE) * _price)
+            if volume > _max_vol:
+                volume = round(_max_vol, 6)
+                if volume <= 0.0:
+                    raise ValueError("MARGIN_CAP_ZERO")
+    except ImportError:
+        pass
 
     # Expected loss at SL if filled at worst-case prices
     expected_sl_loss = round(volume * effective_risk_points, 6)

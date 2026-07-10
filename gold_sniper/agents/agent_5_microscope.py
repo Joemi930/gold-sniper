@@ -116,6 +116,46 @@ def _candle_value(candle, key: str, index: int) -> float:
     return float(candle[index])
 
 
+def _atr_14_from_candles(candles: Sequence, period: int = 14) -> float:
+    """ATR-14 estimate from a candle stream (used to size the EXECUTION_TF stop).
+
+    True Range = max(high-low, |high-prev_close|, |low-prev_close|), averaged over
+    the last `period` bars. Safe fallback to last range, then 1.0.
+    """
+    try:
+        cs = list(candles or [])
+        if len(cs) < 2:
+            return 1.0
+        trs: list[float] = []
+        for i in range(1, len(cs)):
+            hi = float(cs[i].get("high", 0.0))
+            lo = float(cs[i].get("low", 0.0))
+            pc = float(cs[i - 1].get("close", cs[i - 1].get("open", hi)))
+            trs.append(max(hi - lo, abs(hi - pc), abs(lo - pc)))
+        window = trs[-period:] if len(trs) >= period else trs
+        atr = sum(window) / len(window) if window else 1.0
+        return float(atr) if atr > 0 else 1.0
+    except Exception:
+        return 1.0
+
+
+def _swing_levels(candles: Sequence, k: int = 2) -> tuple[list[float], list[float]]:
+    """Fractal swing highs/lows: bar i is a swing if its high(low) strictly
+    exceeds the highs(lows) of k bars on EACH side. Causal by construction —
+    only fully closed bars in the provided history are examined."""
+    highs: list[float] = []
+    lows: list[float] = []
+    cs = list(candles or [])
+    n = len(cs)
+    for i in range(k, n - k):
+        hi = float(cs[i].get("high", 0.0)); lo = float(cs[i].get("low", 0.0))
+        if all(hi > float(cs[j].get("high", 0.0)) for j in range(i - k, i + k + 1) if j != i):
+            highs.append(hi)
+        if all(lo < float(cs[j].get("low", 0.0)) for j in range(i - k, i + k + 1) if j != i):
+            lows.append(lo)
+    return highs, lows
+
+
 def _normalize_candles(candles: Sequence) -> list[dict]:
     """Normalise les bougies 1M au format dict open/high/low/close/volume."""
     normalized = []
@@ -242,6 +282,9 @@ def _extract_agent2_p2a_poi_for_agent5(blackboard: BlackBoard) -> tuple[dict[str
 
     anchor, diagnostics = extract_p2a_selected_poi(blackboard)
     if not anchor:
+        if diagnostics.get("failure_reason") == "NO_P2A_POI_OR_BOUNDS":
+            diagnostics = dict(diagnostics)
+            diagnostics["failure_reason"] = "NO_SELECTED_POI_OR_BOUNDS"
         return None, diagnostics
 
     normalized = dict(anchor)
@@ -639,7 +682,9 @@ def analyze_amd_sequence(
     retest_detected = False
     sweep_detected = False
     choch_detected = False
-    
+    sweep_price = 0.0
+    choch_price = 0.0
+
     score_shadow = 0
 
     if len(candles) < AMD_ACCUMULATION_WINDOW + AMD_MAX_CHOCH_DELAY:
@@ -809,17 +854,55 @@ async def run_agent_5(
     if not a1_direction and agent1_result and hasattr(agent1_result, "direction"):
         a1_direction = agent1_result.direction
 
+    # ── Regime filter: mean-reversion (liquidity_sweep_reversal) dies fading
+    # strong trends (Feb: 0/5 straight-to-SL). Block entries in the configured
+    # regimes by disabling the direction → the AMD analysis yields no trigger.
+    # Default OFF → zero regression.
+    try:
+        from config import REGIME_FILTER_ENABLED, REGIME_BLOCKED_SET
+        if REGIME_FILTER_ENABLED and a1_direction:
+            _regime = str(
+                a1_data.get("primary_regime")
+                or (a1_data.get("notes") or {}).get("primary_regime")
+                or ""
+            ).upper()
+            if _regime in REGIME_BLOCKED_SET:
+                a1_direction = None
+    except Exception:
+        pass
+
     poi_zone, poi_handoff = _extract_agent2_p2a_poi_for_agent5(blackboard)
+
+    # ── Étape M15: source the micro-trigger structure from EXECUTION_TF ──
+    # The AMD/sweep detector sizes the stop from the candle stream + ATR it is
+    # given (sweep_price = a swing low/high of that stream → 1R = entry−sweep).
+    # Feeding it the EXECUTION_TF (e.g. 15m) stream + ATR makes 1R ~4× bigger,
+    # and since tp1/tp2 = risk×RR, the targets scale with it → RR preserved.
+    # Default EXECUTION_TF="1m" → keep the 1m stream passed in → ZERO regression.
+    exec_atr_override: float | None = None
+    try:
+        from config import EXECUTION_TF, execution_ladder
+        if EXECUTION_TF != "1m":
+            _exec_tf = execution_ladder().get("exec", "1m")
+            _exec_candles = list(blackboard.read_sync(f"market_data.candles.{_exec_tf}") or [])
+            if len(_exec_candles) >= AMD_ACCUMULATION_WINDOW + AMD_MAX_CHOCH_DELAY:
+                ohlcv_1m = _exec_candles  # the AMD detector is TF-agnostic
+                _md_atr = market_data.get(f"atr_14_{_exec_tf}")
+                exec_atr_override = float(_md_atr) if _md_atr else _atr_14_from_candles(_exec_candles)
+    except Exception:
+        exec_atr_override = None
+
+    _atr_for_amd = exec_atr_override or market_data.get("atr_14_1m") or market_data.get("atr_14") or 1.0
     result = analyze_amd_sequence(
         ohlcv_1m,
         direction=a1_direction,
         poi_zone=poi_zone,
-        atr_1m=market_data.get("atr_14_1m") or market_data.get("atr_14") or 1.0,
+        atr_1m=_atr_for_amd,
         in_ote=bool(a4_data.get("in_ote", False)),
         a4_data=a4_data,
     )
     payload = dict(result.payload or {})
-    atr_1m_val = float(market_data.get("atr_14_1m") or market_data.get("atr_14") or 1.0)
+    atr_1m_val = float(exec_atr_override or market_data.get("atr_14_1m") or market_data.get("atr_14") or 1.0)
     poi_bottom, poi_top = _zone_bounds(poi_zone)
     readiness_state, readiness_reason = _micro_readiness_from_agent5_result(result, poi_zone, ohlcv_1m)
     normalized: list[dict] = []
@@ -878,9 +961,57 @@ async def run_agent_5(
                 stop_loss_candidate = round(entry_price_candidate + atr * 1.0, 5)
             # ─────────────────────────────────────────────────────────
             risk_points_val = round(abs(entry_price_candidate - stop_loss_candidate), 5)
+            # ── Étape M15: structural stop floor ──
+            # The micro-sweep keeps 1R tight (~120 pts) on every TF. Force the
+            # risk to at least STOP_ATR_FLOOR_MULT × ATR(exec) so 1R reflects the
+            # higher-TF structure. tp1/tp2 below recompute from risk_points_val →
+            # RR stays constant → grading gate (rr_estimate≥1.5) preserved.
+            # Default mult 0.0 → no-op → zero regression.
+            try:
+                from config import STOP_ATR_FLOOR_MULT as _SL_FLOOR
+            except Exception:
+                _SL_FLOOR = 0.0
+            if _SL_FLOOR and atr and risk_points_val < _SL_FLOOR * atr:
+                risk_points_val = round(_SL_FLOOR * atr, 5)
+                if a1_direction == "LONG":
+                    stop_loss_candidate = round(entry_price_candidate - risk_points_val, 5)
+                else:
+                    stop_loss_candidate = round(entry_price_candidate + risk_points_val, 5)
             if risk_points_val > 0:
-                tp1_candidate = round(entry_price_candidate + risk_points_val, 5) if a1_direction == "LONG" else round(entry_price_candidate - risk_points_val, 5)
-                tp2_candidate = round(entry_price_candidate + 2 * risk_points_val, 5) if a1_direction == "LONG" else round(entry_price_candidate - 2 * risk_points_val, 5)
+                # ── Cibles structurelles: TP1 = dernier swing pertinent au-delà
+                # de l'entrée, TP2 = le swing suivant après TP1. Fallback aux
+                # multiples de R si aucun swing exploitable. rr_estimate devient
+                # structurel (target_liquidity=TP1) → sélectivité naturelle.
+                _struct_done = False
+                try:
+                    from config import (STRUCT_TP, STRUCT_TP_MIN_DIST_ATR,
+                                        STRUCT_TP_SEP_ATR, STRUCT_TP_LOOKBACK,
+                                        STRUCT_TP_SWING_K)
+                    if STRUCT_TP and normalized:
+                        sh, slw = _swing_levels(normalized[-STRUCT_TP_LOOKBACK:], k=STRUCT_TP_SWING_K)
+                        _min_d = STRUCT_TP_MIN_DIST_ATR * atr
+                        _sep = STRUCT_TP_SEP_ATR * atr
+                        if a1_direction == "LONG":
+                            above = sorted(h for h in sh if h > entry_price_candidate + _min_d)
+                            tp1_candidate = round(above[0], 5) if above else round(
+                                entry_price_candidate + max(1.5 * risk_points_val, 2.0 * atr), 5)
+                            beyond = [h for h in above if h > tp1_candidate + _sep]
+                            tp2_candidate = round(beyond[0], 5) if beyond else round(
+                                tp1_candidate + (tp1_candidate - entry_price_candidate), 5)
+                        else:
+                            below = sorted((l for l in slw if l < entry_price_candidate - _min_d), reverse=True)
+                            tp1_candidate = round(below[0], 5) if below else round(
+                                entry_price_candidate - max(1.5 * risk_points_val, 2.0 * atr), 5)
+                            beyond = [l for l in below if l < tp1_candidate - _sep]
+                            tp2_candidate = round(beyond[0], 5) if beyond else round(
+                                tp1_candidate - (entry_price_candidate - tp1_candidate), 5)
+                        target_liquidity = tp1_candidate
+                        _struct_done = True
+                except Exception:
+                    _struct_done = False
+                if not _struct_done:
+                    tp1_candidate = round(entry_price_candidate + risk_points_val, 5) if a1_direction == "LONG" else round(entry_price_candidate - risk_points_val, 5)
+                    tp2_candidate = round(entry_price_candidate + 2 * risk_points_val, 5) if a1_direction == "LONG" else round(entry_price_candidate - 2 * risk_points_val, 5)
 
                 if target_liquidity and target_liquidity > 0:
                     reward_points = abs(target_liquidity - entry_price_candidate)

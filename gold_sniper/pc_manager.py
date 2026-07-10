@@ -12,6 +12,8 @@ import signal
 import socket
 import shutil
 import subprocess
+
+CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
 import sys
 import threading
 import time
@@ -22,6 +24,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 load_dotenv(ROOT_DIR / ".env")
 
 from utils.ssl_bundle import configure_ssl_environment
@@ -135,6 +139,23 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def _pid_is_pc_manager(pid: int) -> bool:
+    if not _pid_alive(pid):
+        return False
+    try:
+        import psutil
+
+        proc = psutil.Process(pid)
+        line = " ".join(str(part) for part in (proc.cmdline() or [])).lower()
+        cwd = (proc.cwd() or "").lower()
+        return (
+            "gold_sniper.pc_manager" in line
+            or ("pc_manager.py" in line and PROJECT_ROOT_LOWER in (line + " " + cwd))
+        )
+    except Exception:
+        return False
+
+
 def _find_project_pids(*markers: str) -> list[int]:
     markers_l = [m.lower() for m in markers]
     found: list[int] = []
@@ -171,7 +192,7 @@ def _acquire_single_instance() -> None:
     if MANAGER_LOCK.exists():
         try:
             old_pid = int(MANAGER_LOCK.read_text(encoding="utf-8").strip())
-            if _pid_alive(old_pid) and old_pid != my_pid:
+            if _pid_is_pc_manager(old_pid) and old_pid != my_pid:
                 logging.critical(
                     "PC Manager deja actif (PID %s). Arret de cette instance.", old_pid
                 )
@@ -185,7 +206,7 @@ def _acquire_single_instance() -> None:
     except FileExistsError:
         try:
             old_pid = int(MANAGER_LOCK.read_text(encoding="utf-8").strip())
-            if _pid_alive(old_pid) and old_pid != my_pid:
+            if _pid_is_pc_manager(old_pid) and old_pid != my_pid:
                 logging.critical("Lock occupe par PID %s — arret.", old_pid)
                 sys.exit(0)
         except (ValueError, OSError):
@@ -287,6 +308,7 @@ def _kill_pids(pids: list[int]) -> None:
                     ["taskkill", "/PID", str(pid), "/F", "/T"],
                     capture_output=True,
                     timeout=10,
+                    creationflags=CREATE_NO_WINDOW,
                 )
             else:
                 os.kill(pid, signal.SIGTERM)
@@ -386,6 +408,7 @@ def _launch_bot() -> bool:
         [py, str(watchdog_py)],
         cwd=str(ROOT_DIR),
         shell=False,
+        creationflags=CREATE_NO_WINDOW,
     )
     return _wait_for_stack_spawn()
 

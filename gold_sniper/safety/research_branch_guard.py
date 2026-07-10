@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+
+CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +45,7 @@ def current_git_branch(repo_root: Path | None = None) -> str:
             check=False,
             capture_output=True,
             text=True,
+            creationflags=CREATE_NO_WINDOW,
             timeout=2,
         )
     except Exception:

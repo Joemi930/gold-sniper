@@ -190,6 +190,7 @@ class DiscordCommander:
             "report": self._cmd_report,
             "news": self._cmd_news,
             "logs": self._cmd_logs,
+            "lien": self._cmd_lien,
             "memory": self._cmd_memory,
             "health": self._cmd_health,
             "chart": self._cmd_chart,
@@ -400,6 +401,8 @@ class DiscordCommander:
             try:
                 row = conn.execute("SELECT COUNT(*) FROM trades").fetchone()
                 count = int(row[0]) if row else 0
+            except sqlite3.Error:
+                count = 0
             finally:
                 conn.close()
         if count < 50 and (not args or args[0].lower() != "confirm"):
@@ -483,10 +486,17 @@ class DiscordCommander:
             await self._reply_embed("News", str(exc), COLOR_RED)
 
     async def _cmd_logs(self, args: list[str]) -> None:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        """Envoie UNIQUEMENT summary.json + report.md (generes a la demande)."""
+        from utils.daily_summary import write_daily_files
+
+        try:
+            await asyncio.to_thread(write_daily_files, self.blackboard)
+        except Exception as exc:
+            await self._reply_embed("Logs", f"Generation echouee: {exc}", COLOR_RED)
+            return
         paths = [
-            Path(f"logs/gold_sniper_{today}.jsonl"),
-            Path("logs/decision_log.jsonl"),
+            Path("logs/reports/summary.json"),
+            Path("logs/reports/report.md"),
         ]
         sent_names: list[str] = []
         for path in paths:
@@ -503,6 +513,21 @@ class DiscordCommander:
             )
         else:
             await self._reply_embed("Logs", "Aucun fichier de log trouvé", COLOR_GREY)
+
+    async def _cmd_lien(self, args: list[str]) -> None:
+        """Renvoie le lien du dashboard (Vercel permanent si configure, sinon tunnel)."""
+        permanent = (getattr(config, "DASHBOARD_PERMANENT_URL", "") or "").strip()
+        meta = self.blackboard.read_sync("meta") or {}
+        tunnel = (meta.get("cloudflare_url") or "").strip()
+        lines: list[str] = []
+        if permanent:
+            lines.append(f"🔗 Lien permanent : {permanent}")
+        if tunnel:
+            label = "Tunnel direct (change au redemarrage)" if permanent else "Dashboard"
+            lines.append(f"🌐 {label} : {tunnel}")
+        if not lines:
+            lines.append("Aucune URL disponible — dashboard/tunnel non demarre.")
+        await self._reply_embed("Lien dashboard", "\n".join(lines), COLOR_BLUE)
 
     async def _cmd_memory(self, args: list[str]) -> None:
         import sqlite3
