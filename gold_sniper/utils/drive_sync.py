@@ -14,6 +14,13 @@ if str(_PROJECT_ROOT) not in sys.path:
 # ─────────────────────────────────────────────────────────────────────────────
 
 import schedule
+
+# SSL Windows (truststore) AVANT les libs Google — sinon CERTIFICATE_VERIFY_FAILED
+# derriere une inspection HTTPS locale (antivirus/proxy).
+from utils.ssl_bundle import configure_ssl_environment
+
+configure_ssl_environment()
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -29,7 +36,7 @@ CREDENTIALS_PATH = ROOT_DIR / "data" / "credentials.json"
 TOKEN_PATH = ROOT_DIR / "data" / "drive_token.json"
 ERROR_LOG = ROOT_DIR / "logs" / "drive_sync_errors.log"
 REPORTS_DIR = ROOT_DIR / "logs" / "reports"
-DRIVE_FOLDER_NAME = "GoldSniper_V3_Backups"
+DRIVE_FOLDER_NAME = "GoldSniper_Backups"
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 SCHEDULE_TZ = "Africa/Kinshasa"
 LOCAL_TZ = ZoneInfo(SCHEDULE_TZ)
@@ -53,9 +60,9 @@ class DriveSync:
     def first_launch_needs_browser(self) -> bool:
         return not self.token_path.exists()
 
-    async def sync_once(self, blackboard=None) -> dict[str, Any]:
+    async def sync_once(self, blackboard=None, interactive: bool = False) -> dict[str, Any]:
         try:
-            return await asyncio.to_thread(self._sync_once_sync)
+            return await asyncio.to_thread(self._sync_once_sync, interactive)
         except Exception as exc:
             await self._handle_failure(blackboard, exc)
             return {"ok": False, "error": str(exc), "uploaded": []}
@@ -68,25 +75,34 @@ class DriveSync:
         if blackboard is not None:
             await send_discord_notification(blackboard, FAILURE_ALERT)
 
-    def _sync_once_sync(self) -> dict[str, Any]:
-        service = self.service_factory() if self.service_factory else self._build_service()
-        folder_id = self._ensure_folder(service, DRIVE_FOLDER_NAME)
+    def _sync_once_sync(self, interactive: bool = False) -> dict[str, Any]:
+        service = (
+            self.service_factory()
+            if self.service_factory
+            else self._build_service(interactive=interactive)
+        )
+        root_id = self._ensure_folder(service, DRIVE_FOLDER_NAME)
+        # Dossier mensuel GoldSniper_Backups/YYYY-MM/ (cree automatiquement
+        # au changement de mois).
+        month_name = datetime.now(LOCAL_TZ).strftime("%Y-%m")
+        folder_id = self._ensure_folder(service, month_name, parent_id=root_id)
         uploaded = []
         for path in collect_sync_files():
             uploaded.append(self._upload_file(service, path, folder_id))
         return {
             "ok": True,
             "folder_id": folder_id,
+            "month_folder": month_name,
             "uploaded": uploaded,
             "uploaded_count": len(uploaded),
             "synced_at": datetime.now(LOCAL_TZ).isoformat(),
         }
 
-    def _build_service(self):
-        credentials = self._load_credentials()
+    def _build_service(self, interactive: bool = False):
+        credentials = self._load_credentials(interactive=interactive)
         return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
-    def _load_credentials(self) -> Credentials:
+    def _load_credentials(self, interactive: bool = False) -> Credentials:
         if not self.credentials_path.exists():
             raise FileNotFoundError(f"credentials.json introuvable: {self.credentials_path}")
 
@@ -99,18 +115,27 @@ class DriveSync:
             credentials.refresh(Request())
 
         if not credentials or not credentials.valid:
+            if not interactive:
+                # Moteur headless (pythonw) : ne JAMAIS ouvrir un navigateur ici,
+                # sinon le worker to_thread reste bloque sans limite a 23:00.
+                raise RuntimeError(
+                    "Token Google Drive absent/expire — relancer l'autorisation via: "
+                    "python utils/drive_sync.py (navigateur requis)"
+                )
             flow = InstalledAppFlow.from_client_secrets_file(str(self.credentials_path), SCOPES)
             credentials = flow.run_local_server(port=0, open_browser=True)
 
         self.token_path.write_text(credentials.to_json(), encoding="utf-8")
         return credentials
 
-    def _ensure_folder(self, service, folder_name: str) -> str:
+    def _ensure_folder(self, service, folder_name: str, parent_id: str | None = None) -> str:
         escaped = folder_name.replace("'", "\\'")
         query = (
             "mimeType='application/vnd.google-apps.folder' "
             f"and name='{escaped}' and trashed=false"
         )
+        if parent_id:
+            query += f" and '{parent_id}' in parents"
         response = service.files().list(
             q=query,
             spaces="drive",
@@ -121,7 +146,12 @@ class DriveSync:
         if files:
             return files[0]["id"]
 
-        metadata = {"name": folder_name, "mimeType": "application/vnd.google-apps.folder"}
+        metadata: dict[str, Any] = {
+            "name": folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+        }
+        if parent_id:
+            metadata["parents"] = [parent_id]
         folder = service.files().create(body=metadata, fields="id").execute()
         return folder["id"]
 
@@ -166,15 +196,18 @@ class DriveSync:
 
 
 def collect_sync_files(now: datetime | None = None) -> list[Path]:
+    now = (now or datetime.now(LOCAL_TZ)).astimezone(LOCAL_TZ)
+    today = now.strftime("%Y-%m-%d")
     files = [
         ROOT_DIR / "data" / "memory.db",
-        ROOT_DIR / "logs" / "decision_log.jsonl",
+        ROOT_DIR / "logs" / f"decision_log_{today}.jsonl",
         ROOT_DIR / "logs" / "backtests" / "backtest_results.jsonl",
     ]
     if REPORTS_DIR.exists():
         files.extend(sorted(REPORTS_DIR.glob("*.txt")))
         files.extend(sorted(REPORTS_DIR.glob("*.json")))
         files.extend(sorted(REPORTS_DIR.glob("*.jsonl")))
+        files.extend(sorted(REPORTS_DIR.glob("*.md")))
     return [path for path in files if path.exists() and path.is_file()]
 
 
@@ -227,7 +260,7 @@ def _append_error_log(line: str) -> None:
 
 
 async def _main() -> None:
-    result = await DriveSync().sync_once()
+    result = await DriveSync().sync_once(interactive=True)
     print(json.dumps(result, indent=2, ensure_ascii=True))
 
 

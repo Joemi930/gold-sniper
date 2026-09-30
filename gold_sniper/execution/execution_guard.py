@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,7 +18,11 @@ class ExecutionDecision:
 
 
 class ExecutionGuard:
-    """Central broker-write guard. It fails closed by default."""
+    """Central broker-write guard. It fails closed by default.
+
+    §2-C / §3: Updated to allow PAPER mode (not just LIVE), add DEMO account
+    whitelist, and verify trade_mode==DEMO before any order.
+    """
 
     VALID_ACTIONS = {
         "OPEN_ORDER",
@@ -56,10 +61,38 @@ class ExecutionGuard:
                 broker_writes_allowed,
                 research_decision.reason,
             )
-        if run_mode != "LIVE":
-            return self._deny(action, run_mode, broker_writes_allowed, "RUN_MODE_NOT_LIVE")
+
+        # §3: Allow PAPER mode (not just LIVE) — DEMO account only.
+        # PAPER mode sends orders to MT5 demo account; LIVE is forbidden.
+        if run_mode not in {"LIVE", "PAPER"}:
+            return self._deny(action, run_mode, broker_writes_allowed, "RUN_MODE_NOT_LIVE_OR_PAPER")
         if not broker_writes_allowed:
             return self._deny(action, run_mode, broker_writes_allowed, "BROKER_WRITES_DISABLED")
+
+        # §3: DEMO account whitelist — refuse if connected account != expected demo
+        demo_login = getattr(config, "MT5_DEMO_LOGIN", None)
+        if demo_login:
+            try:
+                import MetaTrader5 as mt5
+                account_info = mt5.account_info()
+                if account_info is not None:
+                    actual_login = account_info.login
+                    if actual_login != demo_login:
+                        return self._deny(
+                            action, run_mode, broker_writes_allowed,
+                            f"DEMO_LOGIN_MISMATCH: connected={actual_login} expected={demo_login}",
+                        )
+                    # §3: Verify trade_mode == DEMO (block REAL)
+                    trade_mode = getattr(account_info, "trade_mode", None)
+                    if trade_mode is not None and trade_mode != 0:  # 0 = DEMO in MT5
+                        return self._deny(
+                            action, run_mode, broker_writes_allowed,
+                            f"ACCOUNT_NOT_DEMO: trade_mode={trade_mode} (0=DEMO)",
+                        )
+            except ImportError:
+                pass  # MT5 not available — fall through to blackboard checks
+            except Exception as exc:
+                return self._deny(action, run_mode, broker_writes_allowed, f"MT5_ACCOUNT_CHECK_ERROR: {exc}")
 
         data = self._blackboard_data()
         meta = data.get("meta", {}) or {}

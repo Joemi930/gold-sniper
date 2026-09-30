@@ -25,7 +25,7 @@ from data_pipeline.timeframe_aggregation import aggregate_candles
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_ROOT = PROJECT_ROOT / "data" / "historical" / "XAUUSD"
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "replay_runs"
-DEFAULT_NEWS_CALENDAR = PROJECT_ROOT / "data" / "historical" / "news" / "economic_calendar_2026-04-01_2026-06-05.jsonl"
+DEFAULT_NEWS_CALENDAR = PROJECT_ROOT / "data" / "historical" / "news" / "calendar_events_20240101_20260630.jsonl"
 DEFAULT_REPLAY_AGENTS = ["agent_1", "agent_2", "agent_3", "agent_4", "agent_5", "agent_6", "agent_7"]
 DEFAULT_TIMEFRAMES = ("1m", "5m", "15m", "1H", "4H")
 
@@ -107,6 +107,46 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="P3-E: Directory for precomputed Parquet caches (NOT YET IMPLEMENTED).",
+    )
+    # P4: fast replay & performance flags
+    parser.add_argument(
+        "--fast-replay",
+        action="store_true",
+        help="P4: Fast replay mode — warmup context-only, minimal events, buffered writes, throttled TUI.",
+    )
+    # ── P4.2: engine selection flags ──────────────────────────────────
+    parser.add_argument(
+        "--engine",
+        choices=("legacy", "v2"),
+        default="legacy",
+        help="P4.2: Replay engine version (legacy|v2, default: legacy).",
+    )
+    parser.add_argument(
+        "--parity",
+        action="store_true",
+        help="P4.2: Run parity mode (full legacy vs fast v2 comparison, 1 day).",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="P4.2: Alias for --fast-replay.",
+    )
+    # ── end P4.2 flags ────────────────────────────────────────────────
+    parser.add_argument(
+        "--minimal-events",
+        action="store_true",
+        help="P4: Write only trade-lifecycle events (open/close/leg_close/rejected).",
+    )
+    parser.add_argument(
+        "--event-buffer-size",
+        type=int,
+        default=1000,
+        help="P4: Buffer size for JSONL event writer (default: 1000, 0=disable).",
+    )
+    parser.add_argument(
+        "--no-tui",
+        action="store_true",
+        help="P4: Disable TUI state updates entirely (fastest path).",
     )
     return parser
 

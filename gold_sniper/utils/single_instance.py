@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 MANAGER_LOCK = ROOT_DIR / "data" / "pc_manager.lock"
@@ -113,6 +115,9 @@ def prepare_clean_stack_start() -> None:
     terminate_duplicate_watchdogs()
     for pid in find_pids("watchdog.py", "main.py"):
         _force_kill(pid)
+    deadline = time.monotonic() + 15.0
+    while find_pids("watchdog.py", "main.py") and time.monotonic() < deadline:
+        time.sleep(0.25)
     clear_stack_artifacts()
     cleanup_before_tunnel(settle_seconds=1.5, include_listeners=True)
 
@@ -138,7 +143,6 @@ def can_start_bot_stack() -> bool:
 
 
 def _force_kill(pid: int) -> None:
-    import subprocess
     import sys
 
     if not _pid_alive(pid):
@@ -149,6 +153,7 @@ def _force_kill(pid: int) -> None:
                 ["taskkill", "/PID", str(pid), "/F", "/T"],
                 capture_output=True,
                 timeout=10,
+                creationflags=CREATE_NO_WINDOW,
             )
             deadline = time.monotonic() + 5.0
             while _pid_alive(pid) and time.monotonic() < deadline:

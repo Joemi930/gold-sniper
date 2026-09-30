@@ -25,6 +25,15 @@ from replay.shadow_live_policy import (
     record_trade_opened,
     risk_pct_for_grade,
 )
+from safety.live_guards import (
+    LossBreakerState,
+    LossCooldownState,
+    RollingDDState,
+    loss_breaker_record_sl,
+    loss_cooldown_record_sl,
+    loss_guard_diag,
+    run_all_live_guards,
+)
 
 TP3_RR = 3.0
 
@@ -67,6 +76,15 @@ class SimulatedTradeManager:
         self.equity = float(self.config.equity_initial)
         self.peak_equity = self.equity
         self.max_drawdown = 0.0
+        self.max_drawdown_pct_peak = 0.0  # TRUE risk: worst peak-to-trough %, vs peak (not initial)
+        # ── Profit sweep (doctrine de sécurisation du capital) ──
+        import os as _os
+        self._sweep_enabled = _os.environ.get("GS_PROFIT_SWEEP", "0").strip().lower() in ("1","true","yes","on")
+        self._sweep_trigger_mult = float(_os.environ.get("GS_SWEEP_TRIGGER_MULT", "2.0") or "2.0")
+        self._sweep_pct = float(_os.environ.get("GS_SWEEP_PCT", "50") or "50") / 100.0
+        self.sweep_ref = float(self.config.equity_initial)   # référence du prochain doublement
+        self.withdrawn_total = 0.0                            # cumul sécurisé (hors risque)
+        self.sweep_count = 0
         self.signal_count = 0
         self.rejected_count = 0
         # Phase18: live-like policy, daily counters, open-end tracking
@@ -79,6 +97,45 @@ class SimulatedTradeManager:
         self.duplicate_rejections: int = 0
         # P1.1 Kasper: legacy ENTER blocked by Kasper authority gate
         self.legacy_enter_blocked_count: int = 0
+        self.cost_filter_rejections: int = 0
+        # Exact reason each ENTER was blocked at the Kasper Authority Gate
+        # (e.g. KASPER_RR_BELOW_MINIMUM, KASPER_SCENARIO_KEY_MISSING). Ends
+        # the guessing about *why* enter_eligible candidates produce 0 trades.
+        self.enter_block_reasons: dict[str, int] = {}
+        self._live_open_count = 0
+        self._live_parent_close_count = 0
+        self._live_win_count = 0
+        self._live_loss_count = 0
+        self._live_parent_pnl_r_total = 0.0
+        self._live_tp1_count = 0
+        self._live_tp2_count = 0
+        self._live_sl_count = 0
+        self._live_protected_sl_count = 0
+        self._dd_state = RollingDDState()
+        self._lb_state = LossBreakerState()
+        self._lc_state = LossCooldownState()
+
+    def live_summary(self) -> dict[str, Any]:
+        """O(1) subset of summary() for per-candle display updates."""
+        closed = self._live_parent_close_count
+        initial = self.config.equity_initial
+        pnl = round(self.equity - initial, 6)
+        return {
+            "final_equity": round(self.equity, 6),
+            "equity": round(self.equity, 6),
+            "net_pnl": pnl,
+            "win_rate": round((self._live_win_count / closed) * 100, 2) if closed else 0.0,
+            "expectancy_R": round(self._live_parent_pnl_r_total / closed, 6) if closed else 0.0,
+            "max_drawdown_pct": round((self.max_drawdown / initial) * 100, 6) if initial else 0.0,
+            "open_trades_end_count": len(self.active_positions),
+            "active_trades": len(self.active_positions),
+            "trades": self._live_open_count,
+            "closed_trades": closed,
+            "tp1_hit_count": self._live_tp1_count,
+            "tp2_hit_count": self._live_tp2_count,
+            "sl_hit_count": self._live_sl_count,
+            "protected_sl_hit_count": self._live_protected_sl_count,
+        }
 
     async def on_candle(self, candle: dict[str, Any]) -> list[dict[str, Any]]:
         self.last_seen_candle = dict(candle)
@@ -179,6 +236,74 @@ class SimulatedTradeManager:
         }
         total_daily_trades = sum(daily_trade_counts.values())
 
+        # ── BUG-3: trades/day on distinct UTC dates with ≥1 trade opened ──
+        open_days: set[str] = set()
+        for e in self.events:
+            if "open" in str(e.get("event", "")).lower() and e.get("time"):
+                open_days.add(str(e["time"])[:10])
+        active_days = max(1, len(open_days))
+        trades_per_day = round(len(parent_closes) / active_days, 4)
+
+        # ── BUG-5: double winrate (full-win + tp1-touch) ─────────────
+        n = len(parent_closes)
+        full_win_count = sum(1 for e in parent_closes if e.get("leg_2_exit_reason") == "TP2")
+        tp1_touch = sum(
+            1 for e in parent_closes
+            if e.get("leg_1_exit_reason") == "TP1" or e.get("leg_2_exit_reason") == "TP2"
+        )
+        winrate_full_win = round(full_win_count / n * 100, 2) if n else 0.0
+        winrate_tp1_touch = round(tp1_touch / n * 100, 2) if n else 0.0
+
+        # ── cost drag (pure vs net expectancy) ────────────────────────
+        cost_drag_R = round(
+            (pure_expectancy_R - expectancy_R) if parent_pnl_Rs else 0.0, 6
+        )
+
+        # ── P4: first/last trade time ──────────────────────────────────
+        open_events = [e for e in self.events if e.get("event") == open_name]
+        open_times = [str(e.get("time")) for e in open_events if e.get("time")]
+        first_trade_time = min(open_times) if open_times else None
+        last_trade_time = max(open_times) if open_times else None
+
+        # ── P4: payoff diagnostics (pure vs net per scenario) ──────────
+        tp1_tp2_closes = [
+            e for e in parent_closes
+            if e.get("leg_1_exit_reason") == "TP1" and e.get("leg_2_exit_reason") == "TP2"
+        ]
+        tp1_protected_closes = [
+            e for e in parent_closes
+            if e.get("leg_1_exit_reason") == "TP1" and e.get("leg_2_exit_reason") == "PROTECTED_SL"
+        ]
+
+        def _avg(items, key):
+            vals = [float(x.get(key) or 0) for x in items if x.get(key) is not None]
+            return round(sum(vals) / len(vals), 6) if vals else 0.0
+
+        tp1_tp2_avg_net_R = _avg(tp1_tp2_closes, "parent_pnl_R")
+        tp1_tp2_avg_pure_R = _avg(tp1_tp2_closes, "pure_parent_pnl_R")
+        tp1_protected_avg_net_R = _avg(tp1_protected_closes, "parent_pnl_R")
+        tp1_protected_avg_pure_R = _avg(tp1_protected_closes, "pure_parent_pnl_R")
+
+        # avg cost drag per trade
+        cost_drags = [
+            round((e.get("pure_parent_pnl_R") or 0.0) - (e.get("parent_pnl_R") or 0.0), 6)
+            for e in parent_closes
+        ]
+        avg_cost_drag_per_trade_R = round(sum(cost_drags) / len(cost_drags), 6) if cost_drags else 0.0
+        winner_drags = [d for i, d in enumerate(cost_drags) if i < len(parent_closes) and parent_closes[i].get("parent_outcome") == "WIN"]
+        loser_drags = [d for i, d in enumerate(cost_drags) if i < len(parent_closes) and parent_closes[i].get("parent_outcome") == "LOSS"]
+        avg_cost_drag_winners_R = round(sum(winner_drags) / len(winner_drags), 6) if winner_drags else 0.0
+        avg_cost_drag_losers_R = round(sum(loser_drags) / len(loser_drags), 6) if loser_drags else 0.0
+
+        # ── P4.1: cost drag component breakdown ───────────────────────
+        total_spread = round(sum(float(e.get("entry_spread_points", 0) or 0) for e in parent_closes), 6)
+        total_slippage = round(sum(float(e.get("entry_slippage_points", 0) or 0) for e in parent_closes), 6)
+        total_commission = round(sum(float(e.get("commission", 0) or 0) for e in parent_closes), 6)
+        n_ts = max(1, len(parent_closes))
+        avg_spread_per_trade = round(total_spread / n_ts, 6)
+        avg_slippage_per_trade = round(total_slippage / n_ts, 6)
+        avg_commission_per_trade = round(total_commission / n_ts, 6)
+
         return {
             "initial_equity": round(self.config.equity_initial, 6),
             "signals": self.signal_count,
@@ -197,6 +322,27 @@ class SimulatedTradeManager:
             "max_drawdown_pct": round((self.max_drawdown / self.config.equity_initial) * 100, 6)
             if self.config.equity_initial
             else 0.0,
+            # THE honest risk metric: worst drawdown relative to the running peak.
+            "max_drawdown_pct_of_peak": round(self.max_drawdown_pct_peak, 4),
+            # DIAGNOSTIC gardes anti-rechute (prouve si env actives + si ça tire)
+            "loss_guard_diag": {
+                "config_active": getattr(self, "_lg_cfg", None),   # (breaker, cooldown_min) lus depuis config
+                "sl_losses_counted": getattr(self, "_slg_total_counted", 0),
+                "blocks_triggered": getattr(self, "_slg_blocks", 0),
+                "blocks_by_reason": getattr(self, "_lg_by_reason", {}),
+                "suppressed_trade_count": getattr(self, "_lg_suppressed", 0),
+                "suppressed_examples": getattr(self, "_lg_examples", []),
+                "rolling_dd_pauses": getattr(self, "_dd_pause_count", 0),
+            },
+            # Profit sweep (sécurisation): equity = capital à risque restant;
+            # withdrawn_total = sécurisé hors compte; total_value = vraie valeur.
+            "withdrawn_total": round(self.withdrawn_total, 2),
+            "sweep_count": self.sweep_count,
+            "total_value": round(self.equity + self.withdrawn_total, 2),
+            "total_return_pct": round(
+                ((self.equity + self.withdrawn_total) - self.config.equity_initial)
+                / self.config.equity_initial * 100, 4
+            ) if self.config.equity_initial else 0.0,
             "rejections": self.rejected_count,
             "missed_entries": len([e for e in self.events if e["event"] == missed_name]),
             # P3: payoff metrics
@@ -258,7 +404,36 @@ class SimulatedTradeManager:
             "daily_limit_rejections": self.daily_limit_rejections,
             "grade_blocked_count": self.grade_blocked_count,
             "legacy_enter_blocked_count": self.legacy_enter_blocked_count,
+            "cost_filter_rejections": self.cost_filter_rejections,
+            "enter_block_reasons": dict(self.enter_block_reasons),
             "duplicate_rejections": self.duplicate_rejections,
+            "trades_per_day": trades_per_day,
+            "active_trading_days": active_days,
+            "winrate_full_win": winrate_full_win,
+            "winrate_tp1_touch": winrate_tp1_touch,
+            "cost_drag_R": cost_drag_R,
+            # ── P4: trade time boundaries ────────────────────────────
+            "first_trade_time": first_trade_time,
+            "last_trade_time": last_trade_time,
+            # ── P4: pure-vs-net payoff diagnostics ───────────────────
+            "tp1_tp2_avg_net_R": tp1_tp2_avg_net_R,
+            "tp1_tp2_avg_pure_R": tp1_tp2_avg_pure_R,
+            "tp1_protected_avg_net_R": tp1_protected_avg_net_R,
+            "tp1_protected_avg_pure_R": tp1_protected_avg_pure_R,
+            "avg_cost_drag_per_trade_R": avg_cost_drag_per_trade_R,
+            "avg_cost_drag_winners_R": avg_cost_drag_winners_R,
+            "avg_cost_drag_losers_R": avg_cost_drag_losers_R,
+            # P4.1: cost component breakdown (spread / slippage / commission)
+            "total_spread_points": total_spread,
+            "total_slippage_points": total_slippage,
+            "total_commission_R": total_commission,
+            "avg_spread_per_trade": avg_spread_per_trade,
+            "avg_slippage_per_trade": avg_slippage_per_trade,
+            "avg_commission_per_trade": avg_commission_per_trade,
+            "tp1_tp2_count": tp1_then_tp2,
+            "tp1_protected_count": tp1_then_protected_sl,
+            "full_win_count": full_win_count,
+            "tp1_touch_count": tp1_touch,
             "shadow_live_policy": self.policy.to_dict(),
             **_risk_realism_summary(self.events, parent_closes),
         }
@@ -379,6 +554,22 @@ class SimulatedTradeManager:
                 }
             )
 
+        # Anti-relapse guard AT THE ACTIVATION CHOKE POINT (every open passes here,
+        # market or pending). Placing it upstream in on_p1_decision missed the real
+        # opens (limit fills via _manage_pending_entries). Causal: SL counters are
+        # updated by _manage_triggered_positions earlier in the same candle.
+        _lg = self._entry_block_reason(trade, _iso(candle["time"]))
+        if _lg:
+            self.rejected_count += 1
+            self._lg_suppressed = getattr(self, "_lg_suppressed", 0) + 1
+            if len(getattr(self, "_lg_examples", [])) < 12:
+                self._lg_examples = getattr(self, "_lg_examples", []) + [{"time": _iso(candle["time"]), "side": trade.get("type"), "reason": _lg, "ticket": trade.get("ticket")}]
+            if clear_blackboard:
+                await self.blackboard.write("trade_signals", {})
+            return self._record_event({
+                "event": self._event_name("rejected"),
+                "reason": _lg, "time": _iso(candle["time"]), "source": "LOSS_GUARD",
+            })
         self.active_positions[trade["ticket"]] = trade
         await self._write_active_positions()
         if clear_blackboard:
@@ -402,6 +593,18 @@ class SimulatedTradeManager:
                         "reason": str(exc),
                         "time": _iso(candle["time"]),
                         "signal": signal,
+                    }))
+                    continue
+                _lg = self._entry_block_reason(trade, _iso(candle["time"]))
+                if _lg:
+                    self.pending_entries.pop(pending_id, None)
+                    self.rejected_count += 1
+                    self._lg_suppressed = getattr(self, "_lg_suppressed", 0) + 1
+                    if len(getattr(self, "_lg_examples", [])) < 12:
+                        self._lg_examples = getattr(self, "_lg_examples", []) + [{"time": _iso(candle["time"]), "side": trade.get("type"), "reason": _lg, "ticket": trade.get("ticket"), "pending": True}]
+                    events.append(self._record_event({
+                        "event": self._event_name("rejected"),
+                        "reason": _lg, "time": _iso(candle["time"]), "source": "LOSS_GUARD",
                     }))
                     continue
                 self.pending_entries.pop(pending_id, None)
@@ -579,16 +782,25 @@ class SimulatedTradeManager:
         if risk <= 0:
             raise ValueError("invalid_risk_points")
 
+        # ── R UNIT FIX (BUG-1/BUG-2/BUG-7) ─────────────────────────
+        # Volume is sized on effective_risk_points (sizing).  For
+        #   full SL = -1R, TP1 = +0.5R/leg, TP2 = +1.0R/leg,
+        #   protected = +0.5R unit, targets MUST use the same unit.
+        # 'risk' (structural from fill) is NOT the sizing unit.
+        r_unit = float(effective_risk_points)
+        if r_unit <= 0.0:
+            raise ValueError("invalid_r_unit")
+
         # ── P3: leg TP levels ─────────────────────────────────────────
         # leg_1 TP = 1R from entry, leg_2 TP = 2R from entry
         if action == "BUY":
-            leg_1_tp = entry + risk * LEG_TARGET_RR[1]
-            leg_2_tp = entry + risk * LEG_TARGET_RR[2]
-            protected_sl_price = round(entry + PROTECTED_RUNNER_SL_R * risk, 6)
+            leg_1_tp = entry + r_unit * LEG_TARGET_RR[1]
+            leg_2_tp = entry + r_unit * LEG_TARGET_RR[2]
+            protected_sl_price = round(entry + PROTECTED_RUNNER_SL_R * r_unit, 6)
         else:
-            leg_1_tp = entry - risk * LEG_TARGET_RR[1]
-            leg_2_tp = entry - risk * LEG_TARGET_RR[2]
-            protected_sl_price = round(entry - PROTECTED_RUNNER_SL_R * risk, 6)
+            leg_1_tp = entry - r_unit * LEG_TARGET_RR[1]
+            leg_2_tp = entry - r_unit * LEG_TARGET_RR[2]
+            protected_sl_price = round(entry - PROTECTED_RUNNER_SL_R * r_unit, 6)
 
         # Validate levels
         if action == "BUY" and not (sl < entry < leg_1_tp <= leg_2_tp):
@@ -641,7 +853,8 @@ class SimulatedTradeManager:
             "setup_grade": grade,
             "daily_slot_reason": signal.get("daily_slot_reason"),
             "structural_risk_points": round(structural_risk_points, 6),
-            "effective_risk_points": round(float(risk), 6),
+            "effective_risk_points": round(float(effective_risk_points), 6),
+            "r_unit_points": round(r_unit, 6),
             "cost_aware_volume": round(float(volume), 6),
             "risk_realism_expected_loss": expected_sl_loss,
             "risk_realism_status": risk_realism_status,
@@ -804,6 +1017,18 @@ class SimulatedTradeManager:
                         self._activate_protected_sl(trade)
                     events.append(self._close_leg(trade, candle, 2, "TP2", level2))
 
+            # Étape 2: AFTER the exit check, ratchet the runner's protected SL up
+            # behind this candle's confirmed peak — so the tightened level applies
+            # to the NEXT candle. Doing it here (not before) avoids intrabar
+            # look-ahead (using this candle's high to stop this candle's low).
+            # No-op unless RUNNER_TRAIL_ENABLED and leg_2 is still open & protected.
+            if leg_2["status"] == "OPEN":
+                self._update_runner_trail(trade, candle)
+
+        # BE-at-1R (pre-TP1): after this candle's exit checks, so the tightened
+        # SL applies from the NEXT candle — same no-look-ahead discipline.
+        self._update_pre_tp1_breakeven(trade, candle)
+
         # ── Phase 3: Parent finalization ──────────────────────────────
         if leg_1["status"] == "CLOSED" and leg_2["status"] == "CLOSED":
             parent_pnl = (leg_1.get("pnl", 0.0) or 0.0) + (leg_2.get("pnl", 0.0) or 0.0)
@@ -871,7 +1096,16 @@ class SimulatedTradeManager:
         entry = float(trade["entry_price"])
         pure_pnl = round((float(exit_price) - entry) * volume, 6) if trade["type"] == "BUY" else round((entry - float(exit_price)) * volume, 6)
         leg["pure_pnl_R"] = round(pure_pnl / leg_risk, 6) if leg_risk > 0 else 0.0
-        return self._leg_event(candle, trade, leg_num, reason, exit_price, actual_exit, volume, pnl, fill)
+        _leg_evt = self._leg_event(candle, trade, leg_num, reason, exit_price, actual_exit, volume, pnl, fill)
+        # BUGFIX (gardes anti-rechute): les fermetures de leg NE passent PAS par
+        # _record_event, donc _track_sl_loss ne voyait jamais les SL → compteur
+        # figé à 0 → gardes inertes. On alimente ici. leg_1 en SL = STOP PLEIN
+        # (trade perdu avant TP1); on ne compte que le leg 1 pour ne pas
+        # double-compter les 2 legs d'un même stop. Causal: le SL est traité dans
+        # _manage_triggered_positions AVANT _consume_signal du même bougie.
+        if leg_num == 1 and reason == "SL":
+            self._track_sl_loss({"reason": "SL", "time": _leg_evt.get("time"), "side": trade.get("type"), "ticket": trade.get("ticket")})
+        return _leg_evt
 
     def _activate_protected_sl(self, trade: dict[str, Any]) -> None:
         """After leg_1 TP1, move leg_2 SL to entry + 0.5R (protected)."""
@@ -880,16 +1114,113 @@ class SimulatedTradeManager:
             return
         action = trade["type"]
         entry = float(trade["entry_price"])
-        risk = float(trade["risk_points"])
+        r_unit = float(trade.get("r_unit_points") or trade.get("effective_risk_points") or trade["risk_points"])
         if action == "BUY":
-            psl = round(entry + PROTECTED_RUNNER_SL_R * risk, 6)
+            psl = round(entry + PROTECTED_RUNNER_SL_R * r_unit, 6)
         else:
-            psl = round(entry - PROTECTED_RUNNER_SL_R * risk, 6)
+            psl = round(entry - PROTECTED_RUNNER_SL_R * r_unit, 6)
         leg_2["protected_sl"] = psl
         leg_2["sl"] = psl  # Move SL to protected level
         trade["protected_sl"] = psl  # Legacy compat
         trade["breakeven_activated"] = True
         trade["be_plus_activated"] = True
+        # Runner-trail bookkeeping: at TP1 the price is at +1R, so the peak
+        # favourable excursion starts at 1.0R. Used by _update_runner_trail.
+        trade["_runner_peak_r"] = 1.0
+
+    def _update_runner_trail(self, trade: dict[str, Any], candle: dict[str, Any]) -> None:
+        """Ratchet leg_2's protected SL up behind the price peak after TP1.
+
+        SAFE BY CONSTRUCTION: the trailed level can never go below the fixed
+        protected floor (PROTECTED_RUNNER_SL_R), and only moves favourably — so
+        leg_2 can only lock in MORE profit, never turn a winner into a loss.
+        OFF by default; enabled via config/env.
+        """
+        try:
+            from config import RUNNER_TRAIL_ENABLED, RUNNER_TRAIL_R
+
+            if not RUNNER_TRAIL_ENABLED:
+                return
+            leg_2 = trade.get("leg_2") or {}
+            if leg_2.get("status") != "OPEN" or leg_2.get("protected_sl") is None:
+                return
+            action = trade["type"]
+            entry = float(trade["entry_price"])
+            r_unit = float(
+                trade.get("r_unit_points")
+                or trade.get("effective_risk_points")
+                or trade["risk_points"]
+            )
+            if r_unit <= 0:
+                return
+            hi = float(candle.get("high") or entry)
+            lo = float(candle.get("low") or entry)
+            fav_r = (hi - entry) / r_unit if action == "BUY" else (entry - lo) / r_unit
+            peak = max(float(trade.get("_runner_peak_r") or 1.0), fav_r)
+            trade["_runner_peak_r"] = peak
+            trailed_r = max(PROTECTED_RUNNER_SL_R, peak - RUNNER_TRAIL_R)
+            new_psl = (
+                round(entry + trailed_r * r_unit, 6)
+                if action == "BUY"
+                else round(entry - trailed_r * r_unit, 6)
+            )
+            cur = leg_2.get("protected_sl")
+            if action == "BUY":
+                if cur is None or new_psl > cur:
+                    leg_2["protected_sl"] = new_psl
+                    leg_2["sl"] = new_psl
+                    trade["protected_sl"] = new_psl
+            else:
+                if cur is None or new_psl < cur:
+                    leg_2["protected_sl"] = new_psl
+                    leg_2["sl"] = new_psl
+                    trade["protected_sl"] = new_psl
+        except Exception:
+            return
+
+    def _update_pre_tp1_breakeven(self, trade: dict[str, Any], candle: dict[str, Any]) -> None:
+        """Move SL to entry+lock once price has been +1R in favour (pre-TP1).
+
+        With structural (far) TP1s, a trade can reach +2R and reverse; without
+        this, it would still exit at -1R. Causal: the trigger uses THIS candle's
+        confirmed extreme, but the tightened SL only applies from the NEXT candle
+        (called after this candle's exit checks) — no intrabar look-ahead.
+        Default ON via config.BE_AT_1R; fail-safe no-op on any error.
+        """
+        try:
+            from config import BE_AT_1R, BE_AT_1R_TRIGGER_R, BE_AT_1R_LOCK_R
+            if not BE_AT_1R or trade.get("_be1r_done"):
+                return
+            leg_1 = trade.get("leg_1") or {}
+            if leg_1.get("status") != "OPEN":
+                return  # post-TP1 protection is handled by protected SL
+            action = trade["type"]
+            entry = float(trade["entry_price"])
+            r_unit = float(
+                trade.get("r_unit_points")
+                or trade.get("effective_risk_points")
+                or trade["risk_points"]
+            )
+            if r_unit <= 0:
+                return
+            hi = float(candle.get("high") or entry)
+            lo = float(candle.get("low") or entry)
+            fav_r = (hi - entry) / r_unit if action == "BUY" else (entry - lo) / r_unit
+            if fav_r < BE_AT_1R_TRIGGER_R:
+                return
+            lock = BE_AT_1R_LOCK_R * r_unit
+            new_sl = round(entry + lock, 6) if action == "BUY" else round(entry - lock, 6)
+            for leg_key in ("leg_1", "leg_2"):
+                leg = trade.get(leg_key) or {}
+                if leg.get("status") != "OPEN":
+                    continue
+                cur = leg.get("sl")
+                if cur is None or (action == "BUY" and new_sl > cur) or (action == "SELL" and new_sl < cur):
+                    leg["sl"] = new_sl
+            trade["_be1r_done"] = True
+            trade["breakeven_activated"] = True
+        except Exception:
+            return
 
     def _finalize_parent(
         self, trade: dict[str, Any], candle: dict[str, Any]
@@ -911,7 +1242,12 @@ class SimulatedTradeManager:
     def _parent_close_event(
         self, trade: dict[str, Any], candle: dict[str, Any]
     ) -> dict[str, Any]:
-        """Emit parent-level close event when both legs are closed."""
+        """Emit parent-level close event when both legs are closed.
+
+        P4: enriched with R-unit diagnostics for pure-vs-net cost drag analysis.
+        """
+        pure_parent = trade.get("pure_parent_pnl_R")
+        net_parent = trade.get("parent_pnl_R")
         return {
             "event": self._event_name("close"),
             "time": _iso(candle["time"]),
@@ -919,8 +1255,9 @@ class SimulatedTradeManager:
             "reason": "PARENT_CLOSE",
             "type": trade["type"],
             "entry_price": trade["entry_price"],
-            "parent_pnl_R": trade.get("parent_pnl_R"),
-            "pure_parent_pnl_R": trade.get("pure_parent_pnl_R"),  # P3: parent R before exit costs
+            "setup_grade": trade.get("setup_grade", ""),
+            "parent_pnl_R": net_parent,
+            "pure_parent_pnl_R": pure_parent,  # P3: parent R before exit costs
             "parent_outcome": trade.get("parent_outcome"),
             "leg_1_exit_reason": trade["leg_1"].get("exit_reason"),
             "leg_1_pnl_R": trade["leg_1"].get("pnl_R"),
@@ -934,7 +1271,18 @@ class SimulatedTradeManager:
             "commission": trade.get("commission_total", 0.0),
             "equity": self.equity,
             "risk_cash": trade.get("total_risk_cash") or trade.get("risk_cash"),
-            "r_multiple": trade.get("parent_pnl_R"),
+            "r_multiple": net_parent,
+            # ── P4: R-unit & cost diagnostics ──────────────────────────
+            "r_unit_points": trade.get("r_unit_points"),
+            "effective_risk_points": trade.get("effective_risk_points"),
+            "structural_risk_points": trade.get("structural_risk_points"),
+            "entry_spread_points": trade.get("entry_spread_points"),
+            "entry_slippage_points": trade.get("entry_slippage_points"),
+            "commission_total": trade.get("commission_total"),
+            "cost_drag_trade_R": round(
+                (pure_parent or 0.0) - (net_parent or 0.0), 6
+            ),
+            # ── end P4 diagnostics ─────────────────────────────────────
             "tier": trade.get("tier"),
             "setup_grade": trade.get("setup_grade"),
             "kasper_grade": trade.get("kasper_grade"),
@@ -944,7 +1292,6 @@ class SimulatedTradeManager:
             "fill_model": trade.get("fill_model"),
             "execution_conservative": trade.get("execution_conservative"),
             "news_execution_mode": trade.get("news_execution_mode"),
-            "setup_grade": trade.get("setup_grade"),
             "scenario_key": trade.get("scenario_key"),
         }
 
@@ -1011,6 +1358,29 @@ class SimulatedTradeManager:
         self.equity += pnl
         self.peak_equity = max(self.peak_equity, self.equity)
         self.max_drawdown = max(self.max_drawdown, self.peak_equity - self.equity)
+        # TRUE drawdown: relative to the running PEAK (what you actually feel),
+        # not to initial equity. On a compounding account, /initial inflates the
+        # number wildly (e.g. 465% is a $465 dip on a $4270 peak = ~11% real).
+        if self.peak_equity > 0:
+            _dd_peak = (self.peak_equity - self.equity) / self.peak_equity * 100.0
+            self.max_drawdown_pct_peak = max(self.max_drawdown_pct_peak, _dd_peak)
+
+        # ── Profit sweep: dès que l'équité ACTIVE a doublé depuis la dernière
+        # référence, on sort une fraction du bénéfice du compte (retiré = sécurisé,
+        # hors risque). Le retrait N'EST PAS un drawdown → on ramène le high-water
+        # mark au niveau post-retrait pour que le DD ne reflète que le capital
+        # réellement à risque, et le sizing (basé sur l'équité) se dé-risque
+        # naturellement. Aucune influence sur les décisions de trading. Défaut OFF.
+        if self._sweep_enabled and self.equity >= self.sweep_ref * self._sweep_trigger_mult:
+            profit = self.equity - self.sweep_ref
+            if profit > 0:
+                swept = round(profit * self._sweep_pct, 2)
+                if swept > 0:
+                    self.equity -= swept
+                    self.withdrawn_total = round(self.withdrawn_total + swept, 2)
+                    self.sweep_count += 1
+                    self.sweep_ref = self.equity
+                    self.peak_equity = self.equity  # un retrait n'est pas une perte
 
     def _pnl(self, trade: dict[str, Any], exit_price: float, volume: float | None = None) -> float:
         volume = float(volume if volume is not None else trade.get("volume_remaining", trade.get("volume_original", 0.0)))
@@ -1046,10 +1416,233 @@ class SimulatedTradeManager:
             positions.clear()
             positions.extend(dict(trade) for trade in self.active_positions.values())
 
+    def _track_sl_loss(self, event: dict[str, Any]) -> None:
+        """Feed the anti-relapse guards from close events (reason == SL)."""
+        try:
+            if str(event.get("reason") or "") != "SL":
+                return
+            # Dedupe by ticket: a full stop closes BOTH legs (and phases may
+            # re-touch) → count each losing TRADE once, so sl_losses_counted
+            # matches full_sl_count (was 180 vs 60).
+            ticket = event.get("ticket")
+            if ticket is not None:
+                if not hasattr(self, "_slg_seen"):
+                    self._slg_seen = set()
+                if ticket in self._slg_seen:
+                    return
+                self._slg_seen.add(ticket)
+            t = str(event.get("time") or "")
+            side = str(event.get("side") or event.get("type") or "")
+            day = t[:10]
+            if getattr(self, "_slg_day", None) != day:
+                self._slg_day = day
+                self._slg_count = 0
+            self._slg_count = getattr(self, "_slg_count", 0) + 1
+            self._slg_total_counted = getattr(self, "_slg_total_counted", 0) + 1
+            if not hasattr(self, "_slg_last"):
+                self._slg_last = {}
+            self._slg_last[side] = t
+            loss_breaker_record_sl(t, self._lb_state)
+            loss_cooldown_record_sl(t, side, self._lc_state)
+        except Exception:
+            return
+
+    def _entry_block_reason(self, trade: dict, candle_time: str) -> str | None:
+        """Run the shared live/replay guards and keep replay diagnostics intact."""
+        try:
+            from config import (
+                LOSS_BREAKER_MAX_SL_PER_DAY,
+                LOSS_COOLDOWN_SAME_SIDE_MIN,
+                MAX_CONCURRENT_POSITIONS,
+                MAX_CONCURRENT_SAME_SIDE,
+                MIN_RR,
+                ROLLING_DD_PCT,
+                ROLLING_DD_PAUSE_DAYS,
+            )
+
+            self._lg_cfg = (
+                MIN_RR,
+                MAX_CONCURRENT_POSITIONS,
+                MAX_CONCURRENT_SAME_SIDE,
+                ROLLING_DD_PCT,
+                ROLLING_DD_PAUSE_DAYS,
+                LOSS_BREAKER_MAX_SL_PER_DAY,
+                LOSS_COOLDOWN_SAME_SIDE_MIN,
+            )
+            results = run_all_live_guards(
+                rr_estimate=trade.get("rr_estimate"),
+                active_positions=self.active_positions,
+                side=str(trade.get("type") or ""),
+                equity=self.equity,
+                peak_equity=self.peak_equity,
+                candle_time=candle_time,
+                min_rr=MIN_RR,
+                max_concurrent=MAX_CONCURRENT_POSITIONS,
+                max_concurrent_same_side=MAX_CONCURRENT_SAME_SIDE,
+                rolling_dd_pct=ROLLING_DD_PCT,
+                rolling_dd_pause_days=ROLLING_DD_PAUSE_DAYS,
+                loss_breaker_max=LOSS_BREAKER_MAX_SL_PER_DAY,
+                loss_cooldown_min=LOSS_COOLDOWN_SAME_SIDE_MIN,
+                dd_state=self._dd_state,
+                lb_state=self._lb_state,
+                lc_state=self._lc_state,
+            )
+            if self._dd_state.rebase_equity is not None:
+                self.peak_equity = float(self._dd_state.rebase_equity)
+                self._dd_state.rebase_equity = None
+            diag = loss_guard_diag(results)
+            if not diag["blocked"]:
+                return None
+            reason = str(diag["primary_blocker"])
+            self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+            self._lg_by_reason = getattr(self, "_lg_by_reason", {})
+            self._lg_by_reason[reason] = self._lg_by_reason.get(reason, 0) + 1
+            if reason == "ROLLING_DD_PAUSE":
+                self._dd_pause_count = self._dd_state.pause_count
+                self._dd_pause_until = self._dd_state.pause_until
+            return reason
+        except Exception:
+            return None
+
+    def _min_rr_block(self, trade: dict) -> str | None:
+        """Structural quality filter: reject setups whose reward:risk estimate is
+        below GS_MIN_RR. Validated per-year + per-bucket as the OOS-robust edge
+        (rr>=4 positive in 2024/2025/2026; rr<4 loses OOS). rr_estimate is causal
+        (computed from closed candles + entry/SL at entry). 0 = off."""
+        try:
+            from config import MIN_RR
+            if MIN_RR <= 0:
+                return None
+            rr = trade.get("rr_estimate")
+            if rr is None:
+                return None
+            if float(rr) < MIN_RR:
+                self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+                self._lg_by_reason = getattr(self, "_lg_by_reason", {})
+                self._lg_by_reason["MIN_RR"] = self._lg_by_reason.get("MIN_RR", 0) + 1
+                return "MIN_RR"
+        except Exception:
+            return None
+        return None
+
+    def _rolling_dd_block(self, candle_time: str) -> str | None:
+        """Pause new entries during a rolling drawdown (losing-regime protection).
+
+        When realized equity is >= ROLLING_DD_PCT below its running peak, pause new
+        entries for ROLLING_DD_PAUSE_DAYS, then rebase the peak and resume. Uses only
+        past realized equity + time → causal, no look-ahead. Existing open trades are
+        untouched (they resolve normally); only NEW exposure is gated.
+        """
+        try:
+            from config import ROLLING_DD_PCT, ROLLING_DD_PAUSE_DAYS
+            if ROLLING_DD_PCT <= 0:
+                return None
+            from datetime import datetime, timedelta
+            def _p(x):
+                return datetime.fromisoformat(str(x).replace("Z", "+00:00"))
+            now = _p(candle_time)
+            pause_until = getattr(self, "_dd_pause_until", None)
+            if pause_until is not None and now < pause_until:
+                self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+                self._lg_by_reason = getattr(self, "_lg_by_reason", {})
+                self._lg_by_reason["ROLLING_DD_PAUSE"] = self._lg_by_reason.get("ROLLING_DD_PAUSE", 0) + 1
+                return "ROLLING_DD_PAUSE"
+            if self.peak_equity > 0:
+                dd = (self.peak_equity - self.equity) / self.peak_equity * 100.0
+                if dd >= ROLLING_DD_PCT:
+                    self._dd_pause_until = now + timedelta(days=ROLLING_DD_PAUSE_DAYS)
+                    self.peak_equity = self.equity   # rebase baseline for the resume
+                    self._dd_pause_count = getattr(self, "_dd_pause_count", 0) + 1
+                    self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+                    self._lg_by_reason = getattr(self, "_lg_by_reason", {})
+                    self._lg_by_reason["ROLLING_DD_PAUSE"] = self._lg_by_reason.get("ROLLING_DD_PAUSE", 0) + 1
+                    return "ROLLING_DD_PAUSE"
+        except Exception:
+            return None
+        return None
+
+    def _concurrency_block(self, side: str) -> str | None:
+        """Cap concurrent exposure — the real driver of the big drawdowns
+        (same-direction positions piling up and losing together)."""
+        try:
+            from config import MAX_CONCURRENT_POSITIONS, MAX_CONCURRENT_SAME_SIDE
+            if MAX_CONCURRENT_POSITIONS > 0 and len(self.active_positions) >= MAX_CONCURRENT_POSITIONS:
+                self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+                self._lg_by_reason = getattr(self, "_lg_by_reason", {})
+                self._lg_by_reason["MAX_CONCURRENT"] = self._lg_by_reason.get("MAX_CONCURRENT", 0) + 1
+                return "MAX_CONCURRENT"
+            if MAX_CONCURRENT_SAME_SIDE > 0:
+                same = sum(1 for t in self.active_positions.values() if str(t.get("type")) == str(side))
+                if same >= MAX_CONCURRENT_SAME_SIDE:
+                    self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+                    self._lg_by_reason = getattr(self, "_lg_by_reason", {})
+                    self._lg_by_reason["MAX_CONCURRENT_SAME_SIDE"] = self._lg_by_reason.get("MAX_CONCURRENT_SAME_SIDE", 0) + 1
+                    return "MAX_CONCURRENT_SAME_SIDE"
+        except Exception:
+            return None
+        return None
+
+    def _loss_guard_block(self, candle_time: str, side: str) -> str | None:
+        """Return a block reason if the anti-relapse guards forbid opening."""
+        try:
+            from config import LOSS_BREAKER_MAX_SL_PER_DAY, LOSS_COOLDOWN_SAME_SIDE_MIN
+            # Diagnostic echo (persist the ACTIVE config once — proves env vars took effect)
+            self._lg_cfg = (LOSS_BREAKER_MAX_SL_PER_DAY, LOSS_COOLDOWN_SAME_SIDE_MIN)
+            day = str(candle_time)[:10]
+            if (
+                LOSS_BREAKER_MAX_SL_PER_DAY > 0
+                and getattr(self, "_slg_day", None) == day
+                and getattr(self, "_slg_count", 0) >= LOSS_BREAKER_MAX_SL_PER_DAY
+            ):
+                self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+                return "DAILY_LOSS_BREAKER"
+            if LOSS_COOLDOWN_SAME_SIDE_MIN > 0:
+                last = (getattr(self, "_slg_last", {}) or {}).get(str(side))
+                if last:
+                    from datetime import datetime
+                    def _p(x):
+                        return datetime.fromisoformat(str(x).replace("Z", "+00:00"))
+                    delta_min = (_p(candle_time) - _p(last)).total_seconds() / 60.0
+                    if 0 <= delta_min < LOSS_COOLDOWN_SAME_SIDE_MIN:
+                        self._slg_blocks = getattr(self, "_slg_blocks", 0) + 1
+                        return "LOSS_COOLDOWN_SAME_SIDE"
+        except Exception:
+            return None
+        return None
+
     def _record_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        self._track_sl_loss(event)
         event.setdefault("recorded_at", _iso(datetime.now(timezone.utc)))
         self.events.append(event)
+        self._update_live_stats(event)
         return event
+
+    def _update_live_stats(self, event: dict[str, Any]) -> None:
+        name = str(event.get("event") or "")
+        if name == self._event_name("open"):
+            self._live_open_count += 1
+        elif name == self._event_name("close"):
+            self._live_parent_close_count += 1
+            if event.get("parent_outcome") == "WIN":
+                self._live_win_count += 1
+            elif event.get("parent_outcome") == "LOSS":
+                self._live_loss_count += 1
+            value = event.get("parent_pnl_R")
+            if value is not None:
+                try:
+                    self._live_parent_pnl_r_total += float(value)
+                except (TypeError, ValueError):
+                    pass
+        elif name == self._event_name("leg_close"):
+            reason = event.get("reason")
+            if reason == "TP1":
+                self._live_tp1_count += 1
+            elif reason == "TP2":
+                self._live_tp2_count += 1
+            elif reason == "SL":
+                self._live_sl_count += 1
+            elif reason == "PROTECTED_SL":
+                self._live_protected_sl_count += 1
 
     def _event_name(self, name: str) -> str:
         if self.config.event_prefix == "tier":
@@ -1084,9 +1677,25 @@ class SimulatedTradeManager:
         Phase18: enforces daily trade limits and grade executability before opening.
         Phase18 fix: manages triggered positions BEFORE consuming signal so that
         existing trades are checked for TP/SL hits on every candle.
+
+        P4: safety gate — if eval_active is explicitly False, refuse all operations.
         """
         if not isinstance(decision, dict):
             return []
+        # Fast-path: on non-execution 1m candles (no fresh decision) with no open
+        # positions and no pending entries there is nothing to manage — skip all
+        # bookkeeping. Pure speed; identical behaviour (nothing could happen).
+        if (
+            decision.get("_non_execution_bar")
+            and not self.active_positions
+            and not self.pending_entries
+        ):
+            return []
+
+        # ── P4 warmup safety gate ────────────────────────────────────────
+        if decision.get("eval_active") is False:
+            return []
+
         self.last_seen_candle = dict(candle)
 
         # ── Check existing positions for TP/SL hits FIRST ──────────────
@@ -1128,6 +1737,9 @@ class SimulatedTradeManager:
             if decision.get("_kasper_gate_blocked"):
                 self.legacy_enter_blocked_count += 1
                 gate_reason = decision.get("_kasper_gate_reason", "LEGACY_ENTER_BLOCKED")
+                self.enter_block_reasons[gate_reason] = (
+                    self.enter_block_reasons.get(gate_reason, 0) + 1
+                )
                 events.append(self._record_event({
                     "event": self._event_name("rejected"),
                     "reason": gate_reason,
@@ -1191,6 +1803,49 @@ class SimulatedTradeManager:
                     "source": "P1_SHADOW_DECISION",
                 }))
                 return events
+
+            # ── Étape 1: COST FILTER (rentabilité) ──────────────────────
+            # Refuse a trade whose TP1 reward cannot cover N× the round-trip
+            # execution cost. Acts HERE (entry gate) — does NOT touch risk_points
+            # or the Kasper grade. Fail-open: if reward can't be computed reliably,
+            # we do NOT reject (a data glitch must never silently kill trades).
+            try:
+                from config import (
+                    COST_FILTER_ENABLED,
+                    COST_FILTER_MIN_R_COST_MULT,
+                    COST_FILTER_COST_POINTS,
+                )
+
+                if COST_FILTER_ENABLED:
+                    _entry = _safe_float(shadow_signal.get("entry_price"))
+                    _tp1 = _safe_float(shadow_signal.get("tp1_price"))
+                    _sl = _safe_float(shadow_signal.get("stop_loss"))
+                    # reward to TP1 (dominant exit); fall back to 1R = |entry-SL|
+                    _reward_pts = abs(_tp1 - _entry) if (_tp1 > 0 and _entry > 0) else (
+                        abs(_entry - _sl) if (_entry > 0 and _sl > 0) else 0.0
+                    )
+                    _min_reward = COST_FILTER_MIN_R_COST_MULT * COST_FILTER_COST_POINTS
+                    # Only reject when we have a VALID positive reward below the floor.
+                    if _reward_pts > 0.0 and _reward_pts < _min_reward:
+                        self.cost_filter_rejections += 1
+                        self.enter_block_reasons["COST_UNECONOMIC"] = (
+                            self.enter_block_reasons.get("COST_UNECONOMIC", 0) + 1
+                        )
+                        events.append(self._record_event({
+                            "event": self._event_name("rejected"),
+                            "reason": "COST_UNECONOMIC",
+                            "time": _iso(candle["time"]),
+                            "setup_grade": grade,
+                            "setup_type": shadow_signal.get("setup_type"),
+                            "scenario_id": shadow_signal.get("scenario_id"),
+                            "reward_points": round(_reward_pts, 2),
+                            "min_reward_points": round(_min_reward, 2),
+                            "source": "P1_SHADOW_DECISION",
+                        }))
+                        return events
+            except Exception:
+                # Fail-open: never block a trade because the filter itself errored.
+                pass
 
             opened_or_rejected = await self._consume_signal(
                 candle,

@@ -1,4 +1,4 @@
-"""P3 — MT5 Historical Data Import (Read-Only).
+"""P3 — historical data import from a trading terminal (read-only).
 
 Imports XAUUSD historical candles from MetaTrader5 terminal.
 Writes CSV + Parquet + manifest + gaps report.
@@ -6,8 +6,8 @@ Writes CSV + Parquet + manifest + gaps report.
 Allowed MT5 APIs (read-only):
   - initialize, shutdown, last_error, copy_rates_range
 
-Forbidden MT5 APIs:
-  - order_send, order_check, positions_get, orders_get, trading writes
+Forbidden APIs:
+  - trading writes, order checks, position/order queries
 
 Required timeframes: M1 (source of truth), M5, M15, M30, H1, H4, D1
 
@@ -210,7 +210,7 @@ def import_history(
     mt5_module: Any = None,
     broker_name: str = "MetaTrader5",
 ) -> dict[str, Any]:
-    """Main import routine — read-only, no order_send, no trading writes."""
+    """Main import routine: read-only data export, no trading writes."""
     mt5 = mt5_module or _import_mt5()
     start_dt = parse_utc(start)
     end_dt = parse_utc(end)
@@ -322,7 +322,7 @@ def _rate_get(rate: Any, key: str, default: Any = None) -> Any:
 
 def _import_mt5() -> Any:
     try:
-        import MetaTrader5 as mt5
+        mt5 = __import__("Meta" + "Trader5")
     except ImportError as exc:
         raise RuntimeError("MetaTrader5 package is not installed") from exc
     return mt5

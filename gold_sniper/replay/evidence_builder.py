@@ -12,6 +12,7 @@ Rules:
 
 from __future__ import annotations
 
+import functools
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -126,28 +127,33 @@ ANALYTICAL_AGENT5_RR_FIELDS: set[str] = {
 }
 
 
-def _normalized_key(value: Any) -> str:
-    return "".join(ch for ch in str(value).lower() if ch.isalnum())
+@functools.lru_cache(maxsize=4096)
+def _normalized_key(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalnum())
 
 
-def _is_forbidden_key(key: Any) -> bool:
+# P4: secondary forbidden patterns (substring check) — kept as tuple for speed
+_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
+    "ordersend",
+    "tradesignal",
+    "entry",
+    "stoploss",
+    "takeprofit",
+    "positionsize",
+    "broker",
+)
+
+
+@functools.lru_cache(maxsize=4096)
+def _is_forbidden_key(key: str) -> bool:
     # P1.1 Kasper: analytical RR fields from Agent5 are NOT trade execution
     # fields — they are risk metrics computed for scenario evaluation.
-    key_str = str(key)
-    if key_str in ANALYTICAL_AGENT5_RR_FIELDS:
+    if key in ANALYTICAL_AGENT5_RR_FIELDS:
         return False
     normalized = _normalized_key(key)
     if normalized in FORBIDDEN_EVIDENCE_KEY_PATTERNS:
         return True
-    return any(pattern in normalized for pattern in {
-        "ordersend",
-        "tradesignal",
-        "entry",
-        "stoploss",
-        "takeprofit",
-        "positionsize",
-        "broker",
-    })
+    return any(pattern in normalized for pattern in _FORBIDDEN_SUBSTRINGS)
 
 
 def build_evidence_bundle(
@@ -285,10 +291,15 @@ def build_evidence_bundle_from_blackboard(
 
     This reads only replay-safe agent_results. It does not call broker, strategy engine,
     orchestrator, MT5, network, Discord, or any execution path.
+
+    P4: Uses targeted read_sync("agent_results") instead of get_all() to avoid
+    cloning the entire blackboard (which grows continuously with candles, trades, etc.).
     """
     raw = {}
     try:
-        raw = blackboard.get_all().get("agent_results", {}) or {}
+        raw = blackboard.read_sync("agent_results") or {}
+        if not isinstance(raw, dict):
+            raw = {}
     except Exception:
         raw = {}
 
@@ -929,7 +940,20 @@ def _strip_forbidden_keys(value: Any) -> Any:
     return value
 
 
+# P4: cache _find_forbidden_keys results by object id to avoid re-scanning
+# the same payloads (they're validated once per observation + once for the bundle).
+_find_forbidden_keys_cache: dict[int, list[str]] = {}
+
+
 def _find_forbidden_keys(value: Any, prefix: str = "") -> list[str]:
+    # P4: fast-path — if this exact dict/list was already scanned, reuse result.
+    # Only cache at the root level (prefix=="") to keep memory bounded.
+    if not prefix:
+        vid = id(value)
+        cached = _find_forbidden_keys_cache.get(vid)
+        if cached is not None:
+            return cached
+
     found: list[str] = []
     if isinstance(value, dict):
         for key, item in value.items():
@@ -941,4 +965,8 @@ def _find_forbidden_keys(value: Any, prefix: str = "") -> list[str]:
     elif isinstance(value, list):
         for index, item in enumerate(value):
             found.extend(_find_forbidden_keys(item, f"{prefix}[{index}]"))
+
+    if not prefix and len(_find_forbidden_keys_cache) < 256:
+        _find_forbidden_keys_cache[vid] = found
+
     return found

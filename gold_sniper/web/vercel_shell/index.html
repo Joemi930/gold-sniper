@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gold Sniper — Dashboard</title>
+<style>
+html,body{margin:0;height:100%;background:#050a14;color:#c8d2e0;font-family:system-ui,sans-serif}
+#frame{position:fixed;inset:0;width:100%;height:100%;border:0}
+#offline{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:24px}
+#offline h1{color:#f4b53f;font-size:20px;margin:0}
+#offline p{max-width:520px;line-height:1.5;font-size:14px;color:#8fa0b8}
+#offline code{background:#0d1626;padding:2px 8px;border-radius:6px;color:#f4b53f}
+</style>
+</head>
+<body>
+<iframe id="frame" allow="fullscreen"></iframe>
+<div id="offline">
+  <h1>Gold Sniper hors ligne</h1>
+  <p>Le PC ou le tunnel Cloudflare est injoignable pour le moment.
+  Si Gold Sniper vient de redémarrer, réessaie dans une minute.
+  Sinon, tape <code>!lien</code> sur Discord pour obtenir l'URL directe la plus récente.</p>
+</div>
+<script src="/config.js"></script>
+<script>
+(function(){
+  var backend=(window.GS_BACKEND||'').replace(/\/+$/,'');
+  var token=(window.GS_TOKEN||'');
+  var frame=document.getElementById('frame');
+  var offline=document.getElementById('offline');
+  function showOffline(){frame.style.display='none';offline.style.display='flex';}
+  if(!backend){showOffline();return;}
+  var target=backend+'/'+(token?('?token='+encodeURIComponent(token)):'');
+  var probe=fetch(backend+'/', {mode:'no-cors', cache:'no-store'});
+  var timer=setTimeout(showOffline, 12000);
+  probe.then(function(){clearTimeout(timer);frame.src=target;})
+       .catch(function(){clearTimeout(timer);showOffline();});
+})();
+</script>
+</body>
+</html>

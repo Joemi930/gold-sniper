@@ -28,10 +28,23 @@ import MetaTrader5 as mt5
 from agents.base_agent import BaseAgent
 from config import (
     SYMBOL, MAGIC_NUMBER, COOLDOWN_SECONDS,
-    BE_PLUS_RR, PARTIAL_CLOSE_PERCENT, RISK_PCT_PER_TRADE, MT5_SYMBOL
+    BE_PLUS_RR, PARTIAL_CLOSE_PERCENT, RISK_PCT_PER_TRADE, MT5_SYMBOL,
+    MIN_RR, MAX_CONCURRENT_POSITIONS, MAX_CONCURRENT_SAME_SIDE,
+    ROLLING_DD_PCT, ROLLING_DD_PAUSE_DAYS,
+    LOSS_BREAKER_MAX_SL_PER_DAY, LOSS_COOLDOWN_SAME_SIDE_MIN,
 )
 from execution.broker_gateway import BrokerAction, BrokerGateway
 from execution.risk_calculator import RiskCalculator
+from execution.live_guards import (
+    GuardResult,
+    RollingDDState,
+    LossBreakerState,
+    LossCooldownState,
+    run_all_live_guards,
+    loss_guard_diag,
+    loss_breaker_record_sl,
+    loss_cooldown_record_sl,
+)
 from utils.spread_monitor import SpreadMonitor
 from utils.discord_notifier import send_discord_notification, _notifier_from_config
 
@@ -64,6 +77,51 @@ class TradeManager(BaseAgent):
 
         # ── État interne ────────────────────────────────────────────────────
         self._last_trade_time: Optional[datetime] = None  # Pour cooldown
+
+        # §2-B: Live guard state (shared with replay via execution/live_guards.py)
+        self._dd_state = RollingDDState()
+        self._lb_state = LossBreakerState()
+        self._lc_state = LossCooldownState()
+        # Use config.PAPER_SIMULATED_EQUITY via runtime resolution to avoid
+        # fragile coupling in test mocks that replace individual config attrs.
+        try:
+            import config as _cfg
+            self._peak_equity = float(getattr(_cfg, "PAPER_SIMULATED_EQUITY", 10000.0) or 10000.0)
+        except Exception:
+            self._peak_equity = 10000.0
+
+    def _guard_equity(self) -> float:
+        """Resolve realized equity for live guards from MT5 metadata or PAPER state."""
+        data = self.blackboard.get_all()
+        meta = data.get("meta", {}) or {}
+        account_info = meta.get("account_info") or {}
+        paper = data.get("paper_trading", {}) or {}
+        candidates = (
+            account_info.get("equity") if isinstance(account_info, dict) else None,
+            paper.get("simulated_equity") if isinstance(paper, dict) else None,
+        )
+        for value in candidates:
+            try:
+                equity = float(value)
+            except (TypeError, ValueError):
+                continue
+            if equity > 0:
+                self._peak_equity = max(self._peak_equity, equity)
+                return equity
+        return self._peak_equity
+
+    def _apply_rolling_dd_rebase(self) -> None:
+        rebase = self._dd_state.rebase_equity
+        if rebase is None:
+            return
+        try:
+            value = float(rebase)
+        except (TypeError, ValueError):
+            self._dd_state.rebase_equity = None
+            return
+        if value > 0:
+            self._peak_equity = value
+        self._dd_state.rebase_equity = None
 
     async def _ensure_broker_action_allowed(
         self,
@@ -178,6 +236,42 @@ class TradeManager(BaseAgent):
         spread_check = await self.spread_monitor.check_before_entry(signal_data=signal_data)
         if not spread_check.get("allow_trade", False):
             self.logger.warning(f"Ordre annulé par SpreadMonitor: {spread_check.get('reason')}")
+            await self.blackboard.write("trade_signals", {})
+            return False
+
+        # §2-B: LIVE GUARDS — choke point before any order reaches the broker.
+        # These are the SAME 5 guards validated in the 8 replays (27 months OOS).
+        v2_decision = signal_data.get("v2_decision", {})
+        rr_estimate = v2_decision.get("kasper_rr_estimate")
+        side = str(signal_data.get("signal", "")).upper()
+        active_positions = self.blackboard.read_sync("active_trades") or {}
+
+        guard_equity = self._guard_equity()
+        guard_results = run_all_live_guards(
+            rr_estimate=rr_estimate,
+            active_positions=active_positions,
+            side=side,
+            equity=guard_equity,
+            peak_equity=self._peak_equity,
+            candle_time=datetime.now(timezone.utc).isoformat(),
+            min_rr=MIN_RR,
+            max_concurrent=MAX_CONCURRENT_POSITIONS,
+            max_concurrent_same_side=MAX_CONCURRENT_SAME_SIDE,
+            rolling_dd_pct=ROLLING_DD_PCT,
+            rolling_dd_pause_days=ROLLING_DD_PAUSE_DAYS,
+            loss_breaker_max=LOSS_BREAKER_MAX_SL_PER_DAY,
+            loss_cooldown_min=LOSS_COOLDOWN_SAME_SIDE_MIN,
+            dd_state=self._dd_state,
+            lb_state=self._lb_state,
+            lc_state=self._lc_state,
+        )
+        self._apply_rolling_dd_rebase()
+        _diag = loss_guard_diag(guard_results)
+        if _diag["blocked"]:
+            self.logger.warning(
+                f"Live guards blocked trade: primary={_diag['primary_blocker']} "
+                f"all={_diag['all_blockers']} diag={_diag['diagnostics']}"
+            )
             await self.blackboard.write("trade_signals", {})
             return False
 
@@ -509,6 +603,15 @@ class TradeManager(BaseAgent):
         sl = trade.get("original_sl", 0)
         tp = trade.get("tp", 0)
         rr_achieved = abs(tp - entry) / abs(entry - sl) if abs(entry - sl) > 0 else 0
+
+        # §2-B: Record full-SL events for loss breaker + cooldown guards
+        is_full_sl = pnl < 0 and abs(pnl) > 0
+        if is_full_sl:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            loss_breaker_record_sl(now_iso, self._lb_state)
+            loss_cooldown_record_sl(now_iso, str(direction), self._lc_state)
+            # Track peak equity for rolling DD
+            self._peak_equity = max(0.0, self._peak_equity + pnl)
 
         self.logger.trade(f"🗑️ Trade {ticket} clôturé — PnL réalisé: {pnl:.2f} USD")
 

@@ -39,6 +39,7 @@ from config import (
     MAX_TRADES_ABSOLUTE,
     MAX_TRADES_PER_DAY,
     RISK_PCT_PER_TRADE,
+    UNIFIED_PIPELINE,
 )
 
 # ── Decision Logger (Script 02) — import conditionnel pour ne pas bloquer ──────
@@ -169,6 +170,54 @@ async def run_orchestrator(agent_results: list, blackboard: Optional[BlackBoard]
     market    = board.get_market()
     regime    = market.get("regime", "UNKNOWN")
     results_map = {r.agent_id: r for r in agent_results}
+
+    # ── §2-A: UNIFIED PIPELINE SHORT-CIRCUIT ──────────────────────────────
+    # When GS_UNIFIED_PIPELINE=1, delegate the ENTIRE decision to the validated
+    # Kasper/PDE pipeline (same modules as replay/decision_pipeline.py). The
+    # legacy vote below is SKIPPED entirely. Set GS_UNIFIED_PIPELINE=0 to
+    # roll back to the legacy vote without any code change.
+    if UNIFIED_PIPELINE:
+        try:
+            from core.unified_live_decision import unified_live_decision
+            candle_info = board.read_sync("market_data.current_tick") or {}
+            unified = unified_live_decision(board, candle={"time": datetime.now(timezone.utc), "close": float(candle_info.get("bid", 0) or candle_info.get("ask", 0) or 0), "symbol": "XAUUSD"}, symbol="XAUUSD")
+            # Log the cycle
+            if _DECISION_LOG_AVAILABLE:
+                try:
+                    await log_decision_cycle(unified, agent_results)
+                except Exception:
+                    pass
+            return unified
+        except Exception as exc:
+            # Unified mode is a deployment gate: if the validated pipeline fails,
+            # fail closed instead of silently trading the legacy vote.
+            import traceback
+            try:
+                logger = get_logger()
+                logger.error(f"Unified pipeline error, rejecting cycle: {exc}")
+                logger.error(traceback.format_exc())
+            except Exception:
+                pass
+            return {
+                "decision": "REJECT",
+                "score": 0.0,
+                "raw_score": 0.0,
+                "stars": 0,
+                "direction": None,
+                "risk_modifier": 0.0,
+                "regime": regime,
+                "session": "UNKNOWN",
+                "strategy": "UNIFIED_KASPER_PDE",
+                "strategy_min_score": 0.0,
+                "strategy_risk_pct": 0.0,
+                "strategy_weight_overrides": {},
+                "adaptive_weights_applied": False,
+                "effective_weights": {},
+                "diamond_evaluation": None,
+                "reason": f"UNIFIED_PIPELINE_ERROR_FAIL_CLOSED: {type(exc).__name__}: {exc}",
+                "agent_breakdown": _build_breakdown(results_map),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
 
     # ── ÉTAPE 1 : Veto absolu (risk_manager + agent_6) ──────────────────────
     for agent_id in ["risk_manager", "agent_6"]:
@@ -554,6 +603,17 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
                 "last_updated": now,
             })
 
+            # ── Setup surveille (affichage dashboard, lecture seule) ─────────
+            # Ne peut JAMAIS casser la boucle de decision (try/except).
+            try:
+                from utils.pending_setup import build_pending_setup
+
+                await blackboard.update_dict("orchestrator", {
+                    "pending_setup": build_pending_setup(blackboard, decision),
+                })
+            except Exception as exc:
+                logger.debug("pending_setup build failed: %s", exc)
+
             # ── Émettre le signal de trade si EXECUTE ────────────────────────
             if decision["decision"] in {"EXECUTE", "EXCEPTIONAL_OVERRIDE"}:
                 control = blackboard._data.get("control", {})
@@ -577,11 +637,19 @@ async def orchestrator_loop(blackboard: BlackBoard) -> None:
                 # Fallback : prix actuel si Agent 5 n'a pas de niveaux
                 if not entry:
                     tick  = blackboard._data.get("market_data", {}).get("current_tick", {})
-                    entry = tick.get("ask") if decision["direction"] == "LONG" else tick.get("bid")
+                    entry = _entry_price_for_direction(decision.get("direction"), tick)
 
                 if entry and sl and (tp1 or tp2):
+                    signal_side = _direction_to_signal(decision.get("direction"))
+                    if signal_side is None:
+                        logger.warning(
+                            "Signal EXECUTE ignore: direction invalide "
+                            f"({decision.get('direction')!r})."
+                        )
+                        await blackboard.write("trade_signals", {})
+                        continue
                     signal_data = {
-                        "signal":      "BUY" if decision["direction"] == "LONG" else "SELL",
+                        "signal":      signal_side,
                         "direction":   decision["direction"],
                         "entry_price": entry,
                         "stop_loss":   sl,
@@ -717,6 +785,25 @@ def _build_breakdown(results_map: dict) -> dict:
         }
         for agent_id, r in results_map.items()
     }
+
+
+def _direction_to_signal(direction: object) -> str | None:
+    """Normalize legacy LONG/SHORT and unified BUY/SELL directions."""
+    value = str(direction or "").upper()
+    if value in {"BUY", "LONG"}:
+        return "BUY"
+    if value in {"SELL", "SHORT"}:
+        return "SELL"
+    return None
+
+
+def _entry_price_for_direction(direction: object, tick: dict) -> float | None:
+    signal = _direction_to_signal(direction)
+    if signal == "BUY":
+        return tick.get("ask")
+    if signal == "SELL":
+        return tick.get("bid")
+    return None
 
 
 def _build_reject(results_map: dict, reason: str) -> dict:

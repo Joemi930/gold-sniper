@@ -5,9 +5,14 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
-from execution.mt5_runtime import mt5
+ROOT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = ROOT_DIR.parent
+for candidate in (REPO_ROOT, ROOT_DIR):
+    value = str(candidate)
+    if value not in sys.path:
+        sys.path.insert(0, value)
 
-sys.path.insert(0, ".")
+from execution.mt5_runtime import mt5
 
 try:
     from utils.ssl_bundle import configure_ssl_environment
@@ -192,7 +197,7 @@ async def async_main(blackboard: BlackBoard, stop_event: threading.Event) -> Non
     asyncio.create_task(write_external_watchdog_heartbeat())
     asyncio.create_task(discord_command_loop(blackboard))
 
-    from web.dashboard_server import bootstrap_dashboard
+    from web.dashboard_server import bootstrap_dashboard, build_dashboard_access_url
     from utils.bot_ready import PHASE_CLOUDFLARE_READY, mark_engine_ready, write_bot_ready
     from utils.discord_notifier import _notifier_from_config
 
@@ -221,14 +226,31 @@ async def async_main(blackboard: BlackBoard, stop_event: threading.Event) -> Non
     if public_url and "trycloudflare.com" in public_url:
         write_bot_ready(public_url, phase=PHASE_CLOUDFLARE_READY)
         mark_engine_ready(public_url)
+        # Met a jour la coquille Vercel (lien permanent) si le tunnel a change.
+        # Optionnel (VERCEL_TOKEN), jamais bloquant.
+        try:
+            from utils.vercel_publisher import publish_backend_url_if_changed
+
+            asyncio.create_task(publish_backend_url_if_changed(public_url))
+        except Exception as exc:
+            logger.debug(f"Vercel publisher indisponible: {exc}")
         notifier = _notifier_from_config()
+        # Poste le lien PERMANENT (Vercel) si configure — stable a chaque boot ;
+        # sinon l'URL tunnel (ephemere) en repli. Evite le spam de liens changeants.
+        from config import DASHBOARD_PERMANENT_URL
+
+        access_url = (
+            DASHBOARD_PERMANENT_URL
+            or build_dashboard_access_url(public_url)
+            or public_url
+        )
         await notifier.notify_system_start(
             mode="LIVE" if LIVE_MODE else "PAPER",
             symbol=SYMBOL,
             threshold=EXECUTION_THRESHOLD,
-            cloudflare_url=public_url,
+            cloudflare_url=access_url,
         )
-        logger.info(f"Boot strict OK — Cloudflare: {public_url}")
+        logger.info(f"Boot strict OK — backend Cloudflare: {public_url}")
     else:
         logger.warning(
             "URL Cloudflare non obtenue apres cold start — "

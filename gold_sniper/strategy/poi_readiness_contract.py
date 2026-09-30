@@ -125,6 +125,20 @@ def evaluate_poi_contract(
     if not has_price_bounds and "EXECUTABLE" in semantic_status:
         contradictions.append("EXECUTABLE_WITHOUT_BOUNDS")
 
+    # ── P4.2 D8 fix: REJECTED always wins over EXECUTABLE/READY ─────
+    # When a POI is marked as both executable/ready AND rejected,
+    # the rejection takes priority.  We resolve the contradiction
+    # by forcing the failure_class to dominate.
+    _has_rejection_contradiction = (
+        "EXECUTABLE_WITH_REJECTED_FAILURE_CLASS" in contradictions
+        or "READY_WITH_REJECTED_FAILURE_CLASS" in contradictions
+    )
+    if _has_rejection_contradiction:
+        # Clear the semantic status override so the rejection path wins
+        semantic_status = "POI_PRESENT_REJECTED"
+        execution_readiness = "REJECTED"
+    # ── end P4.2 D8 fix ────────────────────────────────────────────
+
     if "CONSUMED" in failure_class or lifecycle in {"CONSUMED", "MITIGATED"}:
         status = POIContractStatus.CONSUMED
         reason = "POI_CONSUMED_BY_LIFECYCLE_OR_FAILURE_CLASS"

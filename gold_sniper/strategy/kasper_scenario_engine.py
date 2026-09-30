@@ -59,11 +59,58 @@ KASPER_WEIGHTS: Dict[str, float] = {
     "risk_precheck": 5.0,
 }
 
+# V2: dedicated weights for the continuation model (5 gates → 100).
+# P2.2 locked continuation to WAIT because KASPER_WEIGHTS lacked these keys;
+# V2 unlocks it with its own weights so grading is meaningful.
+KASPER_CONTINUATION_WEIGHTS: Dict[str, float] = {
+    "htf_bias": 25.0,
+    "continuation_bos": 25.0,
+    "continuation_poi": 20.0,
+    "micro_confirmation": 20.0,
+    "risk_precheck": 10.0,
+}
+
+
+def _v2_enabled() -> bool:
+    """STRATEGY V2 (regime-selected dual edge). Default OFF."""
+    try:
+        from config import STRATEGY_V2
+        return bool(STRATEGY_V2)
+    except Exception:
+        return False
+
+
 # Grade thresholds
 GRADE_A_PLUS_MIN = 95.0
 GRADE_A_MIN = 85.0
 GRADE_B_MIN = 70.0
 GRADE_C_MIN = 50.0
+
+
+# ── Graded-entry feature flag (pure; no env reads in the strategy layer) ──
+# Default OFF preserves the legacy binary 8/8 behaviour and the test-suite.
+# The replay layer toggles it via set_graded_entry() based on its own config.
+#
+# IMPORTANT: the flag is stored on `builtins`, NOT as a module global. The
+# replay's PYTHONPATH has two roots, so this file is imported under two names
+# ("gold_sniper.strategy.kasper_scenario_engine" and "strategy.kasper_scenario_engine")
+# = two distinct module objects with independent globals. A module-global flag
+# set via one import is invisible to the other, which is exactly why graded mode
+# silently failed to activate during replay. `builtins` is a single shared
+# namespace across every import path, so the flag is process-global and correct.
+import builtins as _builtins
+
+_GRADED_FLAG_ATTR = "_GOLD_SNIPER_KASPER_GRADED_ENTRY"
+
+
+def set_graded_entry(enabled: bool) -> None:
+    """Enable/disable graded-entry mode (A+/A/B). Called by the replay layer."""
+    setattr(_builtins, _GRADED_FLAG_ATTR, bool(enabled))
+
+
+def graded_entry_enabled() -> bool:
+    """Return whether graded-entry mode is currently enabled."""
+    return bool(getattr(_builtins, _GRADED_FLAG_ATTR, False))
 
 
 class KasperScenarioEngine:
@@ -77,6 +124,22 @@ class KasperScenarioEngine:
     """
 
     # ── public API ─────────────────────────────────────────────────
+
+    @property
+    def graded_entry(self) -> bool:
+        """Graded-entry mode (A+/A/B tiers) vs legacy binary 8/8.
+
+        When enabled, the four *confirmation* gates (reintegration,
+        displacement, structure_shift, micro_confirmation) are SCORED instead
+        of acting as hard early-exit vetoes. The four *validity* gates
+        (htf_bias, liquidity_sweep, poi, risk_precheck) remain hard vetoes.
+        A setup enters at grade >= B (score >= 70), which still requires real
+        confirmation on top of the 60-pt validity base — it is graded, not
+        diluted. Disabled by default so the binary behaviour and the existing
+        test-suite are preserved. The replay layer flips it on via
+        ``set_graded_entry(True)`` (the strategy layer stays pure — no env reads).
+        """
+        return graded_entry_enabled()
 
     def evaluate(
         self,
@@ -131,6 +194,17 @@ class KasperScenarioEngine:
         veto = self._hard_veto(evidence)
         if veto:
             return self._reject(evidence, veto, candle_timestamp=candle_timestamp)
+
+        # ── V2 regime dispatch: the regime selects the edge ──
+        # STRONG trend → continuation ONLY (fading strong trends is the proven
+        # account-killer: Feb 0/5 straight-to-SL). RANGE/WEAK → reversal ONLY
+        # (the premium mean-reversion edge, in its natural habitat).
+        if _v2_enabled():
+            _regime = str(getattr(evidence.agent1, "primary_regime", "UNKNOWN") or "UNKNOWN").upper()
+            if _regime in ("STRONG_UP", "STRONG_DOWN"):
+                return self.evaluate_kasper_continuation(evidence, candle_timestamp=candle_timestamp)
+            reversal = self.evaluate_kasper_reversal(evidence, candle_timestamp=candle_timestamp)
+            return reversal
 
         # 2. Reversal first — the premium model
         reversal = self.evaluate_kasper_reversal(evidence, candle_timestamp=candle_timestamp)
@@ -209,6 +283,8 @@ class KasperScenarioEngine:
         # ── STEP 3: Reintegration (close back inside range) ───
         if le.close_back_inside or le.wick_rejection:
             sequence["reintegrated"] = "PASS"
+        elif self.graded_entry:
+            sequence["reintegrated"] = "FAIL"
         else:
             return self._wait_or_reject(
                 evidence, sequence, "D", 35.0,
@@ -219,6 +295,8 @@ class KasperScenarioEngine:
         # ── STEP 4: Displacement after sweep ──────────────────
         if le.displacement_after_sweep:
             sequence["displacement"] = "PASS"
+        elif self.graded_entry:
+            sequence["displacement"] = "FAIL"
         else:
             return self._wait_or_reject(
                 evidence, sequence, "C", 60.0,
@@ -236,6 +314,8 @@ class KasperScenarioEngine:
             sequence["structure_shift"] = "PASS"
         elif a1.last_htf_bos or a1.last_htf_choch:
             sequence["structure_shift"] = "PASS"
+        elif self.graded_entry:
+            sequence["structure_shift"] = "FAIL"
         else:
             return self._wait_or_reject(
                 evidence, sequence, "C", 65.0,
@@ -274,6 +354,8 @@ class KasperScenarioEngine:
             and mc.close_breaks_structure
         ):
             sequence["micro_confirmation"] = "PASS"
+        elif self.graded_entry:
+            sequence["micro_confirmation"] = "FAIL"
         else:
             return self._wait_or_reject(
                 evidence, sequence, "C", 70.0,
@@ -305,7 +387,18 @@ class KasperScenarioEngine:
         #   3. Generic C with failed gates still WAIT/REJECT
         #   4. Risk per leg = 0.125% — extremely conservative
         decision: DecisionRecommendation
-        if grade in ("A_PLUS", "A"):
+        if self.graded_entry:
+            # Graded model. Validity gates (htf, sweep, poi, RR) already passed
+            # as hard vetoes above (60-pt base). Confirmation gates are scored.
+            # Enter at grade >= B (score >= 70): that requires real confirmation
+            # — one 15-pt gate (displacement OR structure_shift) or two 5-pt
+            # gates — never a bare sweep-into-POI. C/D -> WAIT (the trade manager
+            # rejects C/D anyway, so this keeps the contract consistent).
+            if grade in ("A_PLUS", "A", "B"):
+                decision = "ENTER_ELIGIBLE"
+            else:
+                decision = "WAIT"
+        elif grade in ("A_PLUS", "A"):
             decision = "ENTER_ELIGIBLE"
         elif grade == "B":
             decision = "WAIT"
@@ -428,9 +521,18 @@ class KasperScenarioEngine:
         score = self._score_sequence(sequence)
         grade = self._grade_from_score(score)
 
-        # P2.2: Continuation is WAIT_ONLY — KASPER_WEIGHTS do not cover
-        # continuation-specific keys. Always return WAIT regardless of score.
-        decision: DecisionRecommendation = "WAIT"
+        if _v2_enabled():
+            # V2: continuation trades WITH the HTF bias (not the fade side),
+            # and is decidable by grade like the premium model.
+            side = "BUY" if a1.htf_bias == "bullish" else "SELL"
+            if grade in ("A_PLUS", "A"):
+                decision: DecisionRecommendation = "ENTER_ELIGIBLE"
+            else:
+                decision = "WAIT"
+        else:
+            # P2.2 (legacy): Continuation is WAIT_ONLY — KASPER_WEIGHTS do not
+            # cover continuation-specific keys.
+            decision = "WAIT"
 
         # Build scenario identity
         identity = build_kasper_scenario_identity(
@@ -602,7 +704,12 @@ class KasperScenarioEngine:
     def _score_sequence(self, sequence: Dict[str, str]) -> float:
         """Score a sequence using Kasper weights. Only PASS counts."""
         total = 0.0
-        for key, weight in KASPER_WEIGHTS.items():
+        weights = (
+            KASPER_CONTINUATION_WEIGHTS
+            if "continuation_bos" in sequence
+            else KASPER_WEIGHTS
+        )
+        for key, weight in weights.items():
             if sequence.get(key) == "PASS":
                 total += weight
         # If the sequence has extra keys not in weights, count them at 0 weight
